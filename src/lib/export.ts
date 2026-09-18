@@ -2,12 +2,21 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { formatDate, formatMoney } from "./format";
 
+export type ExportSignature = {
+  /** Office, e.g. "Chairman" */
+  label: string;
+  /** Office-bearer's name, printed under the signature line */
+  name: string;
+};
+
 export type ExportMeta = {
   societyName: string;
   societyAddress?: string;
   registrationNo?: string;
   title: string;
   subtitle?: string;
+  /** Committee signature block, rendered at the foot of every exported document. */
+  signatures?: ExportSignature[];
 };
 
 type TableSpec = {
@@ -86,6 +95,35 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
     }
   }
 
+  // Committee signature block on the last page, drawn before page footers so
+  // an added signatures page also receives its footer.
+  if (meta.signatures && meta.signatures.length > 0) {
+    if (cursorY > doc.internal.pageSize.getHeight() - 110) {
+      doc.addPage();
+      cursorY = drawHeader();
+    }
+    const sigs = meta.signatures.slice(0, 3);
+    const usable = pageWidth - margin * 2;
+    const slot = usable / 3;
+    const lineY = cursorY + 34;
+    doc.setDrawColor(30);
+    doc.setLineWidth(0.6);
+    sigs.forEach((s, i) => {
+      const x = margin + slot * i;
+      doc.setLineDashPattern([2, 2], 0);
+      doc.line(x + 8, lineY, x + slot - 16, lineY);
+      doc.setLineDashPattern([], 0);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(30);
+      doc.text(s.name, x + 8, lineY + 14);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(110);
+      doc.text(s.label, x + 8, lineY + 26);
+    });
+  }
+
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -104,6 +142,7 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
       doc.internal.pageSize.getHeight() - 28,
     );
   }
+
   doc.save(filename);
 }
 
@@ -111,6 +150,17 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function signaturesHtml(meta: ExportMeta): string {
+  if (!meta.signatures || meta.signatures.length === 0) return "";
+  const cells = meta.signatures
+    .slice(0, 3)
+    .map(
+      (s) => `<td><div class="sigline"></div><div class="signame">${escapeHtml(s.name)}</div><div class="siglabel">${escapeHtml(s.label)}</div></td>`,
+    )
+    .join("");
+  return `<table class="signatures"><tr>${cells}</tr></table>`;
 }
 
 function tableToHtml(t: TableSpec): string {
@@ -160,6 +210,11 @@ export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: stri
   th { border-bottom: 1px solid #1a1a1a; font-size: 9pt; padding: 4pt 6pt; text-align:left; }
   td { font-size: 9pt; padding: 3pt 6pt; }
   hr { border:none; border-top:1px solid #1a1a1a; margin: 8pt 0 12pt; }
+  .signatures { margin-top: 48pt; width:100%; }
+  .signatures td { border:none; text-align:center; font-size: 9pt; padding: 0 8pt; }
+  .sigline { border-top: 1px dotted #555; margin: 34pt 12pt 0; }
+  .signame { font-weight: bold; margin-top: 5pt; }
+  .siglabel { color: #555; margin-top: 2pt; }
 </style></head>
 <body>
 <h1>${escapeHtml(meta.societyName)}</h1>
@@ -169,6 +224,7 @@ ${meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationN
 ${meta.subtitle ? `<p class="sub">${escapeHtml(meta.subtitle)}</p>` : ""}
 <hr/>
 ${tables.map(tableToHtml).join("<br/>")}
+${signaturesHtml(meta)}
 </body></html>`;
   const blob = new Blob(["\ufeff", html], { type: "application/msword" });
   const url = URL.createObjectURL(blob);
@@ -194,6 +250,11 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
     th { border-bottom: 1.5px solid #111; text-align:left; font-size: 11px; padding: 6px 8px; }
     td { font-size: 11px; padding: 5px 8px; border-bottom: 1px solid #e5e5e5; }
     tfoot td { border-top: 1.5px solid #111; border-bottom: none; font-weight: 700; }
+    .signatures { margin-top: 56px; width: 100%; }
+    .signatures td { border: none !important; text-align: center; padding: 0 10px; }
+    .sigline { border-top: 1px dotted #555; margin: 44px 12px 0; }
+    .signame { font-weight: 700; margin-top: 5px; font-size: 11px; }
+    .siglabel { color: #555; margin-top: 2px; font-size: 10px; }
     @media print { body { margin: 24px; } }
   </style></head><body>
   <h1>${escapeHtml(meta.societyName)}</h1>
@@ -237,6 +298,7 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
       return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
     })
     .join("")}
+  ${signaturesHtml(meta)}
   </body></html>`;
   w.document.write(html);
   w.document.close();

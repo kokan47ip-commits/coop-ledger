@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
 import { exportPDF, exportWord, printTables, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { formatDate, formatPeriod } from "@/lib/format";
 import { ArrowLeft, Download, FileText, Printer } from "lucide-react";
 import { Link, useParams } from "react-router";
@@ -28,6 +29,7 @@ export default function BillView() {
     const a = accounts?.find((x) => x._id === id);
     return a ? `${a.code} — ${a.name}` : "—";
   };
+  const signatures = useCommitteeSignatures();
 
   if (!societyId || !bill) {
     return (
@@ -47,6 +49,7 @@ export default function BillView() {
     registrationNo: society?.registrationNo,
     title: `Maintenance Bill — ${formatPeriod(bill.period)}`,
     subtitle: `Bill No: ${bill.billNo} · Issue: ${formatDate(bill.issueDate)} · Due: ${formatDate(bill.dueDate)}`,
+    signatures,
   };
 
   const table: TableSpec = {

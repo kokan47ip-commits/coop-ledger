@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useState } from "react";
@@ -24,6 +25,7 @@ const money = (n: number) =>
 
 export default function ReceiptPayment() {
   const { societyId, society } = useSociety();
+  const signatures = useCommitteeSignatures();
   const period = effectiveFyPeriod(society);
   const [from, setFrom] = useState(period.from);
   const [to, setTo] = useState(period.to);
@@ -42,6 +44,7 @@ export default function ReceiptPayment() {
         registrationNo: society.registrationNo,
         title: "Receipt & Payment Account",
         subtitle: `For the period ${formatDate(from)} to ${formatDate(to)}`,
+        signatures,
       }
     : null;
 

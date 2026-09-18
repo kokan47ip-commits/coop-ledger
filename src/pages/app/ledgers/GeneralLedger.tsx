@@ -22,6 +22,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useState } from "react";
@@ -48,6 +49,7 @@ type TrialBalanceRow = {
 
 export default function GeneralLedger() {
   const { societyId, society } = useSociety();
+  const signatures = useCommitteeSignatures();
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Account[] | undefined;
   const [accountId, setAccountId] = useState("");
   const [from, setFrom] = useState(effectiveFyPeriod(society).from);
@@ -79,6 +81,7 @@ export default function GeneralLedger() {
           registrationNo: society.registrationNo,
           title: `General Ledger — ${account.name} (${account.code})`,
           subtitle: `Period ${formatDate(from)} to ${formatDate(to)}`,
+          signatures,
         }
       : null;
 
@@ -124,6 +127,7 @@ export default function GeneralLedger() {
         registrationNo: society.registrationNo,
         title: "Trial Balance",
         subtitle: `Period ${formatDate(from)} to ${formatDate(to)}`,
+        signatures,
       }
     : null;
 

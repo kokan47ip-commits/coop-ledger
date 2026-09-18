@@ -22,6 +22,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR, formatPeriod } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -41,6 +42,7 @@ type LedgerRow = {
 
 export default function MemberLedger() {
   const { societyId, society } = useSociety();
+  const signatures = useCommitteeSignatures();
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
 
@@ -82,6 +84,7 @@ export default function MemberLedger() {
           subtitle: `Period ${formatDate(from)} to ${formatDate(to)} · ${
             mode === "simple" ? "Simple view" : "Detailed view"
           }`,
+          signatures,
         }
       : null;
 

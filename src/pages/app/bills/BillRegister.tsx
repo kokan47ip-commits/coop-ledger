@@ -23,6 +23,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, formatDate, formatINR, formatPeriod, todayISO } from "@/lib/format";
 import { Download, FileText, Plus, Printer, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -41,6 +42,7 @@ export default function BillRegister() {
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip");
   const generate = useMutation(api.bills.generate);
   const removeBill = useMutation(api.bills.remove);
+  const signatures = useCommitteeSignatures();
 
   const [period, setPeriod] = useState(currentPeriod());
   const [issueDate, setIssueDate] = useState(todayISO());
@@ -87,6 +89,7 @@ export default function BillRegister() {
             statusFilter === "all"
               ? `All bills · ${filtered.length} entries`
               : `${statusFilter} bills · ${filtered.length} entries`,
+          signatures,
         }
       : null;
 

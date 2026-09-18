@@ -20,6 +20,7 @@ import type { Doc } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { formatDate, formatINR, VOUCHER_TYPE_LABEL } from "@/lib/format";
 import { Download, FileText, Printer, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -53,6 +54,7 @@ export function VoucherList({
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip");
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip");
   const remove = useMutation(api.vouchers.remove);
+  const signatures = useCommitteeSignatures();
   const [typeFilter, setTypeFilter] = useState("all");
 
   const filtered = useMemo(() => {
@@ -81,6 +83,7 @@ export function VoucherList({
           registrationNo: society.registrationNo,
           title,
           subtitle: `${filtered.length} vouchers · Total ${formatINR(total)}`,
+          signatures,
         }
       : null;
 
