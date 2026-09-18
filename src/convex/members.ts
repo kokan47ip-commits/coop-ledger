@@ -67,6 +67,13 @@ export const remove = mutation({
       .collect();
     if (vouchers.length > 0)
       throw new Error("Member has vouchers; remove them first.");
+    const memberTariffs = await ctx.db
+      .query("memberTariffs")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", societyId).eq("memberId", id),
+      )
+      .collect();
+    for (const mt of memberTariffs) await ctx.db.delete(mt._id);
     await ctx.db.delete(id);
   },
 });

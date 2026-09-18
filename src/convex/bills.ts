@@ -56,6 +56,10 @@ export const generate = mutation({
     const tariffs = allTariffs.filter((t) => t.isActive);
     if (tariffs.length === 0)
       throw new Error("Add active tariffs before generating bills.");
+    const overrides = await ctx.db
+      .query("memberTariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
     let created = 0;
     let skipped = 0;
     for (const memberId of memberIds) {
@@ -74,12 +78,21 @@ export const generate = mutation({
         skipped++;
         continue;
       }
-      const lines = tariffs.map((t) => ({
-        tariffId: t._id,
-        accountId: t.accountId,
-        name: t.name,
-        amount: t.amount,
-      }));
+      // Per-member custom amounts from the tariff upload, falling back to the
+      // schedule amount. An override of 0 exempts the member from the head.
+      const memberOverrides = overrides.filter((o) => o.memberId === memberId);
+      const lines = tariffs
+        .map((t) => {
+          const o = memberOverrides.find((x) => x.tariffId === t._id);
+          const base = o ? o.amount : t.amount;
+          if (base <= 0) return null;
+          return { tariffId: t._id, accountId: t.accountId, name: t.name, amount: base };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
+      if (lines.length === 0) {
+        skipped++;
+        continue;
+      }
       const total = lines.reduce((s, l) => s + l.amount, 0);
       const n = await nextNumber(ctx, `${societyId}:bill`);
       await ctx.db.insert("bills", {

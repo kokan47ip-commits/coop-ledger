@@ -167,6 +167,153 @@ export const uploadTariffs = mutation({
   },
 });
 
+export const uploadMemberTariffs = mutation({
+  args: {
+    societyId: v.id("societies"),
+    rows: v.array(v.record(v.string(), v.any())),
+  },
+  handler: async (ctx, { societyId, rows }): Promise<Result> => {
+    await requireSociety(ctx, societyId);
+    const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const accounts = await ctx.db
+      .query("accounts")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const existingTariffs = await ctx.db
+      .query("tariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const existingOverrides = await ctx.db
+      .query("memberTariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+
+    const fallbackAccount =
+      accounts.filter((a) => a.type === "income").sort((a, b) => a.code.localeCompare(b.code))[0];
+
+    // Columns that are identity metadata, not tariff amounts.
+    const isIdentityColumn = (h: string) =>
+      /^(sr|srl|srlno|serial|serialno|sn|no|number|code|membercode|member code|memberid|member id|id|remarks|remark|note|notes|total|totalamount|grandtotal)$/.test(
+        h.replace(/[^a-z0-9]/g, "").toLowerCase(),
+      );
+
+    if (rows.length === 0) return result;
+
+    // Identify tariff columns from the first row's keys. Headers are
+    // normalised (punctuation/case-insensitive) for detection.
+    const normHeader = (h: string) => h.replace(/[^a-z0-9]/g, "").toLowerCase();
+    const headerKeys = Object.keys(rows[0]);
+    const flatKey = headerKeys.find((h) =>
+      /^(flatno|flat|flatnumber|unit|house|houseno|housenumber|shop|premises)$/.test(normHeader(h)),
+    );
+    const nameKey =
+      headerKeys.find((h) => {
+        const t = normHeader(h);
+        return t.includes("name") && (t.includes("member") || t.includes("owner") || t.includes("tenant"));
+      }) ?? headerKeys.find((h) => normHeader(h) === "name");
+    const tariffKeys = headerKeys.filter(
+      (h) => h !== flatKey && h !== nameKey && !isIdentityColumn(h),
+    );
+    if (tariffKeys.length === 0) {
+      result.errors.push(
+        "No tariff columns found. Beyond Flat No. and Name, each remaining column is treated as a tariff.",
+      );
+      return result;
+    }
+    if (!flatKey && !nameKey) {
+      result.errors.push('Sheet must contain a "Flat No." or "Name of Member" column.');
+      return result;
+    }
+
+    // Resolve (or create) a tariff per column header.
+    const tariffByKey = new Map<string, Doc<"tariffs">>();
+    for (const key of tariffKeys) {
+      const tariffName = key.trim().replace(/\s+/g, " ");
+      const match = existingTariffs.find(
+        (t) => t.name.toLowerCase() === tariffName.toLowerCase(),
+      );
+      if (match) {
+        tariffByKey.set(key, match);
+      } else {
+        if (!fallbackAccount) {
+          result.errors.push(
+            `Column "${tariffName}": no income account exists to attach the new tariff — add one in Chart of Accounts.`,
+          );
+          continue;
+        }
+        const id = await ctx.db.insert("tariffs", {
+          societyId,
+          name: tariffName,
+          accountId: fallbackAccount._id,
+          amount: 0,
+          unit: "flat",
+          isActive: true,
+        });
+        const created = await ctx.db.get(id);
+        if (created) {
+          existingTariffs.push(created);
+          tariffByKey.set(key, created);
+          result.inserted++;
+        }
+      }
+    }
+
+    const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const flat = flatKey ? str(row, [flatKey]) : undefined;
+      const name = nameKey ? str(row, [nameKey]) : undefined;
+      if (!flat && !name) {
+        result.errors.push(`Row ${i + 2}: missing flat number and member name.`);
+        continue;
+      }
+      const member =
+        (flat && members.find((m) => m.flatNo && norm(m.flatNo) === norm(flat))) ??
+        (name && members.find((m) => norm(m.name) === norm(name))) ??
+        undefined;
+      if (!member) {
+        result.errors.push(
+          `Row ${i + 2}: no member matches flat "${flat ?? "—"}"${name ? ` / name "${name}"` : ""}. Import members first.`,
+        );
+        continue;
+      }
+
+      let rowApplied = 0;
+      for (const [key, tariff] of tariffByKey) {
+        const amount = num(row, [key]);
+        if (amount === undefined) continue; // blank cell → head not charged
+        const existing = existingOverrides.find(
+          (o) => o.memberId === member._id && o.tariffId === tariff._id,
+        );
+        if (existing) {
+          if (existing.amount !== amount) {
+            await ctx.db.patch(existing._id, { amount });
+            result.updated++;
+          }
+        } else {
+          const id = await ctx.db.insert("memberTariffs", {
+            societyId,
+            memberId: member._id,
+            tariffId: tariff._id,
+            amount,
+          });
+          existingOverrides.push({ ...(await ctx.db.get(id))! });
+          result.inserted++;
+        }
+        rowApplied++;
+      }
+      if (rowApplied === 0) result.skipped++;
+    }
+    return result;
+  },
+});
+
 export const uploadReceipts = mutation({
   args: {
     societyId: v.id("societies"),

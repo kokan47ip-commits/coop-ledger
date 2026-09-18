@@ -112,6 +112,17 @@ const schema = defineSchema(
       isActive: v.boolean(),
     }).index("by_society", ["societyId"]),
 
+    // Per-member tariff amounts, e.g. uploaded from an Excel sheet with flat
+    // number, member name and custom tariff amounts in columns.
+    memberTariffs: defineTable({
+      societyId: v.id("societies"),
+      memberId: v.id("members"),
+      tariffId: v.id("tariffs"),
+      amount: v.number(), // 0 = exempt from this charge
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_member", ["societyId", "memberId"]),
+
     bills: defineTable({
       societyId: v.id("societies"),
       billNo: v.string(),

@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -24,12 +25,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
+import { downloadMemberTariffTemplate, parseExcelFile } from "@/lib/excel";
 import { formatINR } from "@/lib/format";
-import { Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -49,6 +51,15 @@ type AccountRow = {
   type: string;
 };
 
+type MemberRow = {
+  _id: Id<"members">;
+  code: string;
+  name: string;
+  flatNo?: string;
+};
+
+type UploadResult = { inserted: number; updated: number; skipped: number; errors: string[] };
+
 export default function Tariffs() {
   const { societyId } = useSociety();
   const tariffs = useQuery(
@@ -61,6 +72,7 @@ export default function Tariffs() {
   ) as AccountRow[] | undefined;
   const upsert = useMutation(api.tariffs.upsert);
   const remove = useMutation(api.tariffs.remove);
+  const uploadMemberTariffs = useMutation(api.uploads.uploadMemberTariffs);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     id: "" as Id<"tariffs"> | "",
@@ -71,10 +83,41 @@ export default function Tariffs() {
     isActive: true,
   });
 
+  const members = useQuery(
+    api.members.list,
+    societyId ? { societyId } : "skip",
+  ) as MemberRow[] | undefined;
+
   const incomeAccounts = (accounts ?? []).filter((a) => a.type === "income");
   const accountName = (id: Id<"accounts">) => {
     const a = (accounts ?? []).find((x) => x._id === id);
     return a ? `${a.code} — ${a.name}` : "—";
+  };
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [lastUpload, setLastUpload] = useState<UploadResult | null>(null);
+
+  const runUpload = async (file: File) => {
+    if (!societyId) return;
+    setUploadBusy(true);
+    try {
+      const { rows } = await parseExcelFile(file);
+      if (rows.length === 0) {
+        toast.error("No rows found in the first sheet.");
+        return;
+      }
+      const res = await uploadMemberTariffs({ societyId, rows });
+      setLastUpload(res);
+      toast.success(
+        `Custom tariffs applied: ${res.inserted} added, ${res.updated} updated` +
+          (res.errors.length ? `, ${res.errors.length} rows skipped` : ""),
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadBusy(false);
+    }
   };
 
   const save = async (e: React.FormEvent) => {
@@ -130,6 +173,65 @@ export default function Tariffs() {
           </Button>
         }
       />
+
+      {/* Per-member custom tariff upload */}
+      <Card className="mb-8 p-5 shadow-none">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium">Per-member custom tariffs</h3>
+            <p className="text-sm text-muted-foreground">
+              Upload a sheet with Flat No., Name of Member and one amount column per tariff. Each column header
+              becomes a tariff head (created automatically if new); rows match members by flat number or name.
+              Enter 0 to exempt a member from a charge; leave blank to skip that head.
+            </p>
+            <p className="pt-1 font-mono text-[11px] text-muted-foreground">
+              Flat No · Name of Member · Custom Tariff 1 · Custom Tariff 2 · Custom Tariff 3 …
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              downloadMemberTariffTemplate(
+                (tariffs ?? []).map((t) => t.name),
+                (members ?? []).slice(0, 5).map((m) => ({ flatNo: m.flatNo, name: m.name })),
+              )
+            }
+          >
+            <Download className="size-4" /> Template
+          </Button>
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) runUpload(f);
+              e.target.value = "";
+            }}
+          />
+          <Button disabled={uploadBusy} onClick={() => inputRef.current?.click()} className="rounded-none">
+            <Upload className="size-4" /> {uploadBusy ? "Uploading…" : "Upload Excel"}
+          </Button>
+          {lastUpload && (
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <CheckCircle2 className="size-4 text-foreground" />
+              {lastUpload.inserted} added · {lastUpload.updated} updated
+              {lastUpload.errors.length > 0 && ` · ${lastUpload.errors.length} row errors`}
+            </span>
+          )}
+        </div>
+        {lastUpload && lastUpload.errors.length > 0 && (
+          <div className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-md bg-accent/50 p-3 text-xs text-muted-foreground">
+            {lastUpload.errors.slice(0, 20).map((e, i) => (
+              <p key={i}>{e}</p>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {!tariffs ? null : tariffs.length === 0 ? (
         <EmptyHint>

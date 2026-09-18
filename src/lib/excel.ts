@@ -100,6 +100,23 @@ export const TEMPLATES = {
   ],
 };
 
+export function downloadMemberTariffTemplate(
+  tariffNames: string[],
+  sampleMembers: { flatNo?: string; name: string }[],
+) {
+  const cols = ["Flat No", "Name of Member", ...tariffNames];
+  const rows: Record<string, unknown>[] = sampleMembers.length > 0
+    ? sampleMembers.map((m, i) => {
+        const row: Record<string, unknown> = { "Flat No": m.flatNo ?? "", "Name of Member": m.name };
+        cols.slice(2).forEach((c, j) => {
+          row[c] = i === 0 ? [2500, 500, 300][j % 3] : "";
+        });
+        return row;
+      })
+    : [{ "Flat No": "A-101", "Name of Member": "Ramesh Kumar", ...Object.fromEntries(tariffNames.map((c) => [c, 2500])) }];
+  downloadWorkbook([{ name: "Custom Tariffs", rows }], "template-member-tariffs.xlsx");
+}
+
 export function downloadTemplate(kind: keyof typeof TEMPLATES) {
   const rows = TEMPLATES[kind];
   const filename = `template-${kind}.xlsx`;
