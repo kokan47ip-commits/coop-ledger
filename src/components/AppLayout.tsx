@@ -243,16 +243,15 @@ export function AppLayout() {
                 {user?.email ?? "Account"}
               </p>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0 text-muted-foreground"
-              onClick={handleSignOut}
-              title="Sign out"
-            >
-              <LogOut className="size-4" />
-            </Button>
           </div>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="mt-2 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          >
+            <LogOut className="size-4" />
+            Logout
+          </button>
         </div>
       </aside>
 
