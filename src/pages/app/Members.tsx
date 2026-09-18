@@ -25,12 +25,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
-import { formatDate, formatINR, fyStartISO } from "@/lib/format";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { exportPDF, exportWord, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
+import { effectiveFyPeriod, formatDate, formatINR, formatPeriod, fyStartISO, todayISO } from "@/lib/format";
+import { BookText, Download, FileText, HandCoins, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -49,6 +52,18 @@ type MemberRow = {
   isActive: boolean;
 };
 
+type Bill = Doc<"bills">;
+
+type LedgerRow = {
+  date: string;
+  voucherNo: string;
+  particulars: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  note?: string;
+};
+
 const emptyForm = {
   id: "" as Id<"members"> | "",
   code: "",
@@ -65,16 +80,162 @@ const emptyForm = {
 };
 
 export default function Members() {
-  const { societyId } = useSociety();
+  const { societyId, society } = useSociety();
   const members = useQuery(
     api.members.list,
     societyId ? { societyId } : "skip",
   ) as MemberRow[] | undefined;
+  const bills = useQuery(
+    api.bills.list,
+    societyId ? { societyId } : "skip",
+  ) as Bill[] | undefined;
+  const accounts = useQuery(
+    api.accounts.list,
+    societyId ? { societyId } : "skip",
+  ) as Doc<"accounts">[] | undefined;
   const upsert = useMutation(api.members.upsert);
   const remove = useMutation(api.members.remove);
+  const createVoucher = useMutation(api.vouchers.create);
+  const signatures = useCommitteeSignatures();
+  const navigate = useNavigate();
+
+  const bankAccounts = (accounts ?? []).filter((a) => a.kind === "bank_cash");
+
+  // Quick-pay dialog state (receipt settled across the member's bills, oldest first).
+  const [payOpen, setPayOpen] = useState(false);
+  const [payMember, setPayMember] = useState<MemberRow | null>(null);
+  const [payForm, setPayForm] = useState({
+    date: todayISO(),
+    amount: "",
+    mode: "cash",
+    bankCashAccountId: "",
+    reference: "",
+    narration: "",
+  });
+
+  // Deferred ledger export: set a target, wait for the ledger query, export.
+  const [exportTarget, setExportTarget] = useState<{
+    m: MemberRow;
+    kind: "pdf" | "word";
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+
+  const fy = effectiveFyPeriod(society);
+  const ledger = useQuery(
+    api.api.memberLedger,
+    societyId && exportTarget
+      ? {
+          societyId,
+          memberId: exportTarget.m._id,
+          fromDate: fy.from,
+          toDate: fy.to,
+        }
+      : "skip",
+  ) as { member: MemberRow | null; rows: LedgerRow[] } | undefined;
+
+  // When the ledger data arrives for a requested export, build and download it.
+  useEffect(() => {
+    if (!exportTarget || !ledger || !society) return;
+    const { m, kind } = exportTarget;
+    const meta: ExportMeta = {
+      societyName: society.name,
+      societyAddress: [society.address, society.city, society.state, society.pincode]
+        .filter(Boolean)
+        .join(", "),
+      registrationNo: society.registrationNo,
+      title: `Member Ledger — ${m.name} (${m.code})`,
+      subtitle: `Period ${formatDate(fy.from)} to ${formatDate(fy.to)}`,
+      signatures,
+    };
+    const closing =
+      ledger.rows.length > 0 ? ledger.rows[ledger.rows.length - 1].balance : m.openingBalance;
+    const base: (string | number)[][] = [];
+    if (m.openingBalance !== 0) {
+      base.push(["", "", "Opening Balance", m.openingBalance > 0 ? m.openingBalance : 0, m.openingBalance < 0 ? -m.openingBalance : 0, m.openingBalance]);
+    }
+    const rows = ledger.rows
+      .filter((r) => r.voucherNo !== "OPENING")
+      .map((r) => [
+        formatDate(r.date),
+        r.voucherNo,
+        r.particulars + (r.note ? ` (${r.note})` : ""),
+        r.debit,
+        r.credit,
+        r.balance,
+      ]);
+    const table: TableSpec = {
+      head: ["Date", "Voucher", "Particulars", "Debit", "Credit", "Balance"],
+      body: [...base, ...rows],
+      foot: [["", "", "CLOSING", "", "", closing]],
+      columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
+    };
+    if (kind === "pdf") exportPDF(meta, [table], `member-ledger-${m.code}.pdf`);
+    else exportWord(meta, [table], `member-ledger-${m.code}.doc`);
+    setExportTarget(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportTarget, ledger]);
+
+  const outstandingOf = (memberId: Id<"members">) =>
+    (bills ?? [])
+      .filter((b) => b.memberId === memberId && b.total > b.paidAmount)
+      .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
+
+  const openPay = (m: MemberRow) => {
+    setPayMember(m);
+    const due = outstandingOf(m._id).reduce((s, b) => s + (b.total - b.paidAmount), 0);
+    setPayForm({
+      date: todayISO(),
+      amount: due > 0 ? String(+due.toFixed(2)) : "",
+      mode: "cash",
+      bankCashAccountId: "",
+      reference: "",
+      narration: "Maintenance collection",
+    });
+    setPayOpen(true);
+  };
+
+  const submitPay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!societyId || !payMember) return;
+    const amount = Number(payForm.amount);
+    if (!amount || amount <= 0) {
+      toast.error("Enter a valid amount.");
+      return;
+    }
+    try {
+      // Settle outstanding bills oldest-first; any excess stays as advance.
+      let remaining = amount;
+      const allocations: { billId: Id<"bills">; amount: number }[] = [];
+      for (const b of outstandingOf(payMember._id)) {
+        if (remaining <= 0) break;
+        const take = Math.min(b.total - b.paidAmount, remaining);
+        allocations.push({ billId: b._id, amount: take });
+        remaining -= take;
+      }
+      await createVoucher({
+        societyId,
+        type: "member_receipt",
+        date: payForm.date,
+        memberId: payMember._id,
+        mode: payForm.mode,
+        bankCashAccountId: (payForm.bankCashAccountId || undefined) as Id<"accounts"> | undefined,
+        reference: payForm.reference || undefined,
+        narration: payForm.narration || undefined,
+        lines: [],
+        allocations,
+      });
+      toast.success(
+        `Receipt recorded for ${payMember.name}` +
+          (remaining > 0 ? ` · ${formatINR(remaining)} kept as advance` : ""),
+      );
+      setPayOpen(false);
+      setPayMember(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to record receipt");
+    }
+  };
 
   const filtered = useMemo(() => {
     const list = members ?? [];
@@ -187,7 +348,7 @@ export default function Members() {
                 <TableHead>Phone</TableHead>
                 <TableHead className="text-right">Opening</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
+                <TableHead className="text-right">Pay / PDF / Word / Ledger</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -208,6 +369,42 @@ export default function Members() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Record payment"
+                        onClick={() => openPay(m)}
+                      >
+                        <HandCoins className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Export ledger PDF"
+                        onClick={() => setExportTarget({ m, kind: "pdf" })}
+                      >
+                        <FileText className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Export ledger Word"
+                        onClick={() => setExportTarget({ m, kind: "word" })}
+                      >
+                        <Download className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Open member ledger"
+                        onClick={() => navigate(`/app/member-ledger?member=${m._id}`)}
+                      >
+                        <BookText className="size-3.5" />
+                      </Button>
                       <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(m)}>
                         <Pencil className="size-3.5" />
                       </Button>
@@ -301,6 +498,80 @@ export default function Members() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
               <Button type="submit">{form.id ? "Save changes" : "Add member"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick payment: posts a member receipt, settles outstanding bills oldest-first. */}
+      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Record payment — {payMember?.name} ({payMember?.code})
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={submitPay} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="p-date">Receipt date *</Label>
+                <Input id="p-date" type="date" required value={payForm.date}
+                  onChange={(e) => setPayForm({ ...payForm, date: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="p-amount">Amount (₹) *</Label>
+                <Input id="p-amount" type="number" step="0.01" min="0.01" required value={payForm.amount}
+                  onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Mode</Label>
+                <Select value={payForm.mode}
+                  onValueChange={(v) => setPayForm({ ...payForm, mode: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="bank">Bank transfer</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="upi">UPI</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="p-bank">Bank / cash account</Label>
+                <Select value={payForm.bankCashAccountId}
+                  onValueChange={(v) => setPayForm({ ...payForm, bankCashAccountId: v })}>
+                  <SelectTrigger><SelectValue placeholder="Default account" /></SelectTrigger>
+                  <SelectContent>
+                    {bankAccounts.map((a) => (
+                      <SelectItem key={a._id} value={a._id}>
+                        {a.code} — {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="p-ref">Reference</Label>
+                <Input id="p-ref" value={payForm.reference}
+                  onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
+                  placeholder="Cheque / UTR no." />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="p-narr">Narration</Label>
+                <Input id="p-narr" value={payForm.narration}
+                  onChange={(e) => setPayForm({ ...payForm, narration: e.target.value })} />
+              </div>
+            </div>
+            {payMember && (
+              <p className="text-xs text-muted-foreground">
+                Outstanding bills: {outstandingOf(payMember._id).length}
+                {" · "}
+                Due {formatINR(outstandingOf(payMember._id).reduce((s, b) => s + (b.total - b.paidAmount), 0))} — the payment settles them oldest-first, and any excess is kept as an advance.
+              </p>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPayOpen(false)}>Cancel</Button>
+              <Button type="submit">Record receipt</Button>
             </DialogFooter>
           </form>
         </DialogContent>
