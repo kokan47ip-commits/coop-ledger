@@ -9,11 +9,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { api } from "@/convex/_generated/api";
-import { useSociety } from "@/components/SocietyContext";
+import { saveClaimCode, useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { effectiveFyPeriod, fyYearLabel, todayISO } from "@/lib/format";
-import { CheckCircle2, Circle, Save, Users } from "lucide-react";
+import { CheckCircle2, Circle, Save, TriangleAlert, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -51,6 +58,7 @@ export default function SocietyProfile() {
 
   const createSociety = useMutation(api.societies.create);
   const updateSociety = useMutation(api.societies.update);
+  const deleteSociety = useMutation(api.societies.remove);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const isNew = params.get("new") === "1" || !society;
@@ -130,7 +138,7 @@ export default function SocietyProfile() {
     setSaving(true);
     try {
       if (isNew) {
-        const id = await createSociety({
+        const { societyId: id, claimCode } = await createSociety({
           name: form.name.trim(),
           registrationNo: form.registrationNo || undefined,
           registrationDate: form.registrationDate || undefined,
@@ -144,6 +152,9 @@ export default function SocietyProfile() {
           fyYear: form.fyYear || undefined,
           fyStartDate: form.fyStartDate || undefined,
         });
+        // Guest-created societies get a claim code kept on this device; after
+        // email sign-in the society is adopted automatically into the account.
+        if (claimCode) saveClaimCode(id, claimCode);
         setActiveId(id);
         toast.success("Society onboarded — chart of accounts generated");
         navigate("/app/society");
@@ -181,6 +192,31 @@ export default function SocietyProfile() {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Deletion is always explicit and user-initiated — societies are never
+  // removed automatically on login or by any other action.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  const deleteThisSociety = async () => {
+    if (!society) return;
+    setDeleting(true);
+    try {
+      await deleteSociety({ id: society._id });
+      try {
+        localStorage.removeItem("chs.activeSocietyId");
+      } catch {
+        /* ignore */
+      }
+      toast.success("Society deleted");
+      navigate("/app/society?new=1");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete society");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -519,6 +555,36 @@ export default function SocietyProfile() {
           )}
         </Tabs>
 
+        {/* Danger zone — the only place a society can be erased, always manual. */}
+        {!isNew && society && (
+          <div className="mt-10 rounded-none border border-destructive/40 p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <TriangleAlert className="mt-0.5 size-4 text-destructive" />
+                <div>
+                  <p className="text-sm font-medium">Delete this society</p>
+                  <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
+                    Societies are permanent records — nothing is deleted by logging in or out,
+                    and your books follow your account to any PC. Deletion happens only here,
+                    by you, and removes every member, bill and voucher permanently.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0 rounded-none border-destructive/50 text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  setDeleteConfirmText("");
+                  setDeleteOpen(true);
+                }}
+              >
+                Delete society
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="mt-10 flex items-center justify-end gap-3 border-t pt-6">
           <p className="mr-auto hidden text-xs text-muted-foreground sm:block">
             {todayISO() && <span>Changes apply to this society's books immediately.</span>}
@@ -529,6 +595,47 @@ export default function SocietyProfile() {
           </Button>
         </div>
       </form>
+
+      {/* Typed-confirmation delete dialog. */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete “{society?.name}”?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-muted-foreground">
+              This permanently erases the society together with its members, chart of
+              accounts, tariffs, member tariff overrides, bills, vouchers and claim
+              state. It cannot be undone.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="del-confirm">
+                Type <span className="font-mono font-semibold">DELETE</span> to confirm
+              </Label>
+              <Input
+                id="del-confirm"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="DELETE"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleting || deleteConfirmText !== "DELETE"}
+              onClick={deleteThisSociety}
+            >
+              {deleting ? "Deleting…" : "Delete permanently"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

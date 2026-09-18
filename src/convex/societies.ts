@@ -1,3 +1,4 @@
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
@@ -42,6 +43,14 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
+    const user = await ctx.db.get(userId);
+    // Guest (anonymous) users get a per-society claim code. The client stores it
+    // on this device so the society can be adopted by the real email account
+    // later — guest identities do not survive between logins, books must.
+    const isGuest = user?.isAnonymous === true;
+    const claimCode = isGuest
+      ? Math.random().toString(36).slice(2, 10).toUpperCase()
+      : undefined;
     const societyId = await ctx.db.insert("societies", {
       name: args.name,
       registrationNo: args.registrationNo,
@@ -56,6 +65,7 @@ export const create = mutation({
       fyYear: args.fyYear,
       fyStartDate: args.fyStartDate,
       createdBy: userId,
+      claimCode,
     });
     await seedDefaultGroups(ctx, societyId);
     const groups = await ctx.db
@@ -73,7 +83,47 @@ export const create = mutation({
         groupId: groups.find((g) => g.name === a.group)?._id,
       });
     }
-    return societyId;
+    return { societyId, claimCode: claimCode ?? null };
+  },
+});
+
+/**
+ * Adopt a guest-created society into the signed-in account. The claim code is
+ * issued to the device that created the society; once claimed, ownership moves
+ * to the current user and the code is cleared so it cannot be reused.
+ */
+export const adoptByClaimCode = mutation({
+  args: { claimCode: v.string() },
+  handler: async (ctx, { claimCode }) => {
+    const userId = await requireUserId(ctx);
+    const user = await ctx.db.get(userId);
+    if (user?.isAnonymous) {
+      throw new Error("Sign in with email to claim this society.");
+    }
+    const society = await ctx.db
+      .query("societies")
+      .withIndex("by_claim_code", (q) => q.eq("claimCode", claimCode))
+      .unique();
+    if (!society) {
+      throw new Error("This claim code is not valid or has already been used.");
+    }
+    await ctx.db.patch(society._id, { createdBy: userId, claimCode: undefined });
+    return society._id;
+  },
+});
+
+/** Returns the claim codes of every guest-created society owned by the caller. */
+export const myClaimCodes = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const societies = await ctx.db
+      .query("societies")
+      .withIndex("by_creator", (q) => q.eq("createdBy", userId))
+      .collect();
+    return societies
+      .filter((s) => s.claimCode)
+      .map((s) => ({ societyId: s._id, name: s.name, claimCode: s.claimCode! }));
   },
 });
 
@@ -118,6 +168,7 @@ export const remove = mutation({
       "members",
       "accounts",
       "accountGroups",
+      "memberTariffs",
     ] as const) {
       const rows = await ctx.db
         .query(table)

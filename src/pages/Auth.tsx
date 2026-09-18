@@ -189,6 +189,10 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       <UserX className="mr-2 h-4 w-4" />
                       Preview as guest
                     </Button>
+                    <p className="mt-2 text-center text-xs text-muted-foreground">
+                      Guest data stays on this device only. Sign in with email —
+                      from any PC — to keep societies and books in your account.
+                    </p>
                   </div>
                 </CardContent>
               </form>

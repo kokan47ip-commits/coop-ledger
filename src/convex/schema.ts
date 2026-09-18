@@ -49,8 +49,14 @@ const schema = defineSchema(
       secretaryMemberId: v.optional(v.id("members")),
       treasurerMemberId: v.optional(v.id("members")),
       createdBy: v.id("users"),
+      // When a society is created by a guest (anonymous) user, a claim code is
+      // stored here so the creator can adopt it after signing in with email —
+      // guest identities are per-device, but the books must survive the login.
+      claimCode: v.optional(v.string()),
       receivableAccountId: v.optional(v.id("accounts")),
-    }).index("by_creator", ["createdBy"]),
+    })
+      .index("by_creator", ["createdBy"])
+      .index("by_claim_code", ["claimCode"]),
 
     accounts: defineTable({
       societyId: v.id("societies"),

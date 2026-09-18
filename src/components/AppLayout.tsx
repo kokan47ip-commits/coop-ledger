@@ -149,7 +149,7 @@ function SocietySwitcher() {
 }
 
 export function AppLayout() {
-  const { societyId, society, isLoading } = useSociety();
+  const { societyId, society, isLoading, isGuest } = useSociety();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -287,6 +287,18 @@ export function AppLayout() {
           </div>
         </header>
         <main className="flex-1 px-4 py-8 lg:px-10">
+          {isGuest && (
+            <div className="mb-6 flex flex-col gap-2 border border-amber-600/40 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between dark:bg-amber-950/40 dark:text-amber-200">
+              <p>
+                You are in guest preview. Everything you enter is kept only on
+                this device until you sign in with your email — which carries
+                your societies and books to any PC you log in from.
+              </p>
+              <Button asChild variant="outline" size="sm" className="shrink-0 rounded-none border-amber-600/40">
+                <Link to="/auth">Sign in with email</Link>
+              </Button>
+            </div>
+          )}
           {isLoading ? null : <Outlet />}
         </main>
       </div>
