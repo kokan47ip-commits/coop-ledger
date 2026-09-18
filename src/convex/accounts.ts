@@ -27,6 +27,7 @@ export const upsert = mutation({
     ),
     kind: v.optional(v.union(v.literal("bank_cash"), v.literal("receivable"))),
     openingBalance: v.number(),
+    groupId: v.optional(v.id("accountGroups")),
   },
   handler: async (ctx, { societyId, id, ...data }) => {
     await requireSociety(ctx, societyId);

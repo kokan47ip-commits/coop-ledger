@@ -45,32 +45,53 @@ export const VOUCHER_PREFIX = {
   journal: "JV",
 } as const;
 
+export type GroupSeed = {
+  code: string;
+  name: string;
+  type: "asset" | "liability" | "income" | "expense";
+  sequence: number;
+};
+
+export const DEFAULT_GROUPS: GroupSeed[] = [
+  { code: "GA", name: "Current Assets", type: "asset", sequence: 1 },
+  { code: "GA", name: "Fixed Assets", type: "asset", sequence: 2 },
+  { code: "GL", name: "Capital Account", type: "liability", sequence: 1 },
+  { code: "GL", name: "Reserve & Surplus", type: "liability", sequence: 2 },
+  { code: "GL", name: "Loans (Liability)", type: "liability", sequence: 3 },
+  { code: "GI", name: "Direct Income", type: "income", sequence: 1 },
+  { code: "GI", name: "Indirect Incomes", type: "income", sequence: 2 },
+  { code: "GE", name: "Direct Expenses", type: "expense", sequence: 1 },
+  { code: "GE", name: "Indirect Expenses", type: "expense", sequence: 2 },
+];
+
 export const DEFAULT_ACCOUNTS: {
   code: string;
   name: string;
   type: "asset" | "liability" | "income" | "expense";
   kind?: "bank_cash" | "receivable";
+  /** Group name from DEFAULT_GROUPS that this account is filed under. */
+  group?: string;
 }[] = [
-  { code: "1000", name: "Members Receivable", type: "asset", kind: "receivable" },
-  { code: "1010", name: "Cash in Hand", type: "asset", kind: "bank_cash" },
-  { code: "1020", name: "Bank Account", type: "asset", kind: "bank_cash" },
-  { code: "2000", name: "Corpus Fund", type: "liability" },
-  { code: "2010", name: "Sinking Fund", type: "liability" },
-  { code: "2020", name: "Repair & Renovation Fund", type: "liability" },
-  { code: "3000", name: "Maintenance Charges", type: "income" },
-  { code: "3010", name: "Sinking Fund Contribution", type: "income" },
-  { code: "3020", name: "Parking Charges", type: "income" },
-  { code: "3030", name: "Interest Income", type: "income" },
-  { code: "3040", name: "Other Income", type: "income" },
-  { code: "4000", name: "Electricity Charges", type: "expense" },
-  { code: "4010", name: "Water Charges", type: "expense" },
-  { code: "4020", name: "Repairs & Maintenance", type: "expense" },
-  { code: "4030", name: "Salaries & Wages", type: "expense" },
-  { code: "4040", name: "Security Charges", type: "expense" },
-  { code: "4050", name: "Housekeeping Charges", type: "expense" },
-  { code: "4060", name: "Audit & Accounting Fees", type: "expense" },
-  { code: "4070", name: "Office Expenses", type: "expense" },
-  { code: "4080", name: "Bank Charges", type: "expense" },
+  { code: "1000", name: "Members Receivable", type: "asset", kind: "receivable", group: "Current Assets" },
+  { code: "1010", name: "Cash in Hand", type: "asset", kind: "bank_cash", group: "Current Assets" },
+  { code: "1020", name: "Bank Account", type: "asset", kind: "bank_cash", group: "Current Assets" },
+  { code: "2000", name: "Corpus Fund", type: "liability", group: "Reserve & Surplus" },
+  { code: "2010", name: "Sinking Fund", type: "liability", group: "Reserve & Surplus" },
+  { code: "2020", name: "Repair & Renovation Fund", type: "liability", group: "Reserve & Surplus" },
+  { code: "3000", name: "Maintenance Charges", type: "income", group: "Direct Income" },
+  { code: "3010", name: "Sinking Fund Contribution", type: "income", group: "Direct Income" },
+  { code: "3020", name: "Parking Charges", type: "income", group: "Direct Income" },
+  { code: "3030", name: "Interest Income", type: "income", group: "Indirect Incomes" },
+  { code: "3040", name: "Other Income", type: "income", group: "Indirect Incomes" },
+  { code: "4000", name: "Electricity Charges", type: "expense", group: "Indirect Expenses" },
+  { code: "4010", name: "Water Charges", type: "expense", group: "Indirect Expenses" },
+  { code: "4020", name: "Repairs & Maintenance", type: "expense", group: "Indirect Expenses" },
+  { code: "4030", name: "Salaries & Wages", type: "expense", group: "Indirect Expenses" },
+  { code: "4040", name: "Security Charges", type: "expense", group: "Indirect Expenses" },
+  { code: "4050", name: "Housekeeping Charges", type: "expense", group: "Indirect Expenses" },
+  { code: "4060", name: "Audit & Accounting Fees", type: "expense", group: "Indirect Expenses" },
+  { code: "4070", name: "Office Expenses", type: "expense", group: "Indirect Expenses" },
+  { code: "4080", name: "Bank Charges", type: "expense", group: "Indirect Expenses" },
 ];
 
 export function recomputeBillStatus(total: number, paidAmount: number) {

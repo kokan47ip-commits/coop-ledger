@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { seedDefaultGroups } from "./accountGroups";
 import { DEFAULT_ACCOUNTS, requireUserId } from "./lib";
 
 export const listMine = query({
@@ -56,6 +57,11 @@ export const create = mutation({
       fyStartDate: args.fyStartDate,
       createdBy: userId,
     });
+    await seedDefaultGroups(ctx, societyId);
+    const groups = await ctx.db
+      .query("accountGroups")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
     for (const a of DEFAULT_ACCOUNTS) {
       await ctx.db.insert("accounts", {
         societyId,
@@ -64,6 +70,7 @@ export const create = mutation({
         type: a.type,
         kind: a.kind,
         openingBalance: 0,
+        groupId: groups.find((g) => g.name === a.group)?._id,
       });
     }
     return societyId;
@@ -110,6 +117,7 @@ export const remove = mutation({
       "tariffs",
       "members",
       "accounts",
+      "accountGroups",
     ] as const) {
       const rows = await ctx.db
         .query(table)

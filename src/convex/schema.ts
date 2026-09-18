@@ -66,6 +66,22 @@ const schema = defineSchema(
         v.union(v.literal("bank_cash"), v.literal("receivable")),
       ),
       openingBalance: v.number(),
+      groupId: v.optional(v.id("accountGroups")),
+    }).index("by_society", ["societyId"]),
+
+    // Ledger classification groups (e.g. Fixed Assets, Reserve & Surplus) that
+    // accounts are filed under for statement presentation.
+    accountGroups: defineTable({
+      societyId: v.id("societies"),
+      code: v.string(),
+      name: v.string(),
+      type: v.union(
+        v.literal("asset"),
+        v.literal("liability"),
+        v.literal("income"),
+        v.literal("expense"),
+      ),
+      sequence: v.number(), // display order within the statement
     }).index("by_society", ["societyId"]),
 
     members: defineTable({
