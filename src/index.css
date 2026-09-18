@@ -42,9 +42,9 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* CHANGE VALUES FOR THEME — Minimalism: near-monochrome, precise, spacious */
+/* CHANGE VALUES FOR THEME — Minimalism, squared: near-monochrome, precise, spacious */
 :root {
-  --radius: 0.25rem;
+  --radius: 0rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -119,7 +119,7 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "tnum" 1, "cv05" 1;
-    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
   }
   button:not([disabled]),
   [role="button"]:not([disabled]) {

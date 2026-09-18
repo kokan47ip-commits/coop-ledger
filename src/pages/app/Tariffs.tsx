@@ -119,7 +119,7 @@ export default function Tariffs() {
         description="Recurring charges applied to every member when a monthly bill is generated."
         actions={
           <Button
-            className="rounded-full"
+            className="rounded-none"
             disabled={incomeAccounts.length === 0}
             onClick={() => {
               setForm({ id: "", name: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true });

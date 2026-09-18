@@ -22,26 +22,26 @@ const KINDS: {
 }[] = [
   {
     kind: "members",
-    title: "Member opening details",
-    description: "Import the member register with opening receivable balances.",
+    title: "Member register & openings",
+    description: "Import the client's member register with opening receivable balances.",
     columns: "Code, Name, FlatNo, Wing, Phone, Email, OwnershipType, JoinDate, OpeningBalance, OpeningDate",
   },
   {
     kind: "tariffs",
     title: "Tariff schedule",
-    description: "Import recurring charges. Account column accepts the account code or name.",
+    description: "Import recurring charges. The Account column accepts either the account code or its name.",
     columns: "Name, Amount, Account, Unit",
   },
   {
     kind: "receipts",
     title: "Member & other receipts",
-    description: "Import member collections; each row creates a receipt voucher allocated oldest-bill-first.",
+    description: "Import collection scrolls. Each row becomes a receipt voucher, settled against outstanding bills oldest-first.",
     columns: "Date, MemberCode, Amount, Mode, Reference, Narration",
   },
   {
     kind: "payments",
-    title: "Payments",
-    description: "Import expense payments; Account must match an existing ledger name or code.",
+    title: "Payment register",
+    description: "Import expense payments. The Account column must match an existing ledger name or code.",
     columns: "Date, Account, Amount, Bank, Reference, Narration",
   },
 ];
@@ -132,7 +132,7 @@ function UploadCard({
             e.target.value = "";
           }}
         />
-        <Button disabled={busy} onClick={() => inputRef.current?.click()} className="rounded-full">
+        <Button disabled={busy} onClick={() => inputRef.current?.click()} className="rounded-none">
           <Upload className="size-4" /> {busy ? "Uploading…" : "Upload Excel"}
         </Button>
         {last && (
@@ -159,7 +159,7 @@ export default function Uploads() {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Excel Uploads"
-        description="Bulk-import opening data and day-to-day transactions. Download a template to see the exact expected columns — headers are matched flexibly (order and case don't matter)."
+        description="Bring client records across from spreadsheets in bulk. Download a template to see the expected columns — headers are matched flexibly, so order and capitalisation don't matter."
       />
       <div className="space-y-4">
         {KINDS.map((k) => (

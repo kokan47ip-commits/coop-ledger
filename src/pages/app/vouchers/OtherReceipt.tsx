@@ -135,7 +135,7 @@ export default function OtherReceipt() {
           </div>
         </div>
         <div className="mt-5 flex justify-end">
-          <Button type="submit" className="rounded-full px-6">
+          <Button type="submit" className="rounded-none px-6">
             <Plus className="size-4" /> Save receipt
           </Button>
         </div>

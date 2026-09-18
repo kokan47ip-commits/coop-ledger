@@ -155,7 +155,7 @@ export default function Members() {
         title="Members"
         description="Member register with opening receivable balances. Opening balances flow into member ledgers and the balance sheet."
         actions={
-          <Button onClick={openNew} className="rounded-full">
+          <Button onClick={openNew} className="rounded-none">
             <Plus className="size-4" /> Add member
           </Button>
         }

@@ -198,7 +198,7 @@ export default function BillRegister() {
             <Input id="b-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </div>
           <div className="flex items-end">
-            <Button onClick={doGenerate} disabled={generating || (tariffs ?? []).filter((t) => t.isActive).length === 0} className="w-full rounded-full">
+            <Button onClick={doGenerate} disabled={generating || (tariffs ?? []).filter((t) => t.isActive).length === 0} className="w-full rounded-none">
               {generating ? "Generating…" : "Generate for all active members"}
             </Button>
           </div>

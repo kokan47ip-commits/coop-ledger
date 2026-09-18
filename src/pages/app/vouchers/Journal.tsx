@@ -173,7 +173,7 @@ export default function Journal() {
             <span className={balanced ? "text-muted-foreground" : "text-destructive"}>
               {balanced ? "Balanced" : "Out of balance"}
             </span>
-            <Button type="submit" className="rounded-full px-6" disabled={!balanced}>
+            <Button type="submit" className="rounded-none px-6" disabled={!balanced}>
               Save journal
             </Button>
           </div>

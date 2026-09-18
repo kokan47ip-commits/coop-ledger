@@ -23,7 +23,6 @@ import {
   LogOut,
   Plus,
   Receipt,
-  Settings,
   TrendingUp,
   Users,
   Wallet,
@@ -107,23 +106,27 @@ const PAGE_TITLES: Record<string, string> = {
 function SocietySwitcher() {
   const { societies, society, setActiveId } = useSociety();
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          className="w-full justify-between gap-2 font-normal text-foreground"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded bg-foreground text-[10px] font-semibold text-background">
-              {(society?.name ?? "CH").slice(0, 1).toUpperCase()}
+    <DropdownMenu>        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            className="w-full justify-between gap-2 px-2 font-normal text-foreground"
+          >
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-none bg-foreground text-[9px] font-semibold tracking-wide text-background">
+                IAS
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{society?.name ?? "No society selected"}</span>
+                <span className="block truncate text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  Imamm Accounting
+                </span>
+              </span>
             </span>
-            <span className="truncate text-sm">{society?.name ?? "No society"}</span>
-          </span>
-          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
+            <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuLabel>Societies</DropdownMenuLabel>
+        <DropdownMenuLabel>Client societies</DropdownMenuLabel>
         {societies.map((s) => (
           <DropdownMenuItem
             key={s._id}
@@ -137,7 +140,7 @@ function SocietySwitcher() {
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link to="/app/society?new=1" className="cursor-pointer">
-            <Plus className="mr-2 size-4" /> New society
+            <Plus className="mr-2 size-4" /> Onboard a new society
           </Link>
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -169,17 +172,20 @@ export function AppLayout() {
 
   if (!isLoading && !societyId && !isSetupRoute) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center">
-        <div className="max-w-md space-y-3">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-8 px-6 text-center">
+        <div className="max-w-md space-y-4">
+          <span className="mx-auto flex size-9 items-center justify-center rounded-none bg-foreground text-[10px] font-semibold tracking-wide text-background">
+            IAS
+          </span>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Set up your society
+            Set up your first client society
           </h1>
           <p className="text-sm leading-6 text-muted-foreground">
-            Create a society profile to begin — the default chart of accounts
-            is generated automatically.
+            Create a society profile to open its books — the standard chart of
+            accounts is generated automatically, ready for bills and vouchers.
           </p>
         </div>
-        <Button asChild className="rounded-full">
+        <Button asChild className="rounded-none px-8">
           <Link to="/app/society?new=1">
             <Plus className="size-4" /> Create society
           </Link>
@@ -269,13 +275,15 @@ export function AppLayout() {
             <span className="text-lg leading-none">≡</span>
           </Button>
           <h1 className="text-sm font-medium tracking-tight">{title}</h1>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
             {society?.registrationNo && (
               <span className="hidden text-xs text-muted-foreground sm:inline">
                 Reg. {society.registrationNo}
               </span>
             )}
-            <Settings className="hidden size-4 text-muted-foreground/40 sm:block" />
+            <span className="hidden text-[10px] uppercase tracking-[0.16em] text-muted-foreground md:inline">
+              Imamm Accounting Solutions
+            </span>
           </div>
         </header>
         <main className="flex-1 px-4 py-8 lg:px-10">

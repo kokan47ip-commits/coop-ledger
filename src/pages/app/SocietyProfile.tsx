@@ -115,16 +115,16 @@ export default function SocietyProfile() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
-        title={isNew ? "Create society" : "Society Profile"}
+        title={isNew ? "Onboard a client society" : "Society Profile"}
         description={
           isNew
-            ? "Register the co-operative housing society. A starter chart of accounts is created automatically."
-            : "Details used on bills, vouchers and all printed reports."
+            ? "Register a client society to open its books. The standard chart of accounts is generated automatically, ready for tariffs, bills and vouchers."
+            : "These details appear on every bill, voucher and statement issued for this society."
         }
       />
       <form onSubmit={submit} className="space-y-8">
         <section className="space-y-4">
-          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Identity</h3>
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Identity</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="name">Society name *</Label>
@@ -213,9 +213,9 @@ export default function SocietyProfile() {
         )}
 
         <div className="flex justify-end gap-2 border-t pt-6">
-          <Button type="submit" disabled={saving} className="rounded-full px-6">
-            {saving ? "Saving…" : isNew ? "Create society" : "Save changes"}
-          </Button>
+        <Button type="submit" disabled={saving} className="rounded-none px-6">
+          {saving ? "Saving…" : isNew ? "Onboard society" : "Save changes"}
+        </Button>
         </div>
       </form>
     </div>

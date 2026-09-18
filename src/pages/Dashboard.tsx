@@ -63,11 +63,11 @@ export default function Dashboard() {
         title={society ? society.name : "Dashboard"}
         description={
           society
-            ? `Accounting overview for the current financial year (${fyLabel}).`
-            : "Overview of your society's books."
+            ? `Engagement overview for the current financial year (${fyLabel}).`
+            : "Overview of the books you keep."
         }
         actions={
-          <Button asChild variant="outline" size="sm">
+          <Button asChild variant="outline" size="sm" className="rounded-none">
             <Link to="/app/bills">
               <Receipt className="size-4" /> Generate bills
             </Link>
@@ -103,7 +103,7 @@ export default function Dashboard() {
         {/* Recent vouchers */}
         <section className="lg:col-span-3">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-medium">Recent vouchers</h3>
+            <h3 className="text-sm font-medium tracking-tight">Recent postings</h3>
             <Link
               to="/app/member-receipt"
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -112,8 +112,8 @@ export default function Dashboard() {
             </Link>
           </div>
           {!stats ? null : stats.recentVouchers.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-              No transactions yet. Start with a member receipt or generate bills.
+            <div className="rounded-none border border-dashed p-10 text-center text-sm text-muted-foreground">
+              No transactions posted yet. Begin with a member receipt or generate the month's bills.
             </div>
           ) : (
             <div className="rounded-lg border">
@@ -149,39 +149,39 @@ export default function Dashboard() {
         {/* Quick actions */}
         <section className="lg:col-span-2">
           <div className="mb-4">
-            <h3 className="text-sm font-medium">Quick actions</h3>
+            <h3 className="text-sm font-medium tracking-tight">Frequent tasks</h3>
           </div>
           <div className="space-y-2">
             {[
               {
                 to: "/app/member-receipt",
                 icon: <Receipt className="size-4" />,
-                title: "Record member receipt",
-                desc: "Collect maintenance with auto bill settlement",
+                title: "Post a member receipt",
+                desc: "Collections settle outstanding bills automatically",
               },
               {
                 to: "/app/bills",
                 icon: <FileSpreadsheet className="size-4" />,
-                title: "Generate monthly bills",
-                desc: "From the active tariff schedule",
+                title: "Raise the month's bills",
+                desc: "Generated from the active tariff schedule",
               },
               {
                 to: "/app/uploads",
                 icon: <ArrowUpRight className="size-4" />,
-                title: "Import opening data",
+                title: "Import client registers",
                 desc: "Members, tariffs, receipts and payments via Excel",
               },
               {
                 to: "/app/income-expenditure",
                 icon: <TrendingUp className="size-4" />,
-                title: "View Income & Expenditure",
-                desc: "Surplus for the financial year",
+                title: "Income & Expenditure",
+                desc: "Surplus for the financial year, exportable",
               },
               {
                 to: "/app/members",
                 icon: <Users className="size-4" />,
-                title: "Manage members",
-                desc: "Register, openings and flat details",
+                title: "Maintain the member register",
+                desc: "Codes, flats, contacts and opening balances",
               },
               {
                 to: "/app/receipt-payment",
@@ -193,7 +193,7 @@ export default function Dashboard() {
               <Link
                 key={a.to}
                 to={a.to}
-                className="group flex items-start gap-4 rounded-lg border p-4 transition-colors hover:bg-accent/40"
+                className="group flex items-start gap-4 rounded-none border p-4 transition-colors hover:bg-accent/40"
               >
                 <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border text-muted-foreground group-hover:text-foreground">
                   {a.icon}

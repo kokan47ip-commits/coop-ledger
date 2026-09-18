@@ -113,7 +113,7 @@ export default function ChartOfAccounts() {
         description="Ledger heads used by tariffs, vouchers and reports. Opening balances set the starting position for the current financial year."
         actions={
           <Button
-            className="rounded-full"
+            className="rounded-none"
             onClick={() => {
               setForm({ id: "", code: "", name: "", type: "expense", kind: "none", openingBalance: "0" });
               setOpen(true);

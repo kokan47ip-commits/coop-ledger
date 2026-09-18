@@ -141,9 +141,9 @@ export default function GeneralLedger() {
       />
 
       <Tabs defaultValue="ledger">
-        <TabsList className="rounded-full">
-          <TabsTrigger value="ledger" className="rounded-full">Account ledger</TabsTrigger>
-          <TabsTrigger value="trial" className="rounded-full">Trial balance</TabsTrigger>
+        <TabsList className="rounded-none">
+          <TabsTrigger value="ledger" className="rounded-none">Account ledger</TabsTrigger>
+          <TabsTrigger value="trial" className="rounded-none">Trial balance</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ledger" className="mt-6">

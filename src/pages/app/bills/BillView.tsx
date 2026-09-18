@@ -106,7 +106,7 @@ export default function BillView() {
             <p className="font-mono text-xs text-muted-foreground">{bill.billNo}</p>
             <p className="text-muted-foreground">Period: {formatPeriod(bill.period)}</p>
             <p className="text-muted-foreground">Due: {formatDate(bill.dueDate)}</p>
-            <p className="mt-1 inline-block rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide">
+            <p className="mt-1 inline-block rounded-none border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]">
               {bill.status}
             </p>
           </div>

@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/input-otp";
 
 import { useAuth } from "@/hooks/use-auth";
-import logo from "@/assets/logo.svg";
 import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -120,19 +119,20 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           {step === "signIn" ? (
             <>
               <CardHeader className="text-center">
-              <div className="flex justify-center">
-                    <img
-                      src={logo}
-                      alt="Lock Icon"
-                      width={64}
-                      height={64}
-                      className="rounded-lg mb-4 mt-4 cursor-pointer"
-                      onClick={() => navigate("/")}
-                    />
-                  </div>
-                <CardTitle className="text-xl">Get Started</CardTitle>
+                <div className="flex justify-center">
+                  <span
+                    className="mb-4 mt-4 flex size-14 cursor-pointer items-center justify-center rounded-none bg-foreground text-xs font-semibold tracking-widest text-background"
+                    onClick={() => navigate("/")}
+                    title="Imamm Accounting Solutions"
+                  >
+                    IAS
+                  </span>
+                </div>
+                <CardTitle className="text-xl tracking-tight">
+                  Imamm Accounting Solutions
+                </CardTitle>
                 <CardDescription>
-                  Enter your email to log in or sign up
+                  Sign in with your email to enter the practice workspace.
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleEmailSubmit}>
@@ -172,22 +172,22 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       <div className="absolute inset-0 flex items-center">
                         <span className="w-full border-t" />
                       </div>
-                      <div className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-background px-2 text-muted-foreground">
-                          Or
-                        </span>
-                      </div>
+                    <div className="relative flex justify-center text-xs uppercase tracking-[0.2em]">
+                      <span className="bg-background px-2 text-muted-foreground">
+                        Or
+                      </span>
+                    </div>
                     </div>
                     
                     <Button
                       type="button"
                       variant="outline"
-                      className="w-full mt-4"
+                      className="w-full rounded-none"
                       onClick={handleGuestLogin}
                       disabled={isLoading}
                     >
                       <UserX className="mr-2 h-4 w-4" />
-                      Continue as Guest
+                      Preview as guest
                     </Button>
                   </div>
                 </CardContent>
@@ -196,9 +196,10 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           ) : (
             <>
               <CardHeader className="text-center mt-4">
-                <CardTitle>Check your email</CardTitle>
+                <CardTitle className="tracking-tight">Check your email</CardTitle>
                 <CardDescription>
-                  We've sent a code to {step.email}
+                  A six-digit verification code was sent to {step.email}.
+                  It expires in fifteen minutes.
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleOtpSubmit}>
@@ -275,20 +276,10 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                 </CardFooter>
               </form>
             </>
-          )}
-
-          <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
-            Secured by{" "}
-            <a
-              href="https://freebuff.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:text-primary transition-colors"
-            >
-              freebuff.com
-            </a>
-          </div>
-        </Card>
+          )}                  <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
+                    Private workspace · Imamm Accounting Solutions
+                  </div>
+                </Card>
         </div>
       </div>
     </div>

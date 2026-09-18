@@ -1,7 +1,7 @@
 {
-  "name": "freebuff.com application",
-  "short_name": "freebuff.com",
-  "description": "freebuff.com application",
+  "name": "Imamm Accounting Solutions",
+  "short_name": "Imamm",
+  "description": "Private accounting workspace for co-operative housing society books.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
