@@ -1,0 +1,162 @@
+import { authTables } from "@convex-dev/auth/server";
+import { defineSchema, defineTable } from "convex/server";
+import { Infer, v } from "convex/values";
+
+// default user roles. can add / remove based on the project as needed
+export const ROLES = {
+  ADMIN: "admin",
+  USER: "user",
+  MEMBER: "member",
+} as const;
+
+export const roleValidator = v.union(
+  v.literal(ROLES.ADMIN),
+  v.literal(ROLES.USER),
+  v.literal(ROLES.MEMBER),
+);
+export type Role = Infer<typeof roleValidator>;
+
+const schema = defineSchema(
+  {
+    // default auth tables using convex auth.
+    ...authTables, // do not remove or modify
+
+    users: defineTable({
+      name: v.optional(v.string()),
+      image: v.optional(v.string()),
+      email: v.optional(v.string()),
+      emailVerificationTime: v.optional(v.number()),
+      isAnonymous: v.optional(v.boolean()),
+      role: v.optional(roleValidator),
+    }).index("email", ["email"]),
+
+    // ---- Housing society accounting ----
+
+    societies: defineTable({
+      name: v.string(),
+      registrationNo: v.optional(v.string()),
+      address: v.optional(v.string()),
+      city: v.optional(v.string()),
+      state: v.optional(v.string()),
+      pincode: v.optional(v.string()),
+      email: v.optional(v.string()),
+      phone: v.optional(v.string()),
+      fyStartMonth: v.number(), // 1..12 (April = 4 for Indian societies)
+      createdBy: v.id("users"),
+      receivableAccountId: v.optional(v.id("accounts")),
+    }).index("by_creator", ["createdBy"]),
+
+    accounts: defineTable({
+      societyId: v.id("societies"),
+      code: v.string(),
+      name: v.string(),
+      type: v.union(
+        v.literal("asset"),
+        v.literal("liability"),
+        v.literal("income"),
+        v.literal("expense"),
+      ),
+      kind: v.optional(
+        v.union(v.literal("bank_cash"), v.literal("receivable")),
+      ),
+      openingBalance: v.number(),
+    }).index("by_society", ["societyId"]),
+
+    members: defineTable({
+      societyId: v.id("societies"),
+      code: v.string(),
+      name: v.string(),
+      flatNo: v.optional(v.string()),
+      wing: v.optional(v.string()),
+      phone: v.optional(v.string()),
+      email: v.optional(v.string()),
+      ownershipType: v.optional(
+        v.union(v.literal("owner"), v.literal("tenant")),
+      ),
+      joinDate: v.optional(v.string()),
+      openingBalance: v.number(), // opening receivable (positive = member owes)
+      openingDate: v.optional(v.string()),
+      isActive: v.boolean(),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_code", ["societyId", "code"]),
+
+    tariffs: defineTable({
+      societyId: v.id("societies"),
+      name: v.string(),
+      accountId: v.id("accounts"),
+      amount: v.number(),
+      unit: v.optional(v.union(v.literal("flat"), v.literal("member"))),
+      isActive: v.boolean(),
+    }).index("by_society", ["societyId"]),
+
+    bills: defineTable({
+      societyId: v.id("societies"),
+      billNo: v.string(),
+      memberId: v.id("members"),
+      period: v.string(), // "YYYY-MM"
+      issueDate: v.string(), // "YYYY-MM-DD"
+      dueDate: v.string(),
+      lines: v.array(
+        v.object({
+          tariffId: v.optional(v.id("tariffs")),
+          accountId: v.id("accounts"),
+          name: v.string(),
+          amount: v.number(),
+        }),
+      ),
+      total: v.number(),
+      paidAmount: v.number(),
+      status: v.union(
+        v.literal("unpaid"),
+        v.literal("partial"),
+        v.literal("paid"),
+      ),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_member", ["societyId", "memberId"])
+      .index("by_society_period", ["societyId", "period"]),
+
+    vouchers: defineTable({
+      societyId: v.id("societies"),
+      type: v.union(
+        v.literal("member_receipt"),
+        v.literal("other_receipt"),
+        v.literal("payment"),
+        v.literal("journal"),
+      ),
+      voucherNo: v.string(),
+      date: v.string(), // "YYYY-MM-DD"
+      memberId: v.optional(v.id("members")),
+      mode: v.optional(v.string()),
+      bankCashAccountId: v.optional(v.id("accounts")),
+      reference: v.optional(v.string()),
+      narration: v.optional(v.string()),
+      total: v.number(),
+      lines: v.array(
+        v.object({
+          accountId: v.id("accounts"),
+          debit: v.number(),
+          credit: v.number(),
+          note: v.optional(v.string()),
+        }),
+      ),
+      allocations: v.optional(
+        v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
+      ),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_type", ["societyId", "type"])
+      .index("by_society_member", ["societyId", "memberId"]),
+
+    counters: defineTable({ key: v.string(), value: v.number() }).index(
+      "by_key",
+      ["key"],
+    ),
+  },
+  {
+    schemaValidation: false,
+  },
+);
+
+export default schema;

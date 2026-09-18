@@ -1,0 +1,118 @@
+import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import { nextNumber, pad, requireSociety } from "./lib";
+
+export const list = query({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    await requireSociety(ctx, societyId);
+    return await ctx.db
+      .query("bills")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+  },
+});
+
+export const listByPeriod = query({
+  args: { societyId: v.id("societies"), period: v.string() },
+  handler: async (ctx, { societyId, period }) => {
+    await requireSociety(ctx, societyId);
+    return await ctx.db
+      .query("bills")
+      .withIndex("by_society_period", (q) =>
+        q.eq("societyId", societyId).eq("period", period),
+      )
+      .collect();
+  },
+});
+
+export const listByMember = query({
+  args: { societyId: v.id("societies"), memberId: v.id("members") },
+  handler: async (ctx, { societyId, memberId }) => {
+    await requireSociety(ctx, societyId);
+    return await ctx.db
+      .query("bills")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", societyId).eq("memberId", memberId),
+      )
+      .collect();
+  },
+});
+
+export const generate = mutation({
+  args: {
+    societyId: v.id("societies"),
+    period: v.string(),
+    issueDate: v.string(),
+    dueDate: v.string(),
+    memberIds: v.array(v.id("members")),
+  },
+  handler: async (ctx, { societyId, period, issueDate, dueDate, memberIds }) => {
+    await requireSociety(ctx, societyId);
+    const allTariffs = await ctx.db
+      .query("tariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const tariffs = allTariffs.filter((t) => t.isActive);
+    if (tariffs.length === 0)
+      throw new Error("Add active tariffs before generating bills.");
+    let created = 0;
+    let skipped = 0;
+    for (const memberId of memberIds) {
+      const member = await ctx.db.get(memberId);
+      if (!member || member.societyId !== societyId || !member.isActive) {
+        skipped++;
+        continue;
+      }
+      const existing = await ctx.db
+        .query("bills")
+        .withIndex("by_society_member", (q) =>
+          q.eq("societyId", societyId).eq("memberId", memberId),
+        )
+        .collect();
+      if (existing.some((b) => b.period === period)) {
+        skipped++;
+        continue;
+      }
+      const lines = tariffs.map((t) => ({
+        tariffId: t._id,
+        accountId: t.accountId,
+        name: t.name,
+        amount: t.amount,
+      }));
+      const total = lines.reduce((s, l) => s + l.amount, 0);
+      const n = await nextNumber(ctx, `${societyId}:bill`);
+      await ctx.db.insert("bills", {
+        societyId,
+        billNo: `BILL-${pad(n)}`,
+        memberId,
+        period,
+        issueDate,
+        dueDate,
+        lines,
+        total,
+        paidAmount: 0,
+        status: "unpaid",
+      });
+      created++;
+    }
+    return { created, skipped };
+  },
+});
+
+export const remove = mutation({
+  args: { societyId: v.id("societies"), id: v.id("bills") },
+  handler: async (ctx, { societyId, id }) => {
+    await requireSociety(ctx, societyId);
+    const bill = await ctx.db.get(id);
+    if (!bill || bill.societyId !== societyId)
+      throw new Error("Bill not found.");
+    const vouchers = await ctx.db
+      .query("vouchers")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    if (vouchers.some((v) => (v.allocations ?? []).some((a) => a.billId === id)))
+      throw new Error("Bill has receipts allocated; remove them first.");
+    await ctx.db.delete(id);
+  },
+});
