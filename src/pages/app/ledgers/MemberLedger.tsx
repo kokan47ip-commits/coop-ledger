@@ -26,6 +26,7 @@ import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR, formatPeriod } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { useQuery } from "convex/react";
 
 type Member = Doc<"members">;
@@ -46,7 +47,8 @@ export default function MemberLedger() {
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
 
-  const [memberId, setMemberId] = useState("");
+  const [searchParams] = useSearchParams();
+  const [memberId, setMemberId] = useState(searchParams.get("member") ?? "");
   const [from, setFrom] = useState(effectiveFyPeriod(society).from);
   const [to, setTo] = useState(effectiveFyPeriod(society).to);
   const [mode, setMode] = useState<"simple" | "detail">("simple");

@@ -1,6 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,9 +32,9 @@ import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, formatDate, formatINR, formatPeriod, todayISO } from "@/lib/format";
-import { Download, FileText, Plus, Printer, Trash2 } from "lucide-react";
+import { BookText, Download, FileText, HandCoins, Plus, Printer, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -39,10 +46,23 @@ export default function BillRegister() {
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip");
-  const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip");
+  const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Doc<"accounts">[] | undefined;
   const generate = useMutation(api.bills.generate);
   const removeBill = useMutation(api.bills.remove);
+  const createVoucher = useMutation(api.vouchers.create);
   const signatures = useCommitteeSignatures();
+  const navigate = useNavigate();
+
+  const [payOpen, setPayOpen] = useState(false);
+  const [payBill, setPayBill] = useState<Bill | null>(null);
+  const [payForm, setPayForm] = useState({
+    date: todayISO(),
+    amount: "",
+    mode: "cash",
+    bankCashAccountId: "",
+    reference: "",
+    narration: "",
+  });
 
   const [period, setPeriod] = useState(currentPeriod());
   const [issueDate, setIssueDate] = useState(todayISO());
@@ -53,6 +73,35 @@ export default function BillRegister() {
   });
   const [generating, setGenerating] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // Builds a single-bill export (same layout as Bill View).
+  const exportSingle = (b: Bill, kind: "pdf" | "word") => {
+    if (!society) return;
+    const meta: ExportMeta = {
+      societyName: society.name,
+      societyAddress: [society.address, society.city, society.state, society.pincode]
+        .filter(Boolean)
+        .join(", "),
+      registrationNo: society.registrationNo,
+      title: `Maintenance Bill — ${formatPeriod(b.period)}`,
+      subtitle: `Bill No: ${b.billNo} · Issue: ${formatDate(b.issueDate)} · Due: ${formatDate(b.dueDate)}`,
+      signatures,
+    };
+    const m = members?.find((x) => x._id === b.memberId);
+    const accountNameFor = (id: string) => {
+      const a = (accounts ?? []).find((x) => x._id === id);
+      return a ? `${a.code} — ${a.name}` : "—";
+    };
+    const table: TableSpec = {
+      head: ["#", "Charge head", "Income account", "Amount"],
+      body: b.lines.map((l, i) => [String(i + 1), l.name, accountNameFor(l.accountId), l.amount]),
+      foot: [["", "", "TOTAL", b.total]],
+      columnStyles: { 3: { halign: "right" } },
+    };
+    const name = m ? `${m.code}-${b.billNo}` : b.billNo;
+    if (kind === "pdf") exportPDF(meta, [table], `${name}.pdf`);
+    else exportWord(meta, [table], `${name}.doc`);
+  };
 
   const memberName = (id: Id<"members">) =>
     members?.find((m) => m._id === id)?.name ?? "—";
@@ -163,6 +212,54 @@ export default function BillRegister() {
     }
   };
 
+  const bankAccounts = (accounts ?? []).filter(
+    (a) => "kind" in a && a.kind === "bank_cash",
+  );
+
+  const openPay = (b: Bill) => {
+    setPayBill(b);
+    setPayForm({
+      date: todayISO(),
+      amount: String(+(b.total - b.paidAmount).toFixed(2)),
+      mode: "cash",
+      bankCashAccountId: "",
+      reference: "",
+      narration: `Against bill ${b.billNo} (${formatPeriod(b.period)})`,
+    });
+      setPayOpen(true);
+  };
+
+  const submitPay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!societyId || !payBill) return;
+    const amount = Number(payForm.amount);
+    if (!amount || amount <= 0) {
+      toast.error("Enter a valid amount.");
+      return;
+    }
+    try {
+      await createVoucher({
+        societyId,
+        type: "member_receipt",
+        date: payForm.date,
+        memberId: payBill.memberId,
+        mode: payForm.mode,
+        bankCashAccountId: (payForm.bankCashAccountId || undefined) as
+          | Id<"accounts">
+          | undefined,
+        reference: payForm.reference || undefined,
+        narration: payForm.narration || undefined,
+        lines: [],
+        allocations: [{ billId: payBill._id, amount }],
+      });
+      toast.success(`Receipt recorded against ${payBill.billNo}`);
+      setPayOpen(false);
+      setPayBill(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to record receipt");
+    }
+  };
+
   const receivableMissing =
     society && !society.receivableAccountId &&
     (accounts ?? []).some((a) => a.kind === "receivable");
@@ -265,7 +362,7 @@ export default function BillRegister() {
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead className="text-right">Balance</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-24 text-right">Actions</TableHead>
+                <TableHead className="text-right">Pay / PDF / Word / Ledger</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -291,10 +388,45 @@ export default function BillRegister() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" className="size-8" asChild>
-                        <Link to={`/app/bills/${b._id}`} title="View bill">
-                          <FileText className="size-3.5" />
-                        </Link>
+                      {b.status !== "paid" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          title="Record payment"
+                          onClick={() => openPay(b)}
+                        >
+                          <HandCoins className="size-3.5" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Export bill as PDF"
+                        onClick={() => exportSingle(b, "pdf")}
+                      >
+                        <Download className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Export bill as Word"
+                        onClick={() => exportSingle(b, "word")}
+                      >
+                        <FileText className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Open member ledger"
+                        onClick={() =>
+                          navigate(`/app/member-ledger?member=${b.memberId}`)
+                        }
+                      >
+                        <BookText className="size-3.5" />
                       </Button>
                       <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(b)}>
                         <Trash2 className="size-3.5" />
@@ -307,6 +439,91 @@ export default function BillRegister() {
           </Table>
         </div>
       )}
+
+      {/* Quick payment dialog for a single bill */}
+      <Dialog open={payOpen} onOpenChange={setPayOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Record payment — {payBill?.billNo}
+              {payBill ? ` · ${memberName(payBill.memberId)}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {payBill && (
+            <form onSubmit={submitPay} className="space-y-4">
+              <div className="rounded-md border bg-accent/30 p-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Bill total</span>
+                  <span className="tabular-nums">{formatINR(payBill.total)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Already paid</span>
+                  <span className="tabular-nums">{formatINR(payBill.paidAmount)}</span>
+                </div>
+                <div className="flex justify-between font-medium">
+                  <span>Balance due</span>
+                  <span className="tabular-nums">{formatINR(payBill.total - payBill.paidAmount)}</span>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="p-date">Date *</Label>
+                  <Input id="p-date" type="date" required value={payForm.date}
+                    onChange={(e) => setPayForm({ ...payForm, date: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="p-amount">Amount (₹) *</Label>
+                  <Input id="p-amount" type="number" step="0.01" min="0.01" required value={payForm.amount}
+                    onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Mode</Label>
+                  <Select value={payForm.mode} onValueChange={(v) => setPayForm({ ...payForm, mode: v, bankCashAccountId: "" })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="bank">Bank transfer</SelectItem>
+                      <SelectItem value="cheque">Cheque</SelectItem>
+                      <SelectItem value="upi">UPI</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Bank / Cash account</Label>
+                  <Select value={payForm.bankCashAccountId || undefined}
+                    onValueChange={(v) => setPayForm({ ...payForm, bankCashAccountId: v })}>
+                    <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
+                    <SelectContent>
+                      {bankAccounts.map((a) => (
+                        <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="p-ref">Reference</Label>
+                  <Input id="p-ref" value={payForm.reference}
+                    onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
+                    placeholder="UTR / cheque no." />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="p-narr">Narration</Label>
+                  <Input id="p-narr" value={payForm.narration}
+                    onChange={(e) => setPayForm({ ...payForm, narration: e.target.value })} />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The receipt debits bank/cash and credits the member's receivable, settling this bill.
+                Any amount above the balance is kept as an advance on their ledger.
+              </p>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setPayOpen(false)}>Cancel</Button>
+                <Button type="submit">Save receipt</Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+    </Dialog>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { MutationCtx, mutation, query } from "./_generated/server";
 import {
   applyAllocationToBill,
   nextNumber,
@@ -32,6 +32,79 @@ export const listByMember = query({
       .collect();
   },
 });
+
+/**
+ * Auto-posts a member receipt: Dr Bank/Cash, Cr Members Receivable, then
+ * applies any bill allocations. Shared by the manual form (amount derived
+ * from lines) and the quick-pay dialog (amount derived from allocations).
+ */
+async function insertMemberReceipt(
+  ctx: MutationCtx,
+  societyId: Id<"societies">,
+  p: {
+    date: string;
+    memberId: Id<"members">;
+    mode?: string;
+    bankCashAccountId?: Id<"accounts">;
+    reference?: string;
+    narration?: string;
+    total: number;
+    allocations?: { billId: Id<"bills">; amount: number }[];
+  },
+) {
+  const society = await ctx.db.get(societyId);
+  const allAccounts = await ctx.db
+    .query("accounts")
+    .withIndex("by_society", (q) => q.eq("societyId", societyId))
+    .collect();
+  const receivableId =
+    society?.receivableAccountId ??
+    allAccounts.find((a) => a.kind === "receivable")?._id;
+  if (!receivableId)
+    throw new Error(
+      "No Members Receivable account found — add one in Chart of Accounts with the 'Members Receivable' role.",
+    );
+  const n = await nextNumber(ctx, `${societyId}:voucher:member_receipt`);
+  const voucherId = await ctx.db.insert("vouchers", {
+    societyId,
+    type: "member_receipt" as const,
+    voucherNo: `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`,
+    date: p.date,
+    memberId: p.memberId,
+    mode: p.mode,
+    bankCashAccountId: p.bankCashAccountId,
+    reference: p.reference,
+    narration: p.narration,
+    total: p.total,
+    lines: [
+      {
+        accountId: p.bankCashAccountId ?? receivableId,
+        debit: p.total,
+        credit: 0,
+      },
+      {
+        accountId: receivableId,
+        debit: 0,
+        credit: p.total,
+        note: p.mode,
+      },
+    ],
+    allocations: p.allocations,
+  });
+  if (p.allocations && p.allocations.length > 0) {
+    const memberBills = await ctx.db
+      .query("bills")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", societyId).eq("memberId", p.memberId),
+      )
+      .collect();
+    for (const a of p.allocations) {
+      const bill = memberBills.find((b) => b._id === a.billId);
+      if (bill) await applyAllocationToBill(ctx, bill, a.amount);
+    }
+  }
+  return voucherId;
+}
 
 export const create = mutation({
   args: {
@@ -65,6 +138,27 @@ export const create = mutation({
     await requireSociety(ctx, societyId);
 
     const activeLines = lines.filter((l) => l.debit !== 0 || l.credit !== 0);
+
+    // Member receipts auto-post Dr Bank/Cash, Cr Receivable; the amount comes
+    // from the bill allocations when no manual lines are provided.
+    if (type === "member_receipt" && activeLines.length === 0) {
+      const allocTotal = (allocations ?? []).reduce((s, a) => s + a.amount, 0);
+      if (allocTotal <= 0)
+        throw new Error(
+          "Provide bill allocations or entry lines for the receipt.",
+        );
+      return await insertMemberReceipt(ctx, societyId, {
+        date: args.date,
+        memberId: args.memberId!,
+        mode: args.mode,
+        bankCashAccountId: args.bankCashAccountId,
+        reference: args.reference,
+        narration: args.narration,
+        total: allocTotal,
+        allocations,
+      });
+    }
+
     if (activeLines.length < 2)
       throw new Error("A voucher needs at least two entry lines.");
     const debit = activeLines.reduce((s, l) => s + l.debit, 0);
@@ -73,60 +167,16 @@ export const create = mutation({
       throw new Error("Debits and credits must balance.");
 
     if (type === "member_receipt" && args.memberId) {
-      // Member receipts auto-post: Dr Bank/Cash, Cr Members Receivable.
-      const society = await ctx.db.get(societyId);
-      const allAccounts = await ctx.db
-        .query("accounts")
-        .withIndex("by_society", (q) => q.eq("societyId", societyId))
-        .collect();
-      const receivableId =
-        society?.receivableAccountId ??
-        allAccounts.find((a) => a.kind === "receivable")?._id;
-      if (!receivableId)
-        throw new Error(
-          "No Members Receivable account found — add one in Chart of Accounts with the 'Members Receivable' role.",
-        );
-      const total = debit;
-      const n = await nextNumber(ctx, `${societyId}:voucher:${type}`);
-      const voucherId = await ctx.db.insert("vouchers", {
-        societyId,
-        type,
-        voucherNo: `${VOUCHER_PREFIX[type]}-${pad(n)}`,
+      return await insertMemberReceipt(ctx, societyId, {
         date: args.date,
         memberId: args.memberId,
         mode: args.mode,
         bankCashAccountId: args.bankCashAccountId,
         reference: args.reference,
         narration: args.narration,
-        total,
-        lines: [
-          {
-            accountId: args.bankCashAccountId ?? receivableId,
-            debit: total,
-            credit: 0,
-          },
-          {
-            accountId: receivableId,
-            debit: 0,
-            credit: total,
-            note: args.mode,
-          },
-        ],
+        total: debit,
         allocations,
       });
-      if (allocations && allocations.length > 0) {
-        const memberBills = await ctx.db
-          .query("bills")
-          .withIndex("by_society_member", (q) =>
-            q.eq("societyId", societyId).eq("memberId", args.memberId!),
-          )
-          .collect();
-        for (const a of allocations) {
-          const bill = memberBills.find((b) => b._id === a.billId);
-          if (bill) await applyAllocationToBill(ctx, bill, a.amount);
-        }
-      }
-      return voucherId;
     }
 
     const n = await nextNumber(ctx, `${societyId}:voucher:${type}`);
