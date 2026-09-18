@@ -35,6 +35,7 @@ const schema = defineSchema(
     societies: defineTable({
       name: v.string(),
       registrationNo: v.optional(v.string()),
+      registrationDate: v.optional(v.string()), // date of registration with the registrar
       address: v.optional(v.string()),
       city: v.optional(v.string()),
       state: v.optional(v.string()),
@@ -42,6 +43,11 @@ const schema = defineSchema(
       email: v.optional(v.string()),
       phone: v.optional(v.string()),
       fyStartMonth: v.number(), // 1..12 (April = 4 for Indian societies)
+      fyYear: v.optional(v.string()), // display label, e.g. "2025-26"
+      fyStartDate: v.optional(v.string()), // explicit current-period start, "YYYY-MM-DD"
+      chairmanMemberId: v.optional(v.id("members")),
+      secretaryMemberId: v.optional(v.id("members")),
+      treasurerMemberId: v.optional(v.id("members")),
       createdBy: v.id("users"),
       receivableAccountId: v.optional(v.id("accounts")),
     }).index("by_creator", ["createdBy"]),

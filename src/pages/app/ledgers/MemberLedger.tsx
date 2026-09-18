@@ -22,7 +22,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
-import { formatDate, formatINR, formatPeriod, fyEndISO, fyStartISO } from "@/lib/format";
+import { effectiveFyPeriod, formatDate, formatINR, formatPeriod } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
@@ -45,8 +45,8 @@ export default function MemberLedger() {
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
 
   const [memberId, setMemberId] = useState("");
-  const [from, setFrom] = useState(fyStartISO());
-  const [to, setTo] = useState(fyEndISO());
+  const [from, setFrom] = useState(effectiveFyPeriod(society).from);
+  const [to, setTo] = useState(effectiveFyPeriod(society).to);
   const [mode, setMode] = useState<"simple" | "detail">("simple");
 
   const ledger = useQuery(

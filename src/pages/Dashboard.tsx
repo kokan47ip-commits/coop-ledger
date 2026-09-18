@@ -11,7 +11,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader, StatCard } from "@/components/PageParts";
-import { formatDate, formatINR, fyEndISO, fyStartISO, VOUCHER_TYPE_LABEL } from "@/lib/format";
+import { effectiveFyPeriod, formatDate, formatINR, VOUCHER_TYPE_LABEL } from "@/lib/format";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -46,16 +46,13 @@ type DashboardResult = {
 
 export default function Dashboard() {
   const { societyId, society } = useSociety();
+  const period = effectiveFyPeriod(society);
   const stats = useQuery(
     api.api.dashboard,
-    societyId
-      ? { societyId, fromDate: fyStartISO(society?.fyStartMonth ?? 4), toDate: fyEndISO(society?.fyStartMonth ?? 4) }
-      : "skip",
+    societyId ? { societyId, fromDate: period.from, toDate: period.to } : "skip",
   ) as DashboardResult | undefined;
 
-  const fyLabel = `${formatDate(fyStartISO(society?.fyStartMonth ?? 4))} – ${formatDate(
-    fyEndISO(society?.fyStartMonth ?? 4),
-  )}`;
+  const fyLabel = `${formatDate(period.from)} – ${formatDate(period.to)}`;
 
   return (
     <div className="mx-auto max-w-6xl">

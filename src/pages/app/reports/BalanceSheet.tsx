@@ -5,7 +5,7 @@ import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
-import { formatDate, fyEndISO } from "@/lib/format";
+import { effectiveFyPeriod, formatDate } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "convex/react";
@@ -23,7 +23,8 @@ const money = (n: number) =>
 
 export default function BalanceSheet() {
   const { societyId, society } = useSociety();
-  const [to, setTo] = useState(fyEndISO());
+  const period = effectiveFyPeriod(society);
+  const [to, setTo] = useState(period.to);
 
   const bs = useQuery(
     api.api.balanceSheet,

@@ -46,6 +46,45 @@ export function fyEndISO(fyStartMonth = 4): string {
   return `${y}-${String(endMonth).padStart(2, "0")}-${lastDay}`;
 }
 
+/** Display label like "2025-26" for a financial year starting in the given month. */
+export function fyYearLabel(fyStartMonth = 4): string {
+  const start = fyStartISO(fyStartMonth);
+  const end = fyEndISO(fyStartMonth);
+  const startYear = Number(start.slice(0, 4));
+  const endYear = Number(end.slice(0, 4));
+  return endYear > startYear ? `${startYear}-${String(endYear).slice(2)}` : `${startYear}`;
+}
+
+/**
+ * Effective current financial-period boundaries, preferring the explicit
+ * start date and year label stored on the society profile.
+ */
+export function effectiveFyPeriod(society?: {
+  fyStartMonth?: number;
+  fyYear?: string;
+  fyStartDate?: string;
+} | null): { from: string; to: string; label: string } {
+  const fyStartMonth = society?.fyStartMonth ?? 4;
+  if (society?.fyStartDate) {
+    const start = society.fyStartDate.slice(0, 10);
+    const endDate = new Date(start);
+    endDate.setFullYear(endDate.getFullYear() + 1);
+    endDate.setDate(endDate.getDate() - 1);
+    const to = endDate.toISOString().slice(0, 10);
+    const label =
+      society.fyYear ??
+      fyYearLabelFromRange(start, to);
+    return { from: start, to, label };
+  }
+  return { from: fyStartISO(fyStartMonth), to: fyEndISO(fyStartMonth), label: society?.fyYear ?? fyYearLabel(fyStartMonth) };
+}
+
+function fyYearLabelFromRange(from: string, to: string): string {
+  const startYear = Number(from.slice(0, 4));
+  const endYear = Number(to.slice(0, 4));
+  return endYear > startYear ? `${startYear}-${String(endYear).slice(2)}` : `${startYear}`;
+}
+
 export function currentPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }

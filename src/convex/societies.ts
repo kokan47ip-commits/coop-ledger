@@ -27,6 +27,7 @@ export const create = mutation({
   args: {
     name: v.string(),
     registrationNo: v.optional(v.string()),
+    registrationDate: v.optional(v.string()),
     address: v.optional(v.string()),
     city: v.optional(v.string()),
     state: v.optional(v.string()),
@@ -34,6 +35,8 @@ export const create = mutation({
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
     fyStartMonth: v.number(),
+    fyYear: v.optional(v.string()),
+    fyStartDate: v.optional(v.string()),
     withSampleData: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -41,6 +44,7 @@ export const create = mutation({
     const societyId = await ctx.db.insert("societies", {
       name: args.name,
       registrationNo: args.registrationNo,
+      registrationDate: args.registrationDate,
       address: args.address,
       city: args.city,
       state: args.state,
@@ -48,6 +52,8 @@ export const create = mutation({
       email: args.email,
       phone: args.phone,
       fyStartMonth: args.fyStartMonth,
+      fyYear: args.fyYear,
+      fyStartDate: args.fyStartDate,
       createdBy: userId,
     });
     for (const a of DEFAULT_ACCOUNTS) {
@@ -69,6 +75,7 @@ export const update = mutation({
     id: v.id("societies"),
     name: v.string(),
     registrationNo: v.optional(v.string()),
+    registrationDate: v.optional(v.string()),
     address: v.optional(v.string()),
     city: v.optional(v.string()),
     state: v.optional(v.string()),
@@ -76,6 +83,11 @@ export const update = mutation({
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
     fyStartMonth: v.number(),
+    fyYear: v.optional(v.string()),
+    fyStartDate: v.optional(v.string()),
+    chairmanMemberId: v.optional(v.id("members")),
+    secretaryMemberId: v.optional(v.id("members")),
+    treasurerMemberId: v.optional(v.id("members")),
     receivableAccountId: v.optional(v.id("accounts")),
   },
   handler: async (ctx, { id, ...patch }) => {

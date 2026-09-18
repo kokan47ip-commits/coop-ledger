@@ -7,8 +7,14 @@ type Society = {
   _id: Id<"societies">;
   name: string;
   fyStartMonth: number;
+  fyYear?: string;
+  fyStartDate?: string;
   receivableAccountId?: Id<"accounts">;
   registrationNo?: string;
+  registrationDate?: string;
+  chairmanMemberId?: Id<"members">;
+  secretaryMemberId?: Id<"members">;
+  treasurerMemberId?: Id<"members">;
   address?: string;
   city?: string;
   state?: string;
