@@ -30,10 +30,12 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { downloadMemberTariffTemplate, parseExcelFile } from "@/lib/excel";
 import { formatINR } from "@/lib/format";
-import { CheckCircle2, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { CheckCircle2, Download, Pencil, Plus, Save, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatMoney } from "@/lib/format";
 
 type TariffRow = {
   _id: Id<"tariffs">;
@@ -56,6 +58,18 @@ type MemberRow = {
   code: string;
   name: string;
   flatNo?: string;
+  wing?: string;
+  building?: string;
+  unitType?: string;
+  floor?: string;
+  isActive: boolean;
+};
+
+type OverrideRow = {
+  _id: Id<"memberTariffs">;
+  memberId: Id<"members">;
+  tariffId: Id<"tariffs">;
+  amount: number;
 };
 
 type UploadResult = { inserted: number; updated: number; skipped: number; errors: string[] };
@@ -87,6 +101,11 @@ export default function Tariffs() {
     api.members.list,
     societyId ? { societyId } : "skip",
   ) as MemberRow[] | undefined;
+  const overrides = useQuery(
+    api.tariffs.listOverrides,
+    societyId ? { societyId } : "skip",
+  ) as OverrideRow[] | undefined;
+  const setOverride = useMutation(api.tariffs.setMemberOverride);
 
   const incomeAccounts = (accounts ?? []).filter((a) => a.type === "income");
   const accountName = (id: Id<"accounts">) => {
@@ -173,6 +192,29 @@ export default function Tariffs() {
           </Button>
         }
       />
+
+      <Tabs defaultValue="schedule-heads">
+        <TabsList className="mb-8 w-full justify-start overflow-x-auto rounded-none border-b bg-transparent p-0">
+          <TabsTrigger
+            value="schedule-heads"
+            className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            Tariff Heads
+          </TabsTrigger>
+          <TabsTrigger
+            value="matrix"
+            className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            <span className="flex items-center gap-2">
+              Member Schedule
+              {overrides && overrides.length > 0 && (
+                <span className="text-[10px] text-muted-foreground">{overrides.length} custom</span>
+              )}
+            </span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="schedule-heads">
 
       {/* Per-member custom tariff upload */}
       <Card className="mb-8 p-5 shadow-none">
@@ -359,6 +401,204 @@ export default function Tariffs() {
           </form>
         </DialogContent>
       </Dialog>
+
+        </TabsContent>
+
+        <TabsContent value="matrix">
+          <MemberTariffMatrix
+            societyId={societyId}
+            tariffs={(tariffs ?? []).filter((t) => t.isActive).sort((a, b) => a.name.localeCompare(b.name))}
+            members={(members ?? []).filter((m) => m.isActive).sort((a, b) => (a.flatNo ?? a.code).localeCompare(b.flatNo ?? b.code))}
+            overrides={overrides ?? []}
+            setOverride={setOverride}
+          />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Member × tariff matrix (Tariff Schedule View)                       */
+/* ------------------------------------------------------------------ */
+
+function MemberTariffMatrix(props: {
+  societyId: Id<"societies"> | null;
+  tariffs: TariffRow[];
+  members: MemberRow[];
+  overrides: OverrideRow[];
+  setOverride: (args: {
+    societyId: Id<"societies">;
+    memberId: Id<"members">;
+    tariffId: Id<"tariffs">;
+    amount?: number;
+  }) => Promise<unknown>;
+}) {
+  const { tariffs, members, overrides, setOverride } = props;
+  const [building, setBuilding] = useState("");
+  const [wing, setWing] = useState("");
+  const [unitType, setUnitType] = useState("");
+  const [floor, setFloor] = useState("");
+  const [filter, setFilter] = useState({ building: "", wing: "", unitType: "", floor: "" });
+  // Draft values keyed by "memberId:tariffId" until Save.
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  const overrideFor = (memberId: string, tariffId: string) =>
+    overrides.find((o) => o.memberId === memberId && o.tariffId === tariffId);
+
+  const valueFor = (memberId: string, tariffId: string) => {
+    const key = `${memberId}:${tariffId}`;
+    if (key in draft) return draft[key];
+    const o = overrideFor(memberId, tariffId);
+    return o ? String(o.amount) : "";
+  };
+
+  const filtered = members.filter((m) => {
+    if (filter.building && !(m.building ?? "").toLowerCase().includes(filter.building.toLowerCase())) return false;
+    if (filter.wing && !(m.wing ?? "").toLowerCase().includes(filter.wing.toLowerCase())) return false;
+    if (filter.unitType && !(m.unitType ?? "").toLowerCase().includes(filter.unitType.toLowerCase())) return false;
+    if (filter.floor && !(m.floor ?? "").toLowerCase().includes(filter.floor.toLowerCase())) return false;
+    return true;
+  });
+
+  const dirtyCount = Object.keys(draft).length;
+
+  const saveAll = async () => {
+    if (!props.societyId || dirtyCount === 0) return;
+    setSaving(true);
+    let appliedCount = 0;
+    try {
+      for (const [key, raw] of Object.entries(draft)) {
+        const [memberId, tariffId] = key.split(":");
+        const amount = raw.trim() === "" ? undefined : Number(raw);
+        if (raw.trim() !== "" && (!Number.isFinite(amount) || (amount as number) < 0)) continue;
+        const current = overrideFor(memberId, tariffId);
+        const currentVal = current ? current.amount : undefined;
+        const nextVal = raw.trim() === "" ? undefined : (amount as number);
+        if (currentVal === nextVal) continue;
+        await setOverride({
+          societyId: props.societyId,
+          memberId: memberId as Id<"members">,
+          tariffId: tariffId as Id<"tariffs">,
+          amount: nextVal,
+        });
+        appliedCount++;
+      }
+      if (appliedCount > 0) toast.success(`Saved ${appliedCount} custom amount(s)`);
+      else toast.info("No changes to save");
+      setDraft({});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (tariffs.length === 0) {
+    return (
+      <EmptyHint>
+        Add tariff heads on the Tariff Heads tab first — then each member's amounts can be set here.
+      </EmptyHint>
+    );
+  }
+
+  if (members.length === 0) {
+    return <EmptyHint>Add members first — the schedule lists every active member with their amounts.</EmptyHint>;
+  }
+
+  return (
+    <div>
+      {/* Filter bar, matching the legacy Tariff Schedule View */}
+      <div className="mb-6 grid gap-4 rounded-lg border p-5 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="space-y-2">
+          <Label htmlFor="mx-building">Building</Label>
+          <Input id="mx-building" value={building} onChange={(e) => setBuilding(e.target.value)} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="mx-wing">Wing</Label>
+          <Input id="mx-wing" value={wing} onChange={(e) => setWing(e.target.value)} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="mx-utype">Unit type</Label>
+          <Input id="mx-utype" value={unitType} onChange={(e) => setUnitType(e.target.value)} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="mx-floor">Floor</Label>
+          <Input id="mx-floor" value={floor} onChange={(e) => setFloor(e.target.value)} />
+        </div>
+        <div className="flex items-end">
+          <Button
+            variant="outline"
+            className="w-full rounded-none"
+            onClick={() => setFilter({ building, wing, unitType, floor })}
+          >
+            Filter
+          </Button>
+        </div>
+      </div>
+
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {filtered.length} member{filtered.length === 1 ? "" : "s"} · blank cells use the schedule amount · 0 exempts
+          the member from that charge
+        </p>
+        <Button className="rounded-none" disabled={saving || dirtyCount === 0} onClick={saveAll}>
+          <Save className="size-4" /> {saving ? "Saving…" : `Save${dirtyCount > 0 ? ` (${dirtyCount})` : ""}`}
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="sticky left-0 z-10 bg-background">Unit Code</TableHead>
+              <TableHead className="text-right">Member</TableHead>
+              <TableHead>Name</TableHead>
+              {tariffs.map((t) => (
+                <TableHead key={t._id} className="text-right">
+                  <span className="block max-w-24 truncate" title={`${t.name} — schedule ${formatMoney(t.amount)}`}>
+                    {t.name}
+                  </span>
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map((m) => (
+              <TableRow key={m._id}>
+                <TableCell className="sticky left-0 z-10 bg-background font-medium">
+                  {m.flatNo || m.code}
+                </TableCell>
+                <TableCell className="text-right text-muted-foreground tabular-nums">{m.code.replace(/\D/g, "") || "—"}</TableCell>
+                <TableCell className="max-w-48 truncate" title={m.name}>{m.name}</TableCell>
+                {tariffs.map((t) => {
+                  const key = `${m._id}:${t._id}`;
+                  const o = overrideFor(m._id, t._id);
+                  const isDirty = key in draft;
+                  return (
+                    <TableCell key={t._id} className="p-0">
+                      <Input
+                        value={valueFor(m._id, t._id)}
+                        onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+                        placeholder={formatMoney(t.amount)}
+                        inputMode="decimal"
+                        className={`h-9 rounded-none border-0 border-l text-right tabular-nums focus-visible:ring-1 ${
+                          isDirty ? "bg-accent/60" : o ? "bg-muted/60" : ""
+                        }`}
+                      />
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Shaded cells carry custom amounts uploaded or edited for that member; edited-but-unsaved cells highlight while
+        you type. Saving applies immediately to the next bill generation.
+      </p>
     </div>
   );
 }

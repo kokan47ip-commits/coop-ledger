@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import type { CellHookData } from "jspdf-autotable";
 import { formatDate, formatMoney } from "./format";
 
 export type ExportSignature = {
@@ -21,6 +22,12 @@ export type ExportMeta = {
 
 type TableSpec = {
   head: string[];
+  /**
+   * Optional grouped header row rendered above `head` (Crystal-style column
+   * bands). Each entry is a label with the number of columns it spans; entries
+   * with span 0 render as an empty cell.
+   */
+  groupHead?: { label: string; span: number; align?: "left" | "center" | "right" }[];
   body: (string | number)[][];
   foot?: (string | number)[][];
   columnStyles?: Record<number, { halign?: "left" | "center" | "right"; cellWidth?: number | "auto" }>;
@@ -31,6 +38,20 @@ function headerLines(meta: ExportMeta): string[] {
   if (meta.societyAddress) lines.push(meta.societyAddress);
   if (meta.registrationNo) lines.push(`Reg. No: ${meta.registrationNo}`);
   return lines;
+}
+
+/** Expand group definitions into a jsPDF head row with empty filler cells. */
+function groupHeadRow(
+  groups: NonNullable<TableSpec["groupHead"]>,
+  totalColumns: number,
+): string[] {
+  const row: string[] = [];
+  for (const g of groups) {
+    row.push(g.label);
+    for (let i = 1; i < g.span; i++) row.push("");
+  }
+  while (row.length < totalColumns) row.push("");
+  return row.slice(0, totalColumns);
 }
 
 export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: string) {
@@ -70,8 +91,14 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
   cursorY = drawHeader();
 
   for (const t of tables) {
+    const headRows: string[][] = t.groupHead
+      ? [
+          groupHeadRow(t.groupHead, t.head.length),
+          t.head,
+        ]
+      : [t.head];
     autoTable(doc, {
-      head: [t.head],
+      head: headRows,
       body: t.body.map((r) => r.map((c) => (typeof c === "number" ? formatMoney(c) : c))),
       foot: t.foot,
       startY: cursorY,
@@ -81,6 +108,16 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
       headStyles: { fontStyle: "bold", fontSize: 9, lineWidth: { bottom: 0.6 }, lineColor: [30, 30, 30] },
       footStyles: { fontStyle: "bold", lineWidth: { top: 0.6 }, lineColor: [30, 30, 30] },
       columnStyles: t.columnStyles,
+      // Centre the group-band labels over their spans on the first head row.
+      ...(t.groupHead
+        ? {
+            didParseCell: ((data: CellHookData) => {
+              if (data.section === "head" && data.row.index === 0) {
+                data.cell.styles.halign = "center";
+              }
+            }) as (data: CellHookData) => void,
+          }
+        : {}),
       didDrawPage: () => {
         if (doc.getCurrentPageInfo().pageNumber > 1) {
           cursorY = drawHeader();
@@ -171,6 +208,15 @@ function tableToHtml(t: TableSpec): string {
       return `<th style="${style}">${escapeHtml(String(h))}</th>`;
     })
     .join("");
+  const groupHead = t.groupHead
+    ? `<tr>${t.groupHead
+        .map((g) => {
+          const align =
+            g.align === "right" ? "right" : g.align === "left" ? "left" : "center";
+          return `<th colspan="${g.span || 1}" style="text-align:${align};">${escapeHtml(g.label)}</th>`;
+        })
+        .join("")}</tr>`
+    : "";
   const body = t.body
     .map(
       (row) =>
@@ -195,7 +241,7 @@ function tableToHtml(t: TableSpec): string {
         .join("")}</tr></tfoot>`
     : "";
   return `<table width="100%" style="border-collapse:collapse" cellspacing="0">
-    <thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
+    <thead>${groupHead ? `<tr>${groupHead}</tr>` : ""}<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
 }
 
 export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: string) {
@@ -209,7 +255,6 @@ export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: stri
   table { margin-top: 10pt; }
   th { border-bottom: 1px solid #1a1a1a; font-size: 9pt; padding: 4pt 6pt; text-align:left; }
   td { font-size: 9pt; padding: 3pt 6pt; }
-  hr { border:none; border-top:1px solid #1a1a1a; margin: 8pt 0 12pt; }
   .signatures { margin-top: 48pt; width:100%; }
   .signatures td { border:none; text-align:center; font-size: 9pt; padding: 0 8pt; }
   .sigline { border-top: 1px dotted #555; margin: 34pt 12pt 0; }
@@ -295,7 +340,17 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
             })
             .join("")}</tr></tfoot>`
         : "";
-      return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
+      return `<table><thead>${
+        t.groupHead
+          ? `<tr>${t.groupHead
+              .map((g) => {
+                const align =
+                  g.align === "right" ? "right" : g.align === "left" ? "left" : "center";
+                return `<th colspan="${g.span || 1}" style="text-align:${align}">${escapeHtml(g.label)}</th>`;
+              })
+              .join("")}</tr>`
+          : ""
+      }<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
     })
     .join("")}
   ${signaturesHtml(meta)}

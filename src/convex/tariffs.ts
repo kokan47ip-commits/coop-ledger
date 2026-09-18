@@ -43,6 +43,59 @@ export const remove = mutation({
       .collect();
     if (bills.some((b) => b.lines.some((l) => l.tariffId === id)))
       throw new Error("Tariff is used in generated bills.");
+    // Clean up this tariff's per-member overrides.
+    const overrides = await ctx.db
+      .query("memberTariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    for (const o of overrides.filter((o) => o.tariffId === id)) {
+      await ctx.db.delete(o._id);
+    }
     await ctx.db.delete(id);
+  },
+});
+
+/** Every per-member override, for the editable member × tariff matrix. */
+export const listOverrides = query({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    await requireSociety(ctx, societyId);
+    return await ctx.db
+      .query("memberTariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+  },
+});
+
+/**
+ * Set (or clear) one member's amount for one tariff from the matrix.
+ * amount 0 exempts the member from that charge; null clears the override so
+ * the schedule amount applies again.
+ */
+export const setMemberOverride = mutation({
+  args: {
+    societyId: v.id("societies"),
+    memberId: v.id("members"),
+    tariffId: v.id("tariffs"),
+    amount: v.optional(v.number()), // undefined = clear override
+  },
+  handler: async (ctx, { societyId, memberId, tariffId, amount }) => {
+    await requireSociety(ctx, societyId);
+    const existing = await ctx.db
+      .query("memberTariffs")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", societyId).eq("memberId", memberId),
+      )
+      .collect();
+    const row = existing.find((o) => o.tariffId === tariffId);
+    if (amount === undefined) {
+      if (row) await ctx.db.delete(row._id);
+      return;
+    }
+    if (row) {
+      await ctx.db.patch(row._id, { amount });
+    } else {
+      await ctx.db.insert("memberTariffs", { societyId, memberId, tariffId, amount });
+    }
   },
 });

@@ -43,6 +43,11 @@ type MemberRow = {
   name: string;
   flatNo?: string;
   wing?: string;
+  building?: string;
+  unitType?: string;
+  floor?: string;
+  buildupArea?: number;
+  carpetArea?: number;
   phone?: string;
   email?: string;
   ownershipType?: "owner" | "tenant";
@@ -70,6 +75,11 @@ const emptyForm = {
   name: "",
   flatNo: "",
   wing: "",
+  building: "",
+  unitType: "",
+  floor: "",
+  buildupArea: "",
+  carpetArea: "",
   phone: "",
   email: "",
   ownershipType: "owner",
@@ -262,6 +272,11 @@ export default function Members() {
       name: m.name,
       flatNo: m.flatNo ?? "",
       wing: m.wing ?? "",
+      building: m.building ?? "",
+      unitType: m.unitType ?? "",
+      floor: m.floor ?? "",
+      buildupArea: m.buildupArea != null ? String(m.buildupArea) : "",
+      carpetArea: m.carpetArea != null ? String(m.carpetArea) : "",
       phone: m.phone ?? "",
       email: m.email ?? "",
       ownershipType: m.ownershipType ?? "owner",
@@ -284,6 +299,11 @@ export default function Members() {
         name: form.name.trim(),
         flatNo: form.flatNo || undefined,
         wing: form.wing || undefined,
+        building: form.building || undefined,
+        unitType: form.unitType || undefined,
+        floor: form.floor || undefined,
+        buildupArea: form.buildupArea ? Number(form.buildupArea) : undefined,
+        carpetArea: form.carpetArea ? Number(form.carpetArea) : undefined,
         phone: form.phone || undefined,
         email: form.email || undefined,
         ownershipType: form.ownershipType as "owner" | "tenant",
@@ -443,9 +463,37 @@ export default function Members() {
                   onChange={(e) => setForm({ ...form, wing: e.target.value })} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="m-flat">Flat no.</Label>
+                <Label htmlFor="m-flat">Flat / Unit no.</Label>
                 <Input id="m-flat" value={form.flatNo}
                   onChange={(e) => setForm({ ...form, flatNo: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="m-building">Building</Label>
+                <Input id="m-building" value={form.building}
+                  onChange={(e) => setForm({ ...form, building: e.target.value })}
+                  placeholder="e.g. Main Building" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="m-utype">Unit type</Label>
+                <Input id="m-utype" value={form.unitType}
+                  onChange={(e) => setForm({ ...form, unitType: e.target.value })}
+                  placeholder="e.g. Shop / 1BHK / 2BHK" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="m-floor">Floor</Label>
+                <Input id="m-floor" value={form.floor}
+                  onChange={(e) => setForm({ ...form, floor: e.target.value })}
+                  placeholder="e.g. Ground / 1" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="m-buildup">Built-up area (sq ft)</Label>
+                <Input id="m-buildup" type="number" step="0.01" value={form.buildupArea}
+                  onChange={(e) => setForm({ ...form, buildupArea: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="m-carpet">Carpet area (sq ft)</Label>
+                <Input id="m-carpet" type="number" step="0.01" value={form.carpetArea}
+                  onChange={(e) => setForm({ ...form, carpetArea: e.target.value })} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="m-phone">Phone</Label>

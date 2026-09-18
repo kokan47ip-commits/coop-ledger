@@ -28,11 +28,11 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
+import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { currentPeriod, formatDate, formatINR, formatPeriod, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Plus, Printer, Trash2 } from "lucide-react";
+import { currentPeriod, formatDate, formatMoney, formatPeriod, todayISO } from "@/lib/format";
+import { BookText, Download, FileText, HandCoins, Plus, Printer, RefreshCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -40,12 +40,24 @@ import { toast } from "sonner";
 
 type Bill = Doc<"bills">;
 type Member = Doc<"members">;
+type Tariff = Doc<"tariffs">;
+
+const MONTHS_FULL = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "2026-08" -> "August 2026" */
+function periodLong(period: string): string {
+  const [y, m] = period.split("-");
+  return `${MONTHS_FULL[Number(m) - 1] ?? m} ${y}`;
+}
 
 export default function BillRegister() {
   const { societyId, society } = useSociety();
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
-  const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip");
+  const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip") as Tariff[] | undefined;
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Doc<"accounts">[] | undefined;
   const generate = useMutation(api.bills.generate);
   const removeBill = useMutation(api.bills.remove);
@@ -64,6 +76,15 @@ export default function BillRegister() {
     narration: "",
   });
 
+  // ---- View Bills filter bar (Billing Period / Building / Wing / Unit Type / Floor) ----
+  const [periodFilter, setPeriodFilter] = useState(currentPeriod());
+  const [building, setBuilding] = useState("");
+  const [wing, setWing] = useState("");
+  const [unitType, setUnitType] = useState("");
+  const [floor, setFloor] = useState("");
+  const [applied, setApplied] = useState({ building: "", wing: "", unitType: "", floor: "" });
+
+  // Bill generation inputs
   const [period, setPeriod] = useState(currentPeriod());
   const [issueDate, setIssueDate] = useState(todayISO());
   const [dueDate, setDueDate] = useState(() => {
@@ -72,9 +93,79 @@ export default function BillRegister() {
     return d.toISOString().slice(0, 10);
   });
   const [generating, setGenerating] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all");
 
-  // Builds a single-bill export (same layout as Bill View).
+  const memberOf = (id: Id<"members">) => members?.find((m) => m._id === id);
+  const unitNo = (m?: Member) => m?.flatNo || m?.code || "—";
+
+  // Distinct billing periods for the dropdown, newest first, always including
+  // the current month so a fresh period can be selected before generating.
+  const periodOptions = useMemo(() => {
+    const set = new Set<string>((bills ?? []).map((b) => b.period));
+    set.add(currentPeriod());
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [bills]);
+
+  // Principal arrears: everything the member still owes from bills issued
+  // before the selected period. Interest arrears are shown as 0.00 until an
+  // interest head is billed; the column keeps the legacy layout.
+  const arrearsBefore = (memberId: Id<"members">, beforePeriod: string) => {
+    let principal = 0;
+    for (const b of bills ?? []) {
+      if (b.memberId === memberId && b.period < beforePeriod) {
+        principal += b.total - b.paidAmount;
+      }
+    }
+    return principal;
+  };
+
+  const tariffColumns = useMemo(() => tariffs ?? [], [tariffs]);
+  const lineAmount = (b: Bill, tariffId: Id<"tariffs">) =>
+    b.lines.find((l) => l.tariffId === tariffId)?.amount ?? 0;
+
+  // Rows for the selected period: one per member's bill, sorted by unit no.
+  const rows = useMemo(() => {
+    if (!bills) return [];
+    const inPeriod = bills.filter((b) => b.period === periodFilter);
+    const f = applied;
+    const match = (m?: Member) => {
+      if (!m) return false;
+      if (f.building && !(m.building ?? "").toLowerCase().includes(f.building.toLowerCase())) return false;
+      if (f.wing && !(m.wing ?? "").toLowerCase().includes(f.wing.toLowerCase())) return false;
+      if (f.unitType && !(m.unitType ?? "").toLowerCase().includes(f.unitType.toLowerCase())) return false;
+      if (f.floor && !(m.floor ?? "").toLowerCase().includes(f.floor.toLowerCase())) return false;
+      return true;
+    };
+    return inPeriod
+      .filter((b) => match(memberOf(b.memberId)))
+      .sort((a, b) => unitNo(memberOf(a.memberId)).localeCompare(unitNo(memberOf(b.memberId))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bills, members, periodFilter, applied, tariffColumns]);
+
+  const totals = useMemo(() => {
+    const t = {
+      count: rows.length,
+      billTotal: 0,
+      principalArr: 0,
+      interestArr: 0,
+      totalArr: 0,
+      totalDue: 0,
+      perTariff: {} as Record<string, number>,
+    };
+    for (const b of rows) {
+      const principal = arrearsBefore(b.memberId, periodFilter);
+      const due = b.total + principal;
+      t.billTotal += b.total;
+      t.principalArr += principal;
+      t.totalArr += principal;
+      t.totalDue += due;
+      for (const tc of tariffColumns) {
+        t.perTariff[tc._id] = (t.perTariff[tc._id] ?? 0) + lineAmount(b, tc._id);
+      }
+    }
+    return t;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, periodFilter, tariffColumns, bills]);
+
   const exportSingle = (b: Bill, kind: "pdf" | "word") => {
     if (!society) return;
     const meta: ExportMeta = {
@@ -87,7 +178,7 @@ export default function BillRegister() {
       subtitle: `Bill No: ${b.billNo} · Issue: ${formatDate(b.issueDate)} · Due: ${formatDate(b.dueDate)}`,
       signatures,
     };
-    const m = members?.find((x) => x._id === b.memberId);
+    const m = memberOf(b.memberId);
     const accountNameFor = (id: string) => {
       const a = (accounts ?? []).find((x) => x._id === id);
       return a ? `${a.code} — ${a.name}` : "—";
@@ -103,74 +194,69 @@ export default function BillRegister() {
     else exportWord(meta, [table], `${name}.doc`);
   };
 
-  const memberName = (id: Id<"members">) =>
-    members?.find((m) => m._id === id)?.name ?? "—";
-
-  const filtered = useMemo(() => {
-    const list = [...(bills ?? [])].sort(
-      (a, b) =>
-        b.period.localeCompare(a.period) || b.billNo.localeCompare(a.billNo),
-    );
-    if (statusFilter === "all") return list;
-    return list.filter((b) => b.status === statusFilter);
-  }, [bills, statusFilter]);
-
-  const totals = useMemo(() => {
-    const list = bills ?? [];
-    return {
-      count: list.length,
-      billed: list.reduce((s, b) => s + b.total, 0),
-      collected: list.reduce((s, b) => s + b.paidAmount, 0),
-      outstanding: list.reduce((s, b) => s + (b.total - b.paidAmount), 0),
-    };
-  }, [bills]);
-
-  const meta: ExportMeta | null =
-    society && bills
-      ? {
-          societyName: society.name,
-          societyAddress: [society.address, society.city, society.state, society.pincode]
-            .filter(Boolean)
-            .join(", "),
-          registrationNo: society.registrationNo,
-          title: "Bill Register",
-          subtitle:
-            statusFilter === "all"
-              ? `All bills · ${filtered.length} entries`
-              : `${statusFilter} bills · ${filtered.length} entries`,
-          signatures,
-        }
-      : null;
-
-  const buildTable = (): TableSpec => ({
-    head: ["Bill No", "Date", "Member", "Flat", "Period", "Amount", "Paid", "Balance", "Status"],
-    body: filtered.map((b) => {
-      const m = members?.find((x) => x._id === b.memberId);
+  // ---- Crystal-style "Regular Bills Register" export for the selected period ----
+  const buildRegisterTable = (): TableSpec => {
+    const head = [
+      "Bill No", "Unit No.", "Unit Name",
+      "Bill", "Principal", "Interest", "Total Due",
+      ...tariffColumns.map((t) => t.name),
+    ];
+    const body = rows.map((b) => {
+      const m = memberOf(b.memberId);
+      const principal = arrearsBefore(b.memberId, periodFilter);
       return [
-        b.billNo,
-        formatDate(b.issueDate),
+        b.billNo.replace(/^BILL-/, ""),
+        unitNo(m),
         m?.name ?? "—",
-        [m?.wing, m?.flatNo].filter(Boolean).join("-"),
-        formatPeriod(b.period),
         b.total,
-        b.paidAmount,
-        b.total - b.paidAmount,
-        b.status.toUpperCase(),
+        principal,
+        0,
+        b.total + principal,
+        ...tariffColumns.map((t) => lineAmount(b, t._id)),
       ];
-    }),
-    foot: [["", "", "", "", "TOTAL", totals.billed, totals.collected, totals.outstanding, ""]],
-    columnStyles: {
-      5: { halign: "right" },
-      6: { halign: "right" },
-      7: { halign: "right" },
-    },
-  });
+    });
+    const foot = [
+      "", "", `Total ${totals.count}`,
+      totals.billTotal, totals.principalArr, totals.interestArr, totals.totalDue,
+      ...tariffColumns.map((t) => totals.perTariff[t._id] ?? 0),
+    ];
+    const right = new Set<number>();
+    for (let i = 3; i < head.length; i++) right.add(i);
+    const columnStyles: TableSpec["columnStyles"] = {};
+    for (const i of right) columnStyles[i] = { halign: "right" };
+    return {
+      head,
+      groupHead: [
+        { label: "", span: 3 },
+        { label: "Bill Summary", span: 4 },
+        { label: "Bill Details", span: tariffColumns.length },
+      ],
+      body,
+      foot: [foot],
+      columnStyles,
+    };
+  };
+
+  const registerMeta = (): ExportMeta | null => {
+    if (!society) return null;
+    return {
+      societyName: society.name,
+      societyAddress: [society.address, society.city, society.state, society.pincode]
+        .filter(Boolean)
+        .join(", "),
+      registrationNo: society.registrationNo,
+      title: "Regular Bills Register",
+      subtitle: `For the month ${periodLong(periodFilter)}`,
+      signatures,
+    };
+  };
 
   const doExport = (kind: "pdf" | "word" | "print") => {
+    const meta = registerMeta();
     if (!meta) return;
-    const table = buildTable();
-    if (kind === "pdf") exportPDF(meta, [table], "bill-register.pdf");
-    else if (kind === "word") exportWord(meta, [table], "bill-register.doc");
+    const table = buildRegisterTable();
+    if (kind === "pdf") exportPDF(meta, [table], `bills-register-${periodFilter}.pdf`);
+    else if (kind === "word") exportWord(meta, [table], `bills-register-${periodFilter}.doc`);
     else printTables(meta, [table]);
   };
 
@@ -194,6 +280,7 @@ export default function BillRegister() {
         `Generated ${res.created} bill(s)` +
           (res.skipped > 0 ? ` · ${res.skipped} skipped (already exist or inactive)` : ""),
       );
+      setPeriodFilter(period);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to generate bills");
     } finally {
@@ -226,7 +313,7 @@ export default function BillRegister() {
       reference: "",
       narration: `Against bill ${b.billNo} (${formatPeriod(b.period)})`,
     });
-      setPayOpen(true);
+    setPayOpen(true);
   };
 
   const submitPay = async (e: React.FormEvent) => {
@@ -264,11 +351,13 @@ export default function BillRegister() {
     society && !society.receivableAccountId &&
     (accounts ?? []).some((a) => a.kind === "receivable");
 
+  const rightAlign = "text-right tabular-nums";
+
   return (
     <div>
       <PageHeader
         title="Bill Register"
-        description="Monthly maintenance bills generated from the tariff schedule, with collection status."
+        description="Monthly maintenance bills generated from the tariff schedule, with arrears and per-head amounts."
       />
 
       {receivableMissing && (
@@ -277,6 +366,48 @@ export default function BillRegister() {
           <Link to="/app/society" className="underline">Society Profile</Link> so bills post correctly to the books.
         </Card>
       )}
+
+      {/* View Bills filter bar */}
+      <div className="mb-8 rounded-lg border p-5">
+        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="space-y-2">
+            <Label htmlFor="vb-period">Billing period</Label>
+            <Select value={periodFilter} onValueChange={setPeriodFilter}>
+              <SelectTrigger id="vb-period"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {periodOptions.map((p) => (
+                  <SelectItem key={p} value={p}>{formatPeriod(p)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-building">Building</Label>
+            <Input id="vb-building" value={building} onChange={(e) => setBuilding(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-wing">Wing</Label>
+            <Input id="vb-wing" value={wing} onChange={(e) => setWing(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-utype">Unit type</Label>
+            <Input id="vb-utype" value={unitType} onChange={(e) => setUnitType(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-floor">Floor</Label>
+            <Input id="vb-floor" value={floor} onChange={(e) => setFloor(e.target.value)} />
+          </div>
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              className="w-full rounded-none"
+              onClick={() => setApplied({ building, wing, unitType, floor })}
+            >
+              <RefreshCw className="size-4" /> Refresh
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Generate box */}
       <div className="mb-8 rounded-lg border p-5">
@@ -305,36 +436,10 @@ export default function BillRegister() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-4">
-        <div className="rounded-lg border p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Bills</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums">{totals.count}</p>
-        </div>
-        <div className="rounded-lg border p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Billed</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums">{formatINR(totals.billed)}</p>
-        </div>
-        <div className="rounded-lg border p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Collected</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums">{formatINR(totals.collected)}</p>
-        </div>
-        <div className="rounded-lg border p-4">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Outstanding</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums">{formatINR(totals.outstanding)}</p>
-        </div>
-      </div>
-
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="unpaid">Unpaid</SelectItem>
-            <SelectItem value="partial">Partially paid</SelectItem>
-            <SelectItem value="paid">Paid</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          {rows.length} bill{rows.length === 1 ? "" : "s"} for {formatPeriod(periodFilter)}
+        </p>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
             <Download className="size-4" /> PDF
@@ -348,95 +453,123 @@ export default function BillRegister() {
         </div>
       </div>
 
-      {!bills ? null : filtered.length === 0 ? (
-        <EmptyHint>No bills{statusFilter !== "all" ? " in this status" : " yet"}. Generate bills above.</EmptyHint>
+      {!bills ? null : rows.length === 0 ? (
+        <EmptyHint>
+          No bills for {formatPeriod(periodFilter)}. Generate them above, then use Refresh.
+        </EmptyHint>
       ) : (
-        <div className="rounded-lg border">
+        <div className="overflow-x-auto rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="sticky left-0 bg-background">Unit No</TableHead>
                 <TableHead>Bill No</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Member</TableHead>
-                <TableHead>Period</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="text-right">Balance</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Pay / PDF / Word / Ledger</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead className="text-right">Bill Total</TableHead>
+                <TableHead className="text-right">Principal Arr.</TableHead>
+                <TableHead className="text-right">Interest Arr.</TableHead>
+                <TableHead className="text-right">Total Arr.</TableHead>
+                <TableHead className="bg-accent/60 text-right">Total Due</TableHead>
+                {tariffColumns.map((t) => (
+                  <TableHead key={t._id} className="text-right">
+                    <span className="block max-w-24 truncate" title={t.name}>{t.name}</span>
+                  </TableHead>
+                ))}
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((b) => (
-                <TableRow key={b._id}>
-                  <TableCell className="font-medium">
-                    <Link to={`/app/bills/${b._id}`} className="hover:underline">
-                      {b.billNo}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{formatDate(b.issueDate)}</TableCell>
-                  <TableCell>{memberName(b.memberId)}</TableCell>
-                  <TableCell>{formatPeriod(b.period)}</TableCell>
-                  <TableCell className="text-right"><RightMoney value={b.total} /></TableCell>
-                  <TableCell className="text-right"><RightMoney value={b.total - b.paidAmount} /></TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={b.status === "paid" ? "secondary" : b.status === "partial" ? "outline" : "destructive"}
-                      className={b.status === "unpaid" ? "bg-transparent text-muted-foreground border" : undefined}
-                    >
-                      {b.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      {b.status !== "paid" && (
+              {rows.map((b) => {
+                const m = memberOf(b.memberId);
+                const principal = arrearsBefore(b.memberId, periodFilter);
+                return (
+                  <TableRow key={b._id}>
+                    <TableCell className="sticky left-0 bg-background font-medium">{unitNo(m)}</TableCell>
+                    <TableCell>
+                      <Link to={`/app/bills/${b._id}`} className="hover:underline">
+                        {b.billNo}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="max-w-44 truncate" title={m?.name}>{m?.name ?? "—"}</TableCell>
+                    <TableCell className={rightAlign}>{formatMoney(b.total)}</TableCell>
+                    <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
+                    <TableCell className={rightAlign}>{formatMoney(0)}</TableCell>
+                    <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
+                    <TableCell className={`bg-accent/40 font-medium ${rightAlign}`}>
+                      {formatMoney(b.total + principal)}
+                    </TableCell>
+                    {tariffColumns.map((t) => (
+                      <TableCell key={t._id} className={rightAlign}>
+                        {formatMoney(lineAmount(b, t._id))}
+                      </TableCell>
+                    ))}
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        {b.status !== "paid" && (
+                          <Button variant="ghost" size="icon" className="size-8" title="Record payment" onClick={() => openPay(b)}>
+                            <HandCoins className="size-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="size-8" title="Export bill as PDF" onClick={() => exportSingle(b, "pdf")}>
+                          <Download className="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="size-8" title="Export bill as Word" onClick={() => exportSingle(b, "word")}>
+                          <FileText className="size-3.5" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
                           className="size-8"
-                          title="Record payment"
-                          onClick={() => openPay(b)}
+                          title="Open member ledger"
+                          onClick={() => navigate(`/app/member-ledger?member=${b.memberId}`)}
                         >
-                          <HandCoins className="size-3.5" />
+                          <BookText className="size-3.5" />
                         </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        title="Export bill as PDF"
-                        onClick={() => exportSingle(b, "pdf")}
-                      >
-                        <Download className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        title="Export bill as Word"
-                        onClick={() => exportSingle(b, "word")}
-                      >
-                        <FileText className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        title="Open member ledger"
-                        onClick={() =>
-                          navigate(`/app/member-ledger?member=${b.memberId}`)
-                        }
-                      >
-                        <BookText className="size-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(b)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(b)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
+            <tfoot>
+              <tr className="border-t-2 border-foreground/60 font-semibold">
+                <td className="sticky left-0 bg-background px-2 py-3 text-right">Total {totals.count}</td>
+                <td colSpan={2} />
+                <td className={rightAlign}>{formatMoney(totals.billTotal)}</td>
+                <td className={rightAlign}>{formatMoney(totals.principalArr)}</td>
+                <td className={rightAlign}>{formatMoney(totals.interestArr)}</td>
+                <td className={rightAlign}>{formatMoney(totals.totalArr)}</td>
+                <td className={`bg-accent/40 ${rightAlign}`}>{formatMoney(totals.totalDue)}</td>
+                {tariffColumns.map((t) => (
+                  <td key={t._id} className={rightAlign}>{formatMoney(totals.perTariff[t._id] ?? 0)}</td>
+                ))}
+                <td />
+              </tr>
+            </tfoot>
           </Table>
+        </div>
+      )}
+
+      {/* Per-bill status legend for the period grid */}
+      {rows.some((b) => b.status !== "unpaid") && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>Status:</span>
+          {(["unpaid", "partial", "paid"] as const).map((s) => {
+            const n = rows.filter((b) => b.status === s).length;
+            if (n === 0) return null;
+            return (
+              <Badge
+                key={s}
+                variant={s === "paid" ? "secondary" : s === "partial" ? "outline" : "destructive"}
+                className={s === "unpaid" ? "bg-transparent text-muted-foreground border" : undefined}
+              >
+                {s} {n}
+              </Badge>
+            );
+          })}
         </div>
       )}
 
@@ -446,7 +579,7 @@ export default function BillRegister() {
           <DialogHeader>
             <DialogTitle>
               Record payment — {payBill?.billNo}
-              {payBill ? ` · ${memberName(payBill.memberId)}` : ""}
+              {payBill ? ` · ${memberOf(payBill.memberId)?.name ?? ""}` : ""}
             </DialogTitle>
           </DialogHeader>
           {payBill && (
@@ -454,15 +587,15 @@ export default function BillRegister() {
               <div className="rounded-md border bg-accent/30 p-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Bill total</span>
-                  <span className="tabular-nums">{formatINR(payBill.total)}</span>
+                  <span className="tabular-nums">{formatMoney(payBill.total)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Already paid</span>
-                  <span className="tabular-nums">{formatINR(payBill.paidAmount)}</span>
+                  <span className="tabular-nums">{formatMoney(payBill.paidAmount)}</span>
                 </div>
                 <div className="flex justify-between font-medium">
                   <span>Balance due</span>
-                  <span className="tabular-nums">{formatINR(payBill.total - payBill.paidAmount)}</span>
+                  <span className="tabular-nums">{formatMoney(payBill.total - payBill.paidAmount)}</span>
                 </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -523,7 +656,7 @@ export default function BillRegister() {
             </form>
           )}
         </DialogContent>
-    </Dialog>
+      </Dialog>
     </div>
   );
 }

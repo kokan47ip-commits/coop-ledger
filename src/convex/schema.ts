@@ -96,6 +96,11 @@ const schema = defineSchema(
       name: v.string(),
       flatNo: v.optional(v.string()),
       wing: v.optional(v.string()),
+      building: v.optional(v.string()),
+      unitType: v.optional(v.string()),
+      floor: v.optional(v.string()),
+      buildupArea: v.optional(v.number()),
+      carpetArea: v.optional(v.number()),
       phone: v.optional(v.string()),
       email: v.optional(v.string()),
       ownershipType: v.optional(
