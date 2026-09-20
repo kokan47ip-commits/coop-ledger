@@ -12,6 +12,30 @@ export type LedgerRow = {
   credit: number;
   balance: number;
   note?: string;
+  /** Bill line breakdown (member-ledger detail view): tariff head + amount. */
+  heads?: { name: string; amount: number }[];
+};
+
+export type CashBookRow = {
+  date: string;
+  voucherNo: string;
+  /** Narration lines, Crystal-style: party line, detail line, cheque line. */
+  narration: string[];
+  debit: number;
+  credit: number;
+  balance: number;
+};
+
+export type CashBookSection = {
+  accountId: Id<"accounts">;
+  code: string;
+  name: string;
+  /** Opening balance carried down (debit-positive). */
+  opening: number;
+  rows: CashBookRow[];
+  totalDebit: number;
+  totalCredit: number;
+  closing: number;
 };
 
 export type TrialBalanceRow = {
@@ -43,6 +67,7 @@ type GenericEntry = {
   bankCashAccountId?: Id<"accounts"> | null;
   narration?: string;
   reference?: string;
+  mode?: string;
   lines: GenericLine[];
 };
 
@@ -95,6 +120,7 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
     bankCashAccountId: v.bankCashAccountId,
     narration: v.narration,
     reference: v.reference,
+    mode: v.mode,
     lines: v.lines.map((l) => ({
       accountId: l.accountId,
       debit: l.debit,
@@ -266,16 +292,16 @@ export function computeMemberLedger(
     )
     .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
   for (const b of relevantBills) {
-    const lines = b.lines.map((l) => l.name).join(", ");
     addRow({
       date: b.issueDate,
       voucherNo: b.billNo,
       voucherType: "bill",
-      particulars: `Maintenance Bill ${b.period} — ${lines}`,
+      particulars: `Maintenance Bill ${b.period} — ${b.lines.map((l) => l.name).join(", ")}`,
       accountId: null,
       debit: b.total,
       credit: 0,
       note: `Due ${b.dueDate}`,
+      heads: b.lines.map((l) => ({ name: l.name, amount: l.amount })),
     });
   }
 
@@ -477,4 +503,93 @@ export function computeReceiptPayment(
   );
   const closingCash = openingCash + totalIn - totalOut;
   return { openingCash, inflows, outflows, totalIn, totalOut, closingCash };
+}
+
+/**
+ * Cash/Bank Book: per bank-cash account, the classic register with opening
+ * balance carried down, To/By party narrations, and running Dr/Cr balance.
+ */
+export function computeCashBook(
+  data: SocietyData,
+  fromDate: string,
+  toDate: string,
+  accountId?: Id<"accounts">,
+): CashBookSection[] {
+  const bankAccounts = data.accounts.filter(
+    (a) => a.kind === "bank_cash" && (!accountId || a._id === accountId),
+  );
+  const entries = unifiedEntries(data)
+    .filter((e) => e.date <= toDate)
+    .sort((a, b) =>
+      a.date === b.date
+        ? a.voucherNo.localeCompare(b.voucherNo)
+        : a.date.localeCompare(b.date),
+    );
+
+  return bankAccounts.map((bank) => {
+    let opening = bank.openingBalance;
+    let totalDebit = 0;
+    let totalCredit = 0;
+    let balance = bank.openingBalance;
+    const rows: CashBookRow[] = [];
+
+    for (const e of entries) {
+      const bankLines = e.lines.filter((l) => l.accountId === bank._id);
+      if (bankLines.length === 0) continue;
+
+      if (e.date < fromDate) {
+        for (const l of bankLines) opening += l.debit - l.credit;
+        continue;
+      }
+
+      // Contra party: the member for member receipts, otherwise the accounts
+      // on the other side of the voucher (e.g. the expense paid for).
+      const member = e.memberId
+        ? data.members.find((m) => m._id === e.memberId)
+        : undefined;
+      const party = member
+        ? `${member.code}/${member.name}`
+        : Array.from(
+            new Set(
+              e.lines
+                .filter((l) => l.accountId !== bank._id)
+                .map(
+                  (l) =>
+                    data.accounts.find((a) => a._id === l.accountId)?.name ?? "",
+                )
+                .filter(Boolean),
+            ),
+          ).join(", ");
+
+      for (const l of bankLines) {
+        const isDebit = l.debit > 0;
+        const narration = [`${isDebit ? "To " : "By "}${party || e.type}`];
+        if (e.narration) narration.push(e.narration);
+        else if (e.mode && e.type === "payment") narration.push(e.mode);
+        if (e.reference) narration.push(`Cheque No: ${e.reference}`);
+        balance += l.debit - l.credit;
+        totalDebit += l.debit;
+        totalCredit += l.credit;
+        rows.push({
+          date: e.date,
+          voucherNo: e.voucherNo,
+          narration,
+          debit: l.debit,
+          credit: l.credit,
+          balance,
+        });
+      }
+    }
+
+    return {
+      accountId: bank._id,
+      code: bank.code,
+      name: bank.name,
+      opening,
+      rows,
+      totalDebit,
+      totalCredit,
+      closing: opening + totalDebit - totalCredit,
+    };
+  });
 }

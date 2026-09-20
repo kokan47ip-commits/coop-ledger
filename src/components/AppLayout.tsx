@@ -19,6 +19,7 @@ import {
   ChevronDown,
   FileSpreadsheet,
   FileText,
+  Landmark,
   LayoutDashboard,
   LogOut,
   Plus,
@@ -71,6 +72,7 @@ const NAV: NavGroup[] = [
     items: [
       { to: "/app/member-ledger", label: "Member Ledger", icon: <Users className="size-4" /> },
       { to: "/app/general-ledger", label: "General Ledger", icon: <BookOpen className="size-4" /> },
+      { to: "/app/cash-book", label: "Cash Book", icon: <Landmark className="size-4" /> },
       { to: "/app/income-expenditure", label: "Income & Expenditure", icon: <TrendingUp className="size-4" /> },
       { to: "/app/balance-sheet", label: "Balance Sheet", icon: <FileText className="size-4" /> },
       { to: "/app/receipt-payment", label: "Receipt & Payment", icon: <Wallet className="size-4" /> },
@@ -97,6 +99,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/bills": "Bill Register",
   "/app/member-ledger": "Member Ledger",
   "/app/general-ledger": "General Ledger",
+  "/app/cash-book": "Cash Book",
   "/app/income-expenditure": "Income & Expenditure",
   "/app/balance-sheet": "Balance Sheet",
   "/app/receipt-payment": "Receipt & Payment",

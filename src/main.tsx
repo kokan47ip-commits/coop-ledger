@@ -28,6 +28,7 @@ const Payment = lazy(() => import("./pages/app/vouchers/Payment.tsx"));
 const Journal = lazy(() => import("./pages/app/vouchers/Journal.tsx"));
 const MemberLedger = lazy(() => import("./pages/app/ledgers/MemberLedger.tsx"));
 const GeneralLedger = lazy(() => import("./pages/app/ledgers/GeneralLedger.tsx"));
+const CashBook = lazy(() => import("./pages/app/ledgers/CashBook.tsx"));
 const IncomeExpenditure = lazy(() => import("./pages/app/reports/IncomeExpenditure.tsx"));
 const BalanceSheet = lazy(() => import("./pages/app/reports/BalanceSheet.tsx"));
 const ReceiptPayment = lazy(() => import("./pages/app/reports/ReceiptPayment.tsx"));
@@ -177,6 +178,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="journal" element={<Journal />} />
                 <Route path="member-ledger" element={<MemberLedger />} />
                 <Route path="general-ledger" element={<GeneralLedger />} />
+                <Route path="cash-book" element={<CashBook />} />
                 <Route path="income-expenditure" element={<IncomeExpenditure />} />
                 <Route path="balance-sheet" element={<BalanceSheet />} />
                 <Route path="receipt-payment" element={<ReceiptPayment />} />

@@ -33,6 +33,37 @@ export const listByMember = query({
   },
 });
 
+const voucherType = v.union(
+  v.literal("member_receipt"),
+  v.literal("other_receipt"),
+  v.literal("payment"),
+  v.literal("journal"),
+);
+
+/** Last issued voucher number for a book (e.g. "PY-0021"), for the voucher form header. */
+export const lastNo = query({
+  args: { societyId: v.id("societies"), type: voucherType },
+  handler: async (ctx, { societyId, type }) => {
+    await requireSociety(ctx, societyId);
+    const vouchers = await ctx.db
+      .query("vouchers")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    let max = 0;
+    let lastVoucherNo: string | null = null;
+    for (const v of vouchers) {
+      if (v.type !== type) continue;
+      const m = v.voucherNo.match(/(\d+)$/);
+      const n = m ? Number(m[1]) : 0;
+      if (n >= max) {
+        max = n;
+        lastVoucherNo = v.voucherNo;
+      }
+    }
+    return { last: max, lastVoucherNo, prefix: VOUCHER_PREFIX[type] };
+  },
+});
+
 /**
  * Auto-posts a member receipt: Dr Bank/Cash, Cr Members Receivable, then
  * applies any bill allocations. Shared by the manual form (amount derived

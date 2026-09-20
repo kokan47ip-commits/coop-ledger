@@ -28,6 +28,8 @@ type TableSpec = {
    * with span 0 render as an empty cell.
    */
   groupHead?: { label: string; span: number; align?: "left" | "center" | "right" }[];
+  /** Crystal-style account section heading drawn above the table (e.g. "A01  THE … BANK"). */
+  sectionTitle?: string;
   body: (string | number)[][];
   foot?: (string | number)[][];
   columnStyles?: Record<number, { halign?: "left" | "center" | "right"; cellWidth?: number | "auto" }>;
@@ -91,6 +93,13 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
   cursorY = drawHeader();
 
   for (const t of tables) {
+    if (t.sectionTitle) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30);
+      doc.text(t.sectionTitle, margin, cursorY + 4);
+      cursorY += 16;
+    }
     const headRows: string[][] = t.groupHead
       ? [
           groupHeadRow(t.groupHead, t.head.length),
@@ -201,6 +210,9 @@ function signaturesHtml(meta: ExportMeta): string {
 }
 
 function tableToHtml(t: TableSpec): string {
+  const section = t.sectionTitle
+    ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>`
+    : "";
   const head = t.head
     .map((h, i) => {
       const align = t.columnStyles?.[i]?.halign;
@@ -224,7 +236,7 @@ function tableToHtml(t: TableSpec): string {
           .map((c, i) => {
             const align = t.columnStyles?.[i]?.halign;
             const style = align === "right" ? "text-align:right;" : align === "center" ? "text-align:center;" : "";
-            const val = typeof c === "number" ? formatMoney(c) : escapeHtml(String(c));
+            const val = typeof c === "number" ? formatMoney(c) : escapeHtml(String(c)).replace(/\n/g, "<br/>");
             return `<td style="${style}">${val}</td>`;
           })
           .join("")}</tr>`,
@@ -240,7 +252,7 @@ function tableToHtml(t: TableSpec): string {
         })
         .join("")}</tr></tfoot>`
     : "";
-  return `<table width="100%" style="border-collapse:collapse" cellspacing="0">
+  return `${section}<table width="100%" style="border-collapse:collapse" cellspacing="0">
     <thead>${groupHead ? `<tr>${groupHead}</tr>` : ""}<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
 }
 
@@ -252,6 +264,7 @@ export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: stri
   h1 { font-size: 16pt; text-align:center; margin:0 0 4pt; }
   .sub { text-align:center; font-size: 9pt; margin:0; color:#444; }
   .title { text-align:center; font-size:12pt; font-weight:bold; margin:14pt 0 2pt; text-decoration:underline; }
+  .section { font-weight:bold; font-size:10pt; margin:12pt 0 2pt; }
   table { margin-top: 10pt; }
   th { border-bottom: 1px solid #1a1a1a; font-size: 9pt; padding: 4pt 6pt; text-align:left; }
   td { font-size: 9pt; padding: 3pt 6pt; }
@@ -290,6 +303,7 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
     h1 { font-size: 18px; text-align:center; margin:0; letter-spacing:0.02em; }
     .sub { text-align:center; font-size: 11px; color:#555; margin:2px 0; }
     .title { text-align:center; font-size: 14px; font-weight:700; margin: 18px 0 2px; }
+    .section { font-weight:700; font-size: 12px; margin: 14px 0 2px; }
     hr { border:none; border-top: 1.5px solid #111; margin: 10px 0 16px; }
     table { width:100%; border-collapse: collapse; margin-bottom: 18px; }
     th { border-bottom: 1.5px solid #111; text-align:left; font-size: 11px; padding: 6px 8px; }
@@ -335,12 +349,12 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
             .map((c, i) => {
               const align = t.columnStyles?.[i]?.halign;
               const style = align === "right" ? ' style="text-align:right"' : "";
-              const val = typeof c === "number" ? formatMoney(c) : escapeHtml(String(c));
+              const val = typeof c === "number" ? formatMoney(c) : escapeHtml(String(c)).replace(/\n/g, "<br/>");
               return `<td${style}>${val}</td>`;
             })
             .join("")}</tr></tfoot>`
         : "";
-      return `<table><thead>${
+      return `${t.sectionTitle ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>` : ""}<table><thead>${
         t.groupHead
           ? `<tr>${t.groupHead
               .map((g) => {

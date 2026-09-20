@@ -23,7 +23,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { effectiveFyPeriod, formatDate, formatINR } from "@/lib/format";
+import { effectiveFyPeriod, formatDate, formatINR, formatMoney } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "convex/react";
@@ -79,29 +79,54 @@ export default function GeneralLedger() {
             .filter(Boolean)
             .join(", "),
           registrationNo: society.registrationNo,
-          title: `General Ledger — ${account.name} (${account.code})`,
-          subtitle: `Period ${formatDate(from)} to ${formatDate(to)}`,
+          title: "ACCOUNT LEDGER",
+          subtitle: `For the period ${formatDate(from)} to ${formatDate(to)}`,
           signatures,
         }
       : null;
 
   const buildLedgerTable = (): TableSpec => {
-    const base: (string | number)[][] = [];
+    const drCr = (n: number) => `${formatMoney(n)} ${n >= 0 ? "Dr" : "Cr"}`;
+    const body: (string | number)[][] = [];
     if (account && account.openingBalance !== 0) {
-      base.push(["", "", "Opening Balance", account.openingBalance, 0, account.openingBalance]);
+      body.push([
+        "",
+        "",
+        account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
+        account.openingBalance > 0 ? account.openingBalance : "",
+        account.openingBalance < 0 ? -account.openingBalance : "",
+        "",
+      ]);
     }
-    const rows = (ledger?.rows ?? []).map((r) => [
-      formatDate(r.date),
-      r.voucherNo,
-      r.particulars + (r.note ? ` — ${r.note}` : ""),
-      r.debit,
-      r.credit,
-      r.balance,
-    ]);
+    let totDr = 0;
+    let totCr = 0;
+    for (const r of ledger?.rows ?? []) {
+      totDr += r.debit;
+      totCr += r.credit;
+      body.push([
+        formatDate(r.date),
+        r.voucherNo,
+        `${r.debit > 0 ? "To " : "By "}${r.particulars}${r.note ? `\n${r.note}` : ""}`,
+        r.debit || "",
+        r.credit || "",
+        drCr(r.balance),
+      ]);
+    }
     return {
-      head: ["Date", "Voucher", "Particulars", "Debit", "Credit", "Balance"],
-      body: [...base, ...rows],
-      foot: [["", "", "CLOSING", "", "", closing]],
+      sectionTitle: account ? `${account.code}  ${account.name}`.toUpperCase() : undefined,
+      head: ["Date", "Voucher No", "Narration", "Debit", "Credit", "Balance"],
+      body,
+      foot: [
+        [
+          "",
+          "",
+          closing >= 0 ? "To Closing balance cd" : "By Closing balance cd",
+          closing < 0 ? -closing : "",
+          closing >= 0 ? closing : "",
+          "",
+        ],
+        ["", "", "", totDr, totCr, ""],
+      ],
       columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
     };
   };
@@ -212,7 +237,9 @@ export default function GeneralLedger() {
                     {account && account.openingBalance !== 0 && (
                       <TableRow className="bg-accent/30">
                         <TableCell colSpan={2} />
-                        <TableCell className="font-medium">Opening Balance</TableCell>
+                        <TableCell className="font-medium">
+                          {account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old"}
+                        </TableCell>
                         <TableCell className="text-right"><RightMoney value={account.openingBalance} /></TableCell>
                         <TableCell className="text-right">—</TableCell>
                         <TableCell className="text-right"><RightMoney value={account.openingBalance} /></TableCell>
@@ -232,7 +259,9 @@ export default function GeneralLedger() {
                       </TableRow>
                     ))}
                     <TableRow className="border-t-2 hover:bg-transparent">
-                      <TableCell colSpan={3} className="font-semibold">Closing balance</TableCell>
+                      <TableCell colSpan={3} className="font-semibold">
+                        {closing >= 0 ? "To Closing balance cd" : "By Closing balance cd"}
+                      </TableCell>
                       <TableCell colSpan={2} />
                       <TableCell className="text-right font-semibold"><RightMoney value={closing} /></TableCell>
                     </TableRow>
