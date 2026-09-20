@@ -64,7 +64,7 @@ export default function Dashboard() {
             : "Overview of the books you keep."
         }
         actions={
-          <Button asChild variant="outline" size="sm" className="rounded-none">
+          <Button asChild variant="outline" size="sm" className="rounded-lg">
             <Link to="/app/bills">
               <Receipt className="size-4" /> Generate bills
             </Link>
@@ -109,7 +109,7 @@ export default function Dashboard() {
             </Link>
           </div>
           {!stats ? null : stats.recentVouchers.length === 0 ? (
-            <div className="rounded-none border border-dashed p-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
               No transactions posted yet. Begin with a member receipt or generate the month's bills.
             </div>
           ) : (
@@ -190,7 +190,7 @@ export default function Dashboard() {
               <Link
                 key={a.to}
                 to={a.to}
-                className="group flex items-start gap-4 rounded-none border p-4 transition-colors hover:bg-accent/40"
+                className="group flex items-start gap-4 rounded-lg border p-4 transition-colors hover:bg-accent/40"
               >
                 <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border text-muted-foreground group-hover:text-foreground">
                   {a.icon}

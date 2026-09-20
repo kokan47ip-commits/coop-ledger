@@ -121,7 +121,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
               <CardHeader className="text-center">
                 <div className="flex justify-center">
                   <span
-                    className="mb-4 mt-4 flex size-14 cursor-pointer items-center justify-center rounded-none bg-foreground text-xs font-semibold tracking-widest text-background"
+                    className="brand-gradient mb-4 mt-4 flex size-14 cursor-pointer items-center justify-center rounded-xl text-xs font-semibold tracking-widest text-white shadow-lg shadow-primary/40"
                     onClick={() => navigate("/")}
                     title="Imamm Accounting Solutions"
                   >
@@ -182,7 +182,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                     <Button
                       type="button"
                       variant="outline"
-                      className="w-full rounded-none"
+                      className="w-full rounded-lg"
                       onClick={handleGuestLogin}
                       disabled={isLoading}
                     >

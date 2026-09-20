@@ -132,7 +132,7 @@ function UploadCard({
             e.target.value = "";
           }}
         />
-        <Button disabled={busy} onClick={() => inputRef.current?.click()} className="rounded-none">
+        <Button disabled={busy} onClick={() => inputRef.current?.click()} className="rounded-lg">
           <Upload className="size-4" /> {busy ? "Uploading…" : "Upload Excel"}
         </Button>
         {last && (

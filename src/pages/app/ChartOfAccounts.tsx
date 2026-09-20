@@ -185,7 +185,7 @@ export default function ChartOfAccounts() {
         description="Ledger heads used by tariffs, vouchers and reports. Opening balances set the starting position for the current financial year."
         actions={
           <Button
-            className="rounded-none"
+            className="rounded-lg"
             onClick={() => {
               setForm({ id: "", code: "", name: "", type: "expense", kind: "none", openingBalance: "0", groupId: "" });
               setOpen(true);
@@ -197,9 +197,9 @@ export default function ChartOfAccounts() {
       />
 
       <Tabs defaultValue="accounts">
-        <TabsList className="rounded-none">
-          <TabsTrigger value="accounts" className="rounded-none">Accounts</TabsTrigger>
-          <TabsTrigger value="groups" className="rounded-none">
+        <TabsList className="rounded-lg">
+          <TabsTrigger value="accounts" className="rounded-lg">Accounts</TabsTrigger>
+          <TabsTrigger value="groups" className="rounded-lg">
             Groups
             {groups && groups.length > 0 && (
               <span className="ml-1.5 tabular-nums text-muted-foreground">{groups.length}</span>

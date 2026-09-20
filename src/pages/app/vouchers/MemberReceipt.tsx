@@ -197,7 +197,7 @@ export default function MemberReceipt() {
         )}
 
         <div className="mt-5 flex justify-end">
-          <Button type="submit" className="rounded-none px-6">
+          <Button type="submit" className="rounded-lg px-6">
             <Plus className="size-4" /> Save receipt
           </Button>
         </div>

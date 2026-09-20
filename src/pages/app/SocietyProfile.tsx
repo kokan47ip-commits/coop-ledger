@@ -261,22 +261,22 @@ export default function SocietyProfile() {
       />
       <form onSubmit={submit}>
         <Tabs defaultValue="society">
-          <TabsList className="mb-8 w-full justify-start overflow-x-auto rounded-none border-b bg-transparent p-0">
+          <TabsList className="mb-8 w-full justify-start overflow-x-auto rounded-lg border-b bg-transparent p-0">
             <TabsTrigger
               value="society"
-              className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              className="rounded-lg border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
             >
               Society
             </TabsTrigger>
             <TabsTrigger
               value="period"
-              className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              className="rounded-lg border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
             >
               Financial Period
             </TabsTrigger>
             <TabsTrigger
               value="committee"
-              className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              className="rounded-lg border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
             >
               <span className="flex items-center gap-2">
                 Committee Members
@@ -288,7 +288,7 @@ export default function SocietyProfile() {
             {!isNew && (
               <TabsTrigger
                 value="accounting"
-                className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                className="rounded-lg border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
               >
                 Accounting
               </TabsTrigger>
@@ -420,7 +420,7 @@ export default function SocietyProfile() {
                 <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Effective period
                 </h3>
-                <div className="grid gap-4 rounded-none border p-5 sm:grid-cols-3">
+                <div className="grid gap-4 rounded-lg border p-5 sm:grid-cols-3">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Financial year</p>
                     <p className="mt-1.5 text-lg font-semibold tracking-tight tabular-nums">
@@ -468,7 +468,7 @@ export default function SocietyProfile() {
               </div>
 
               {memberOptions.length === 0 ? (
-                <div className="rounded-none border border-dashed p-8 text-center">
+                <div className="rounded-lg border border-dashed p-8 text-center">
                   <p className="text-sm font-medium">No members yet</p>
                   <p className="mx-auto mt-1.5 max-w-sm text-sm leading-6 text-muted-foreground">
                     Add members first — committee positions are chosen from the register. Use the
@@ -491,7 +491,7 @@ export default function SocietyProfile() {
                 <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Current assignments
                 </h3>
-                <div className="rounded-none border">
+                <div className="rounded-lg border">
                   <ul className="divide-y">
                     {ROLES.map((r) => {
                       const id = form[r.key];
@@ -557,7 +557,7 @@ export default function SocietyProfile() {
 
         {/* Danger zone — the only place a society can be erased, always manual. */}
         {!isNew && society && (
-          <div className="mt-10 rounded-none border border-destructive/40 p-5">
+          <div className="mt-10 rounded-lg border border-destructive/40 p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
                 <TriangleAlert className="mt-0.5 size-4 text-destructive" />
@@ -573,7 +573,7 @@ export default function SocietyProfile() {
               <Button
                 type="button"
                 variant="outline"
-                className="shrink-0 rounded-none border-destructive/50 text-destructive hover:bg-destructive/10"
+                className="shrink-0 rounded-lg border-destructive/50 text-destructive hover:bg-destructive/10"
                 onClick={() => {
                   setDeleteConfirmText("");
                   setDeleteOpen(true);
@@ -589,7 +589,7 @@ export default function SocietyProfile() {
           <p className="mr-auto hidden text-xs text-muted-foreground sm:block">
             {todayISO() && <span>Changes apply to this society's books immediately.</span>}
           </p>
-          <Button type="submit" disabled={saving} className="rounded-none px-8">
+          <Button type="submit" disabled={saving} className="rounded-lg px-8">
             <Save className="size-4" />
             {saving ? "Saving…" : isNew ? "Onboard society" : "Save changes"}
           </Button>

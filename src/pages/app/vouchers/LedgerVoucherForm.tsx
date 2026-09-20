@@ -292,7 +292,7 @@ export function LedgerVoucherForm({ kind }: { kind: "payment" | "other_receipt" 
               value={credit} onChange={(e) => { setCredit(e.target.value); setDebit(""); }} />
           </div>
           <div className="flex items-end sm:col-span-2">
-            <Button type="button" variant="outline" className="w-full rounded-none" onClick={addLine}>
+            <Button type="button" variant="outline" className="w-full rounded-lg" onClick={addLine}>
               <Plus className="size-4" /> Add
             </Button>
           </div>
@@ -363,7 +363,7 @@ export function LedgerVoucherForm({ kind }: { kind: "payment" | "other_receipt" 
       </Table>
 
       <div className="flex justify-end gap-2 border-t p-5">
-        <Button type="submit" className="rounded-none px-8" disabled={saving || net <= 0}>
+        <Button type="submit" className="rounded-lg px-8" disabled={saving || net <= 0}>
           Save voucher
         </Button>
       </div>

@@ -5,7 +5,7 @@ import { Link } from "react-router";
 export default function NotFound() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center text-foreground">
-      <span className="mb-8 flex size-9 items-center justify-center rounded-none bg-foreground text-[10px] font-semibold tracking-wide text-background">
+      <span className="brand-gradient mb-8 flex size-9 items-center justify-center rounded-lg text-[10px] font-semibold tracking-wide text-white shadow-lg shadow-primary/40">
         IAS
       </span>
       <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
@@ -18,7 +18,7 @@ export default function NotFound() {
         The address you followed doesn't exist in the workspace. Return to your
         dashboard to continue where you left off.
       </p>
-      <Button asChild className="mt-9 rounded-none px-7">
+      <Button asChild className="mt-9 rounded-lg px-7">
         <Link to="/dashboard">
           <ArrowLeft className="size-4" /> Back to dashboard
         </Link>

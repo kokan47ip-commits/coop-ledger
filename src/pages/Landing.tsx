@@ -72,7 +72,7 @@ export default function Landing() {
       <header className="sticky top-0 z-10 border-b bg-background/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <span className="flex size-8 items-center justify-center rounded bg-foreground text-[10px] font-semibold tracking-wide text-background">
+            <span className="brand-gradient flex size-8 items-center justify-center rounded-lg text-[10px] font-semibold tracking-wide text-white shadow-md shadow-primary/40">
               IAS
             </span>
             <span className="text-sm font-semibold tracking-tight">
@@ -98,7 +98,7 @@ export default function Landing() {
             >
               Sign in
             </Link>
-            <Button asChild className="h-9 rounded-none px-5 text-xs font-medium tracking-wide uppercase">
+            <Button asChild className="h-9 rounded-lg px-5 text-xs font-medium tracking-wide uppercase">
               <Link to="/auth">Client login</Link>
             </Button>
           </nav>
@@ -120,7 +120,7 @@ export default function Landing() {
           ready for PDF or Word.
         </p>
         <div className="mt-11 flex flex-wrap items-center gap-3">
-          <Button asChild size="lg" className="h-12 rounded-none px-9 tracking-wide">
+          <Button asChild size="lg" className="h-12 rounded-lg px-9 tracking-wide">
             <Link to="/auth">
               Enter the workspace <ArrowRight className="size-4" />
             </Link>
@@ -129,7 +129,7 @@ export default function Landing() {
             asChild
             size="lg"
             variant="ghost"
-            className="h-12 rounded-none px-7 text-muted-foreground"
+            className="h-12 rounded-lg px-7 text-muted-foreground"
           >
             <a href="#capabilities">
               Review the capabilities <ArrowUpRight className="size-4" />
@@ -166,7 +166,7 @@ export default function Landing() {
               work is consistent, reviewable and always current.
             </p>
           </div>
-          <div className="grid gap-px overflow-hidden rounded-none border bg-border md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-px overflow-hidden rounded-lg border bg-border md:grid-cols-2 lg:grid-cols-4">
             {PILLARS.map((m) => (
               <div key={m.group} className="bg-background p-8">
                 <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -225,7 +225,7 @@ export default function Landing() {
               reaches a ledger.
             </p>
           </div>
-          <div className="rounded-none border bg-muted/30 p-7 font-mono text-xs leading-7 text-muted-foreground">
+          <div className="rounded-lg border bg-muted/30 p-7 font-mono text-xs leading-7 text-muted-foreground">
             <p className="text-foreground">members.xlsx</p>
             <Separator className="my-3" />
             <p>Code&nbsp;&nbsp;&nbsp;Name&nbsp;&nbsp;&nbsp;FlatNo&nbsp;&nbsp;&nbsp;OpeningBalance</p>
@@ -250,7 +250,7 @@ export default function Landing() {
             This workspace is reserved for the practice. Sign in to review
             balances, post the day's vouchers and issue the month's bills.
           </p>
-          <Button asChild size="lg" className="h-12 rounded-none px-10 tracking-wide">
+          <Button asChild size="lg" className="h-12 rounded-lg px-10 tracking-wide">
             <Link to="/auth">
               Sign in <ArrowRight className="size-4" />
             </Link>

@@ -400,7 +400,7 @@ export default function BillRegister() {
           <div className="flex items-end">
             <Button
               variant="outline"
-              className="w-full rounded-none"
+              className="w-full rounded-lg"
               onClick={() => setApplied({ building, wing, unitType, floor })}
             >
               <RefreshCw className="size-4" /> Refresh
@@ -429,7 +429,7 @@ export default function BillRegister() {
             <Input id="b-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </div>
           <div className="flex items-end">
-            <Button onClick={doGenerate} disabled={generating || (tariffs ?? []).filter((t) => t.isActive).length === 0} className="w-full rounded-none">
+            <Button onClick={doGenerate} disabled={generating || (tariffs ?? []).filter((t) => t.isActive).length === 0} className="w-full rounded-lg">
               {generating ? "Generating…" : "Generate for all active members"}
             </Button>
           </div>

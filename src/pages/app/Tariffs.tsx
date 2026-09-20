@@ -181,7 +181,7 @@ export default function Tariffs() {
         description="Recurring charges applied to every member when a monthly bill is generated."
         actions={
           <Button
-            className="rounded-none"
+            className="rounded-lg"
             disabled={incomeAccounts.length === 0}
             onClick={() => {
               setForm({ id: "", name: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true });
@@ -194,16 +194,16 @@ export default function Tariffs() {
       />
 
       <Tabs defaultValue="schedule-heads">
-        <TabsList className="mb-8 w-full justify-start overflow-x-auto rounded-none border-b bg-transparent p-0">
+        <TabsList className="mb-8 w-full justify-start overflow-x-auto rounded-lg border-b bg-transparent p-0">
           <TabsTrigger
             value="schedule-heads"
-            className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            className="rounded-lg border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
           >
             Tariff Heads
           </TabsTrigger>
           <TabsTrigger
             value="matrix"
-            className="rounded-none border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+            className="rounded-lg border-b-2 border-transparent px-5 py-3 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
           >
             <span className="flex items-center gap-2">
               Member Schedule
@@ -255,7 +255,7 @@ export default function Tariffs() {
               e.target.value = "";
             }}
           />
-          <Button disabled={uploadBusy} onClick={() => inputRef.current?.click()} className="rounded-none">
+          <Button disabled={uploadBusy} onClick={() => inputRef.current?.click()} className="rounded-lg">
             <Upload className="size-4" /> {uploadBusy ? "Uploading…" : "Upload Excel"}
           </Button>
           {lastUpload && (
@@ -530,7 +530,7 @@ function MemberTariffMatrix(props: {
         <div className="flex items-end">
           <Button
             variant="outline"
-            className="w-full rounded-none"
+            className="w-full rounded-lg"
             onClick={() => setFilter({ building, wing, unitType, floor })}
           >
             Filter
@@ -543,7 +543,7 @@ function MemberTariffMatrix(props: {
           {filtered.length} member{filtered.length === 1 ? "" : "s"} · blank cells use the schedule amount · 0 exempts
           the member from that charge
         </p>
-        <Button className="rounded-none" disabled={saving || dirtyCount === 0} onClick={saveAll}>
+        <Button className="rounded-lg" disabled={saving || dirtyCount === 0} onClick={saveAll}>
           <Save className="size-4" /> {saving ? "Saving…" : `Save${dirtyCount > 0 ? ` (${dirtyCount})` : ""}`}
         </Button>
       </div>
@@ -583,7 +583,7 @@ function MemberTariffMatrix(props: {
                         onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
                         placeholder={formatMoney(t.amount)}
                         inputMode="decimal"
-                        className={`h-9 rounded-none border-0 border-l text-right tabular-nums focus-visible:ring-1 ${
+                        className={`h-9 rounded-lg border-0 border-l text-right tabular-nums focus-visible:ring-1 ${
                           isDirty ? "bg-accent/60" : o ? "bg-muted/60" : ""
                         }`}
                       />
