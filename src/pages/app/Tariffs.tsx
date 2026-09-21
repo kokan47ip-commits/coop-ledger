@@ -30,7 +30,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { downloadMemberTariffTemplate, parseExcelFile } from "@/lib/excel";
 import { formatINR } from "@/lib/format";
-import { CheckCircle2, Download, Pencil, Plus, Save, Trash2, Upload } from "lucide-react";
+import { Check, CheckCircle2, Download, Pencil, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -170,6 +170,61 @@ export default function Tariffs() {
     }
   };
 
+  // Inline row editing on the Tariff Heads table.
+  const [editId, setEditId] = useState<Id<"tariffs"> | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    accountId: "",
+    amount: "0",
+    unit: "flat",
+    isActive: true,
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const startEdit = (t: TariffRow) => {
+    setEditId(t._id);
+    setEditForm({
+      name: t.name,
+      accountId: t.accountId,
+      amount: String(t.amount),
+      unit: t.unit ?? "flat",
+      isActive: t.isActive,
+    });
+  };
+
+  const cancelEdit = () => setEditId(null);
+
+  const saveEdit = async () => {
+    if (!societyId || !editId) return;
+    if (!editForm.name.trim() || !editForm.accountId) {
+      toast.error("Tariff name and income account are required.");
+      return;
+    }
+    const amount = Number(editForm.amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast.error("Enter a valid non-negative amount.");
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await upsert({
+        societyId,
+        id: editId,
+        name: editForm.name.trim(),
+        accountId: editForm.accountId as Id<"accounts">,
+        amount,
+        unit: editForm.unit as "flat" | "member",
+        isActive: editForm.isActive,
+      });
+      toast.success("Tariff updated");
+      setEditId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save tariff");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const totalPerFlat = (tariffs ?? [])
     .filter((t) => t.isActive)
     .reduce((s, t) => s + t.amount, 0);
@@ -300,42 +355,132 @@ export default function Tariffs() {
               <TableBody>
                 {[...tariffs]
                   .sort((a, b) => a.name.localeCompare(b.name))
-                  .map((t) => (
-                    <TableRow key={t._id}>
-                      <TableCell className="font-medium">{t.name}</TableCell>
-                      <TableCell className="text-sm">{accountName(t.accountId)}</TableCell>
-                      <TableCell className="capitalize">per {t.unit ?? "flat"}</TableCell>
-                      <TableCell className="text-right"><RightMoney value={t.amount} /></TableCell>
-                      <TableCell className={t.isActive ? "text-foreground" : "text-muted-foreground"}>
-                        {t.isActive ? "Active" : "Inactive"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8"
-                            onClick={() => {
-                              setForm({
-                                id: t._id,
-                                name: t.name,
-                                accountId: t.accountId,
-                                amount: String(t.amount),
-                                unit: t.unit ?? "flat",
-                                isActive: t.isActive,
-                              });
-                              setOpen(true);
-                            }}
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(t)}>
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  .map((t) => {
+                    const editing = editId === t._id;
+                    return (
+                      <TableRow key={t._id} className={editing ? "bg-accent/40" : undefined}>
+                        <TableCell className="font-medium">
+                          {editing ? (
+                            <Input
+                              value={editForm.name}
+                              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                              className="h-8"
+                              autoFocus
+                            />
+                          ) : (
+                            t.name
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {editing ? (
+                            <Select
+                              value={editForm.accountId}
+                              onValueChange={(v) => setEditForm({ ...editForm, accountId: v })}
+                            >
+                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {incomeAccounts.map((a) => (
+                                  <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            accountName(t.accountId)
+                          )}
+                        </TableCell>
+                        <TableCell className="capitalize">
+                          {editing ? (
+                            <Select
+                              value={editForm.unit}
+                              onValueChange={(v) => setEditForm({ ...editForm, unit: v })}
+                            >
+                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="flat">per flat</SelectItem>
+                                <SelectItem value="member">per member</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            `per ${t.unit ?? "flat"}`
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {editing ? (
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={editForm.amount}
+                              onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                              className="h-8 text-right tabular-nums"
+                            />
+                          ) : (
+                            <RightMoney value={t.amount} />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editing ? (
+                            <Select
+                              value={editForm.isActive ? "active" : "inactive"}
+                              onValueChange={(v) => setEditForm({ ...editForm, isActive: v === "active" })}
+                            >
+                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="active">Active</SelectItem>
+                                <SelectItem value="inactive">Inactive</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <span className={t.isActive ? "text-foreground" : "text-muted-foreground"}>
+                              {t.isActive ? "Active" : "Inactive"}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            {editing ? (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8"
+                                  title="Save row"
+                                  disabled={savingEdit}
+                                  onClick={saveEdit}
+                                >
+                                  <Check className="size-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8"
+                                  title="Cancel editing"
+                                  onClick={cancelEdit}
+                                >
+                                  <X className="size-3.5" />
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8"
+                                  title="Edit in row"
+                                  onClick={() => startEdit(t)}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(t)}>
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>
