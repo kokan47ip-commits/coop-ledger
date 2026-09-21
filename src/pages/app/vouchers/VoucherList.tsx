@@ -159,7 +159,7 @@ export function VoucherList({
           title: t,
           subtitle:
             list.length > 0
-              ? `${list.length} vouchers · ${formatDate(list[0].date)} to ${formatDate(list[list.length - 1].date)} · Total ${formatINR(list.reduce((s, v) => s + v.total, 0))}`
+              ? `${list.length} vouchers · ${formatDate(list[list.length - 1].date)} to ${formatDate(list[0].date)} · Total ${formatINR(list.reduce((s, v) => s + v.total, 0))}`
               : "No vouchers in the selected range",
           signatures,
         }

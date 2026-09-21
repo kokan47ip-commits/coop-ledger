@@ -143,9 +143,11 @@ export default function MemberReceipt() {
     }
   };
 
-  // Prefill the edit form from the loaded voucher
+  // Prefill the edit form once per voucher — guarded so reactive refetches
+  // (new object identity) never overwrite the user's in-progress edits.
+  const [editLoadedFor, setEditLoadedFor] = useState<string | null>(null);
   useEffect(() => {
-    if (!editId || !editVoucherDoc) return;
+    if (!editId || !editVoucherDoc || editLoadedFor === editId) return;
     setForm({
       memberId: (editVoucherDoc.memberId as string) ?? "",
       date: editVoucherDoc.date,
@@ -155,7 +157,9 @@ export default function MemberReceipt() {
       reference: editVoucherDoc.reference ?? "",
       narration: editVoucherDoc.narration ?? "",
     });
-  }, [editId, editVoucherDoc]);
+    setEditLoadedFor(editId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, editLoadedFor]);
 
   const formatUnallocated = (n: number) =>
     `₹ ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n)}`;
@@ -267,6 +271,7 @@ export default function MemberReceipt() {
           </div>
         </form>
       ) : (
+        <form onSubmit={submit} className="mb-10 rounded-lg border p-5">
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
             <Label>Member *</Label>

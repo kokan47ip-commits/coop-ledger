@@ -101,26 +101,27 @@ export function LedgerVoucherForm({
     setDate(v.date);
     setBankCashAccountId((v.bankCashAccountId as string) ?? "");
     setParty(v.mode ?? "");
-    setNarration((v.narration ?? "").replace(/^Bank: .*( — )?/, ""));
-    setBankName((v.narration ?? "").match(/^Bank: ([^—]+?)( — )?/)?.[1]?.trim() ?? "");
+    // Narration is stored as "text — Bank: X"; split it back apart.
+    const raw = v.narration ?? "";
+    const bankMatch = raw.match(/— Bank: (.+)$/);
+    setBankName(bankMatch?.[1]?.trim() ?? "");
+    setNarration(bankMatch ? raw.slice(0, bankMatch.index).replace(/ — $/, "") : raw);
     setChequeNo(v.reference ?? "");
     const ref = v.reference ?? "";
     setChequeDate(ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "");
     setLines(
-      v.lines.map((l) => {
-        const acc = accounts?.find((a) => a._id === l.accountId);
-        return {
-          key: lineKey++,
-          accountId: l.accountId,
-          code: acc?.code ?? "",
-          name: acc?.name ?? "",
-          debit: l.debit,
-          credit: l.credit,
-        };
-      }),
+      v.lines.map((l) => ({
+        key: lineKey++,
+        accountId: l.accountId,
+        code: "",
+        name: "",
+        debit: l.debit,
+        credit: l.credit,
+      })),
     );
     setLoadedFrom(v._id);
-  }, [editId, editing, accounts, loadedFrom]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, loadedFrom]);
 
   const bankBal = useQuery(
     api.api.accountBalance,
@@ -418,10 +419,16 @@ export function LedgerVoucherForm({
               </TableCell>
             </TableRow>
           ) : (
-            lines.map((l) => (
+            lines.map((l) => {
+              // Look up live so labels are correct even if accounts load late.
+              const acc = accounts?.find((a) => a._id === l.accountId);
+              const code = l.code || acc?.code || "—";
+              const name = l.name || acc?.name || "—";
+              return (
+                
               <TableRow key={l.key}>
-                <TableCell className="font-mono text-xs">{l.code}</TableCell>
-                <TableCell className="font-medium">{l.name}</TableCell>
+                <TableCell className="font-mono text-xs">{code}</TableCell>
+                <TableCell className="font-medium">{name}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {isEdit ? (
                     <Input type="number" step="0.01" min="0"
@@ -442,14 +449,15 @@ export function LedgerVoucherForm({
                     l.credit ? formatMoney(l.credit) : ""
                   )}
                 </TableCell>
-                <TableCell>
-                  <Button type="button" variant="ghost" size="icon"
-                    className="size-8 text-destructive" onClick={() => removeLine(l.key)}>
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))
+                    <TableCell>
+                      <Button type="button" variant="ghost" size="icon"
+                        className="size-8 text-destructive" onClick={() => removeLine(l.key)}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+              );
+            })
           )}
           {showAutoRow && (
             <TableRow className="border-t-2 hover:bg-transparent">

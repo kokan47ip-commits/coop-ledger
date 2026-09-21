@@ -263,7 +263,9 @@ export default function MemberLedger() {
     const tables: TableSpec[] = order
       .map((mem) => {
         const entry = bulk.find((b) => b.memberId === mem._id);
-        const rows = entry?.rows ?? [];
+        // The backend emits its own internal OPENING row; the printed opening
+        // line below replaces it (same convention as the single-member view).
+        const rows = (entry?.rows ?? []).filter((r) => r.voucherNo !== "OPENING");
         const body: (string | number)[][] = [];
         if (mem.openingBalance !== 0) {
           body.push([

@@ -72,13 +72,16 @@ export default function Journal() {
   const [saving, setSaving] = useState(false);
   const [loadedFrom, setLoadedFrom] = useState<string | null>(null);
 
-  // Prefill when editing
+  // Prefill when editing — guarded so refetches never overwrite user edits.
   useEffect(() => {
     if (!editId || !editing) return;
     const v = editing[0];
     if (!v || loadedFrom === v._id) return;
     setDate(v.date);
     setNarration(v.narration ?? "");
+    const ref = v.reference ?? "";
+    setChequeNo(ref.includes(" dt ") ? ref.split(" dt ")[0] : ref);
+    setChequeDate(ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "");
     setLines(
       v.lines.map((l) => ({
         key: lineKey++,
@@ -88,9 +91,10 @@ export default function Journal() {
       })),
     );
     setLoadedFrom(v._id);
-  }, [editId, editing, loadedFrom]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, loadedFrom]);
 
-  const ledgerAccounts = (accounts ?? []).filter((a) => a.kind !== "bank_cash" || lines.some((l) => l.accountId === a._id));
+  const ledgerAccounts = accounts ?? [];
 
   const totalDebit = lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
   const totalCredit = lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
@@ -168,6 +172,11 @@ export default function Journal() {
           id: editId as Id<"vouchers">,
           date,
           narration: narration || undefined,
+          reference: chequeNo
+            ? chequeDate
+              ? `${chequeNo} dt ${chequeDate}`
+              : chequeNo
+            : undefined,
           lines: payloadLines,
         });
         toast.success(`Journal updated`);
@@ -178,6 +187,11 @@ export default function Journal() {
           type: "journal",
           date,
           narration: narration || undefined,
+          reference: chequeNo
+            ? chequeDate
+              ? `${chequeNo} dt ${chequeDate}`
+              : chequeNo
+            : undefined,
           lines: payloadLines,
         });
         toast.success(`Journal of ₹ ${formatMoney(totalDebit)} saved`);
@@ -196,7 +210,7 @@ export default function Journal() {
     try {
       await removeVoucher({ societyId, id: editId as Id<"vouchers"> });
       toast.success("Journal deleted");
-      navigate("/app/vouchers/journal");
+      navigate("/app/journal");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete");
     }
