@@ -787,8 +787,10 @@ function MemberTariffMatrix(props: {
                   return (
                     <TableCell key={t._id} className="p-0">
                       <Input
+                        type="text"
                         value={valueFor(m._id, t._id)}
                         onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                        onFocus={(e) => e.currentTarget.select()}
                         onBlur={(e) => void commitCell(m._id, t._id, e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
@@ -802,14 +804,14 @@ function MemberTariffMatrix(props: {
                         }}
                         placeholder={formatMoney(t.amount)}
                         inputMode="decimal"
-                        disabled={isSavingCell}
-                        className={`h-9 rounded-lg border-l text-right tabular-nums transition-colors hover:border-primary/40 focus-visible:ring-1 ${
+                        aria-busy={isSavingCell}
+                        className={`h-9 cursor-text rounded-lg border-l bg-background text-right tabular-nums transition-all hover:border-primary/60 hover:bg-accent/30 focus-visible:z-10 focus-visible:bg-background focus-visible:ring-2 ${
                           isDirty
-                            ? "bg-accent/60"
+                            ? "border-primary/50 bg-accent/60"
                             : o
                               ? "bg-muted/60"
                               : ""
-                        }`}
+                        } ${isSavingCell ? "opacity-60" : ""}`}
                       />
                     </TableCell>
                   );
