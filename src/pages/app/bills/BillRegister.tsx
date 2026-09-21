@@ -30,7 +30,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
-import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
+import { billPdf, billWord, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatDate, formatMoney, formatPeriod, todayISO } from "@/lib/format";
 import { BookText, Download, FileText, HandCoins, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Trash2 } from "lucide-react";
@@ -204,32 +204,46 @@ export default function BillRegister() {
     else receiptPrint(receiptData);
   };
 
+  /** Single-bill export in the legacy Shama-I format. */
   const exportSingle = (b: Bill, kind: "pdf" | "word") => {
     if (!society) return;
-    const meta: ExportMeta = {
-      societyName: society.name,
-      societyAddress: [society.address, society.city, society.state, society.pincode]
-        .filter(Boolean)
-        .join(", "),
-      registrationNo: society.registrationNo,
-      title: `Maintenance Bill — ${formatPeriod(b.period)}`,
-      subtitle: `Bill No: ${b.billNo} · Issue: ${formatDate(b.issueDate)} · Due: ${formatDate(b.dueDate)}`,
-      signatures,
-    };
     const m = memberOf(b.memberId);
-    const accountNameFor = (id: string) => {
-      const a = (accounts ?? []).find((x) => x._id === id);
-      return a ? `${a.code} — ${a.name}` : "—";
-    };
-    const table: TableSpec = {
-      head: ["#", "Charge head", "Income account", "Amount"],
-      body: b.lines.map((l, i) => [String(i + 1), l.name, accountNameFor(l.accountId), l.amount]),
-      foot: [["", "", "TOTAL", b.total]],
-      columnStyles: { 3: { halign: "right" } },
+    const isArrearsLine = (name: string) => name.toLowerCase().startsWith("arrears");
+    const arrearsFromBills = (bills ?? [])
+      .filter((x) => x.memberId === b.memberId && x.period < b.period)
+      .reduce((s, x) => s + (x.total - x.paidAmount), 0);
+    const arrearsOnBill = (b.lines ?? [])
+      .filter((l) => isArrearsLine(l.name))
+      .reduce((s, l) => s + l.amount, 0);
+    const arrears = arrearsFromBills + arrearsOnBill;
+    const currentCharges = (b.lines ?? [])
+      .filter((l) => !isArrearsLine(l.name))
+      .reduce((s, l) => s + l.amount, 0);
+    const data: LegacyBillData = {
+      society: {
+        name: society.name,
+        address: [society.address, society.city, society.state, society.pincode]
+          .filter(Boolean)
+          .join(", "),
+        registrationNo: society.registrationNo,
+      },
+      billNo: b.billNo.replace(/^BILL-/, ""),
+      billDate: b.issueDate,
+      dueDate: b.dueDate,
+      periodLabel: periodLabelLong(b.period),
+      memberName: m?.name ?? "Member",
+      flatNo: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
+      lines: (b.lines ?? [])
+        .filter((l) => !isArrearsLine(l.name))
+        .map((l) => ({ name: l.name, amount: l.amount })),
+      total: currentCharges,
+      arrears,
+      totalDue: currentCharges + arrears,
+      paidAmount: b.paidAmount,
     };
     const name = m ? `${m.code}-${b.billNo}` : b.billNo;
-    if (kind === "pdf") exportPDF(meta, [table], `${name}.pdf`);
-    else exportWord(meta, [table], `${name}.doc`);
+    if (kind === "pdf") billPdf(data, `${name}.pdf`);
+    else billWord(data, `${name}.doc`);
   };
 
   // ---- Crystal-style "Regular Bills Register" export for the selected period ----
