@@ -31,7 +31,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { currentPeriod, formatDate, formatMoney, formatPeriod, todayISO } from "@/lib/format";
+import { currentPeriod, effectiveFyPeriod, formatDate, formatMoney, formatPeriod, todayISO } from "@/lib/format";
 import { BookText, Download, FileText, HandCoins, Plus, Printer, RefreshCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -92,6 +92,8 @@ export default function BillRegister() {
     d.setDate(d.getDate() + 15);
     return d.toISOString().slice(0, 10);
   });
+  // Arrears as-on date: the cutoff for carrying forward earlier unpaid bills.
+  const [arrearsDate, setArrearsDate] = useState(effectiveFyPeriod(society).from);
   const [generating, setGenerating] = useState(false);
 
   const memberOf = (id: Id<"members">) => members?.find((m) => m._id === id);
@@ -274,6 +276,7 @@ export default function BillRegister() {
         period,
         issueDate,
         dueDate,
+        arrearsDate: arrearsDate || undefined,
         memberIds: activeMembers.map((m) => m._id),
       });
       toast.success(
@@ -415,7 +418,7 @@ export default function BillRegister() {
           <Plus className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-medium">Generate bills</h3>
         </div>
-        <div className="grid gap-4 sm:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="space-y-2">
             <Label htmlFor="b-period">Period</Label>
             <Input id="b-period" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} />
@@ -427,6 +430,19 @@ export default function BillRegister() {
           <div className="space-y-2">
             <Label htmlFor="b-due">Due date</Label>
             <Input id="b-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="b-arr">Arrears as-on date</Label>
+            <Input
+              id="b-arr"
+              type="date"
+              value={arrearsDate}
+              onChange={(e) => setArrearsDate(e.target.value)}
+              title="Bills unpaid as on this date are carried forward as arrears"
+            />
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Earlier bills unpaid on this date become arrears on the new bills.
+            </p>
           </div>
           <div className="flex items-end">
             <Button onClick={doGenerate} disabled={generating || (tariffs ?? []).filter((t) => t.isActive).length === 0} className="w-full rounded-lg">

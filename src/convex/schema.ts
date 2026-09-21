@@ -141,6 +141,8 @@ const schema = defineSchema(
       period: v.string(), // "YYYY-MM"
       issueDate: v.string(), // "YYYY-MM-DD"
       dueDate: v.string(),
+      /** As-on date used to compute principal arrears carried into this bill. */
+      arrearsDate: v.optional(v.string()),
       lines: v.array(
         v.object({
           tariffId: v.optional(v.id("tariffs")),

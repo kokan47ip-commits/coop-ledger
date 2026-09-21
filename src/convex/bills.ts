@@ -45,9 +45,11 @@ export const generate = mutation({
     period: v.string(),
     issueDate: v.string(),
     dueDate: v.string(),
+    /** As-on date for computing the arrears carried into these bills. */
+    arrearsDate: v.optional(v.string()),
     memberIds: v.array(v.id("members")),
   },
-  handler: async (ctx, { societyId, period, issueDate, dueDate, memberIds }) => {
+  handler: async (ctx, { societyId, period, issueDate, dueDate, arrearsDate, memberIds }) => {
     await requireSociety(ctx, societyId);
     const allTariffs = await ctx.db
       .query("tariffs")
@@ -102,6 +104,7 @@ export const generate = mutation({
         period,
         issueDate,
         dueDate,
+        arrearsDate,
         lines,
         total,
         paidAmount: 0,

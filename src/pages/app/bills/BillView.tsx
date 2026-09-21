@@ -109,6 +109,9 @@ export default function BillView() {
             <p className="font-mono text-xs text-muted-foreground">{bill.billNo}</p>
             <p className="text-muted-foreground">Period: {formatPeriod(bill.period)}</p>
             <p className="text-muted-foreground">Due: {formatDate(bill.dueDate)}</p>
+            {bill.arrearsDate && (
+              <p className="text-muted-foreground">Arrears as on: {formatDate(bill.arrearsDate)}</p>
+            )}
             <p className="mt-1 inline-block rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]">
               {bill.status}
             </p>
