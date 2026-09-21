@@ -585,12 +585,62 @@ function MemberTariffMatrix(props: {
   const [unitType, setUnitType] = useState("");
   const [floor, setFloor] = useState("");
   const [filter, setFilter] = useState({ building: "", wing: "", unitType: "", floor: "" });
-  // Draft values keyed by "memberId:tariffId" until Save.
+  // Draft values keyed by "memberId:tariffId" until committed.
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  // Cells currently being saved (per-cell commit on blur/Enter).
+  const [savingCells, setSavingCells] = useState<Record<string, boolean>>({});
 
   const overrideFor = (memberId: string, tariffId: string) =>
     overrides.find((o) => o.memberId === memberId && o.tariffId === tariffId);
+
+  const dropDraft = (key: string) =>
+    setDraft((d) => {
+      if (!(key in d)) return d;
+      const next = { ...d };
+      delete next[key];
+      return next;
+    });
+
+  /**
+   * Commit a single cell: runs when the cell loses focus or Enter is pressed.
+   * Blank = use the schedule amount (clears any custom value), 0 = exempt.
+   */
+  const commitCell = async (memberId: string, tariffId: string, raw: string) => {
+    if (!props.societyId) return;
+    const key = `${memberId}:${tariffId}`;
+    const committed = overrideFor(memberId, tariffId);
+    const committedStr = committed ? String(committed.amount) : "";
+    const value = raw.trim();
+    if (value === committedStr) {
+      dropDraft(key);
+      return;
+    }
+    if (value !== "" && !Number.isFinite(Number(value))) {
+      toast.error("Enter a valid number — or leave the cell blank to use the schedule amount.");
+      dropDraft(key);
+      return;
+    }
+    setSavingCells((s) => ({ ...s, [key]: true }));
+    try {
+      await setOverride({
+        societyId: props.societyId,
+        memberId: memberId as Id<"members">,
+        tariffId: tariffId as Id<"tariffs">,
+        amount: value === "" ? undefined : Number(value),
+      });
+      dropDraft(key);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save cell");
+    } finally {
+      setSavingCells((s) => {
+        if (!(key in s)) return s;
+        const next = { ...s };
+        delete next[key];
+        return next;
+      });
+    }
+  };
 
   const valueFor = (memberId: string, tariffId: string) => {
     const key = `${memberId}:${tariffId}`;
@@ -613,26 +663,38 @@ function MemberTariffMatrix(props: {
     if (!props.societyId || dirtyCount === 0) return;
     setSaving(true);
     let appliedCount = 0;
+    const invalid: string[] = [];
     try {
       for (const [key, raw] of Object.entries(draft)) {
         const [memberId, tariffId] = key.split(":");
-        const amount = raw.trim() === "" ? undefined : Number(raw);
-        if (raw.trim() !== "" && (!Number.isFinite(amount) || (amount as number) < 0)) continue;
+        if (raw.trim() !== "" && !Number.isFinite(Number(raw.trim()))) {
+          invalid.push(key);
+          continue;
+        }
         const current = overrideFor(memberId, tariffId);
         const currentVal = current ? current.amount : undefined;
-        const nextVal = raw.trim() === "" ? undefined : (amount as number);
-        if (currentVal === nextVal) continue;
+        const nextVal = raw.trim() === "" ? undefined : Number(raw.trim());
+        if (currentVal === nextVal) {
+          dropDraft(key);
+          continue;
+        }
         await setOverride({
           societyId: props.societyId,
           memberId: memberId as Id<"members">,
           tariffId: tariffId as Id<"tariffs">,
           amount: nextVal,
         });
+        dropDraft(key);
         appliedCount++;
       }
+      if (invalid.length > 0) {
+        toast.error(
+          `${invalid.length} cell${invalid.length === 1 ? "" : "s"} had invalid numbers and were reverted — fix and save again.`,
+        );
+        for (const key of invalid) dropDraft(key);
+      }
       if (appliedCount > 0) toast.success(`Saved ${appliedCount} custom amount(s)`);
-      else toast.info("No changes to save");
-      setDraft({});
+      else if (invalid.length === 0) toast.info("No changes to save");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -685,11 +747,11 @@ function MemberTariffMatrix(props: {
 
       <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          {filtered.length} member{filtered.length === 1 ? "" : "s"} · blank cells use the schedule amount · 0 exempts
-          the member from that charge
+          {filtered.length} member{filtered.length === 1 ? "" : "s"} · click any amount cell to edit · blank = schedule
+          amount · 0 exempts the member from that charge
         </p>
         <Button className="rounded-lg" disabled={saving || dirtyCount === 0} onClick={saveAll}>
-          <Save className="size-4" /> {saving ? "Saving…" : `Save${dirtyCount > 0 ? ` (${dirtyCount})` : ""}`}
+          <Save className="size-4" /> {saving ? "Saving…" : `Save all${dirtyCount > 0 ? ` (${dirtyCount})` : ""}`}
         </Button>
       </div>
 
@@ -721,15 +783,32 @@ function MemberTariffMatrix(props: {
                   const key = `${m._id}:${t._id}`;
                   const o = overrideFor(m._id, t._id);
                   const isDirty = key in draft;
+                  const isSavingCell = !!savingCells[key];
                   return (
                     <TableCell key={t._id} className="p-0">
                       <Input
                         value={valueFor(m._id, t._id)}
-                        onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+                        onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                        onBlur={(e) => void commitCell(m._id, t._id, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            (e.target as HTMLInputElement).blur();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            dropDraft(key); // revert to the committed value
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
                         placeholder={formatMoney(t.amount)}
                         inputMode="decimal"
-                        className={`h-9 rounded-lg border-0 border-l text-right tabular-nums focus-visible:ring-1 ${
-                          isDirty ? "bg-accent/60" : o ? "bg-muted/60" : ""
+                        disabled={isSavingCell}
+                        className={`h-9 rounded-lg border-l text-right tabular-nums transition-colors hover:border-primary/40 focus-visible:ring-1 ${
+                          isDirty
+                            ? "bg-accent/60"
+                            : o
+                              ? "bg-muted/60"
+                              : ""
                         }`}
                       />
                     </TableCell>
@@ -741,8 +820,8 @@ function MemberTariffMatrix(props: {
         </Table>
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        Shaded cells carry custom amounts uploaded or edited for that member; edited-but-unsaved cells highlight while
-        you type. Saving applies immediately to the next bill generation.
+        Click a cell to edit — it saves the moment you tab away or press Enter (Esc reverts). Shaded cells carry custom
+        amounts uploaded or set for that member. Saving applies immediately to the next bill generation.
       </p>
     </div>
   );
