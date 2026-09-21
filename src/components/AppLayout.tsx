@@ -14,21 +14,24 @@ import { cn } from "@/lib/utils";
 import {
   ArrowLeftRight,
   Banknote,
+  BarChart3,
   BookOpen,
   Building2,
   ChevronDown,
   FileSpreadsheet,
   FileText,
+  FolderOpen,
   Landmark,
   LayoutDashboard,
   LogOut,
   Plus,
   Receipt,
+  Repeat,
   TrendingUp,
   Users,
   Wallet,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Link,
   NavLink,
@@ -39,7 +42,12 @@ import {
 
 type NavItem = { to: string; label: string; icon: ReactNode };
 
-type NavGroup = { title: string; items: NavItem[] };
+type NavGroup = {
+  title: string;
+  icon?: ReactNode;
+  collapsible?: boolean;
+  items: NavItem[];
+};
 
 const NAV: NavGroup[] = [
   {
@@ -50,6 +58,8 @@ const NAV: NavGroup[] = [
   },
   {
     title: "Masters",
+    icon: <FolderOpen className="size-4" />,
+    collapsible: true,
     items: [
       { to: "/app/society", label: "Society Profile", icon: <Building2 className="size-4" /> },
       { to: "/app/members", label: "Members", icon: <Users className="size-4" /> },
@@ -59,6 +69,8 @@ const NAV: NavGroup[] = [
   },
   {
     title: "Transactions",
+    icon: <Repeat className="size-4" />,
+    collapsible: true,
     items: [
       { to: "/app/member-receipt", label: "Member Receipt", icon: <Receipt className="size-4" /> },
       { to: "/app/other-receipt", label: "Other Receipt", icon: <Banknote className="size-4" /> },
@@ -69,6 +81,8 @@ const NAV: NavGroup[] = [
   },
   {
     title: "Reports",
+    icon: <BarChart3 className="size-4" />,
+    collapsible: true,
     items: [
       { to: "/app/member-ledger", label: "Member Ledger", icon: <Users className="size-4" /> },
       { to: "/app/general-ledger", label: "General Ledger", icon: <BookOpen className="size-4" /> },
@@ -105,6 +119,20 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/receipt-payment": "Receipt & Payment",
   "/app/uploads": "Excel Uploads",
 };
+
+function navGroupHasActive(group: NavGroup, pathname: string) {
+  return group.items.some(
+    (i) => pathname === i.to || pathname.startsWith(`${i.to}/`),
+  );
+}
+
+const navLinkCls = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-all",
+    isActive
+      ? "bg-gradient-to-r from-primary to-violet-500 font-medium text-white shadow-lg shadow-indigo-950/40 ring-1 ring-white/20 ring-inset"
+      : "text-sidebar-foreground/65 hover:bg-white/[0.07] hover:text-sidebar-foreground",
+  );
 
 function SocietySwitcher() {
   const { societies, society, setActiveId } = useSociety();
@@ -160,6 +188,33 @@ export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(
+      NAV.filter((g) => g.collapsible).map((g) => [
+        g.title,
+        navGroupHasActive(g, location.pathname),
+      ]),
+    ),
+  );
+
+  // Keep the group holding the current page expanded as the user navigates.
+  useEffect(() => {
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const g of NAV) {
+        if (
+          g.collapsible &&
+          navGroupHasActive(g, location.pathname) &&
+          !next[g.title]
+        ) {
+          next[g.title] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [location.pathname]);
 
   const title =
     PAGE_TITLES[location.pathname] ??
@@ -212,7 +267,7 @@ export function AppLayout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-white/[0.06] bg-sidebar text-sidebar-foreground shadow-2xl shadow-indigo-950/30 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex w-56 flex-col overflow-hidden border-r border-white/[0.06] bg-sidebar text-sidebar-foreground shadow-2xl shadow-indigo-950/30 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -220,34 +275,76 @@ export function AppLayout() {
         <div className="relative flex h-16 items-center border-b border-white/10 px-3">
           <SocietySwitcher />
         </div>
-        <nav className="relative flex-1 space-y-6 overflow-y-auto px-3 py-6">
-          {NAV.map((group) => (
-            <div key={group.title}>
-              <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/40">
-                {group.title}
-              </p>
-              <div className="space-y-1">
-                {group.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={() => setMobileOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all",
-                        isActive
-                          ? "bg-gradient-to-r from-primary to-violet-500 font-medium text-white shadow-lg shadow-indigo-950/40 ring-1 ring-white/20 ring-inset"
-                          : "text-sidebar-foreground/65 hover:bg-white/[0.07] hover:text-sidebar-foreground",
-                      )
-                    }
-                  >
-                    {item.icon}
-                    {item.label}
-                  </NavLink>
-                ))}
+        <nav className="relative flex-1 space-y-1.5 overflow-y-auto px-3 py-4">
+          {NAV.map((group) => {
+            if (!group.collapsible) {
+              return (
+                <div key={group.title} className="space-y-0.5 pb-1">
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      onClick={() => setMobileOpen(false)}
+                      className={navLinkCls}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </div>
+              );
+            }
+            const open = openGroups[group.title] ?? false;
+            const hasActive = navGroupHasActive(group, location.pathname);
+            return (
+              <div key={group.title}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOpenGroups((prev) => ({
+                      ...prev,
+                      [group.title]: !prev[group.title],
+                    }))
+                  }
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-all",
+                    hasActive
+                      ? "text-sidebar-foreground"
+                      : "text-sidebar-foreground/75 hover:bg-white/[0.07] hover:text-sidebar-foreground",
+                  )}
+                >
+                  {group.icon}
+                  {group.title}
+                  <span className="ml-auto flex items-center gap-1.5">
+                    {hasActive && !open && (
+                      <span className="brand-gradient size-1.5 rounded-full shadow-[0_0_8px] shadow-primary/70" />
+                    )}
+                    <ChevronDown
+                      className={cn(
+                        "size-4 text-sidebar-foreground/50 transition-transform",
+                        open && "rotate-180",
+                      )}
+                    />
+                  </span>
+                </button>
+                {open && (
+                  <div className="ml-5 mt-0.5 space-y-0.5 border-l border-white/10 pl-2">
+                    {group.items.map((item) => (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        onClick={() => setMobileOpen(false)}
+                        className={navLinkCls}
+                      >
+                        {item.icon}
+                        {item.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </nav>
         <div className="relative border-t border-white/10 p-3">
           <div className="flex items-center justify-between gap-2 px-2 py-1">
