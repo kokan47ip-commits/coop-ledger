@@ -458,9 +458,10 @@ export default function Members() {
                   onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="m-wing">Wing / Building</Label>
+                <Label htmlFor="m-wing">Wing / Building (optional)</Label>
                 <Input id="m-wing" value={form.wing}
-                  onChange={(e) => setForm({ ...form, wing: e.target.value })} />
+                  onChange={(e) => setForm({ ...form, wing: e.target.value })}
+                  placeholder="Blank for single-building societies" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="m-flat">Flat / Unit no.</Label>

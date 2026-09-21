@@ -54,8 +54,8 @@ export const TEMPLATES = {
     {
       Code: "M001",
       Name: "Ramesh Kumar",
-      FlatNo: "A-101",
-      Wing: "A",
+      FlatNo: "101",
+      Wing: "", // optional — leave blank for single-building societies
       Phone: "9820012345",
       Email: "ramesh@example.com",
       OwnershipType: "owner",

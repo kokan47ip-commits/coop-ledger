@@ -70,11 +70,19 @@ export const uploadMembers = mutation({
         continue;
       }
       const match = byCode.get(code.toLowerCase());
+      // A flat like "A-101" with wing "A" would render as "A-A-101" — strip
+      // a leading wing prefix when it duplicates the wing value.
+      const rawFlat = str(row, ["flatno", "flat_no", "flat", "unit"]);
+      const rawWing = str(row, ["wing", "building", "block"]);
+      const flatNo =
+        rawFlat && rawWing
+          ? rawFlat.replace(new RegExp(`^${rawWing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[-/ ]?`, "i"), "")
+          : rawFlat;
       const data = {
         code,
         name,
-        flatNo: str(row, ["flatno", "flat_no", "flat", "unit"]),
-        wing: str(row, ["wing", "building", "block"]),
+        flatNo,
+        wing: rawWing,
         phone: str(row, ["phone", "mobile", "contact"]),
         email: str(row, ["email", "emailaddress"]),
         ownershipType: ((): "owner" | "tenant" | undefined => {
