@@ -35,16 +35,16 @@ const normKey = (h: string) => h.replace(/[^a-z0-9]/gi, "").toLowerCase();
 
 const REQUIRED: Record<UploadKind, { keys: string[]; label: string }[]> = {
   members: [
-    { keys: ["code", "membercode", "memberid"], label: "Member code" },
-    { keys: ["name", "membername"], label: "Name" },
+    { keys: ["code", "membercode", "memberid", "memberno"], label: "Member code" },
+    { keys: ["name", "membername", "nameofmember"], label: "Name" },
   ],
   tariffs: [
-    { keys: ["name", "tariff", "tariffname", "charge", "head"], label: "Tariff name" },
+    { keys: ["name", "tariff", "tariffname", "charge", "head", "type"], label: "Tariff name" },
     { keys: ["amount", "rate"], label: "Amount" },
   ],
   receipts: [
     { keys: ["date"], label: "Date" },
-    { keys: ["membercode", "code", "member", "memberid"], label: "Member code" },
+    { keys: ["membercode", "code", "member"], label: "Member code" },
     { keys: ["amount", "received", "paid"], label: "Amount" },
   ],
   payments: [
@@ -65,16 +65,16 @@ const PREVIEW_COLUMNS: Record<UploadKind, string[]> = {
 /** Alternate header spellings accepted for each preview column. */
 const COLUMN_KEYS: Record<UploadKind, Record<string, string[]>> = {
   members: {
-    Code: ["code", "membercode", "memberid"],
-    Name: ["name", "membername"],
-    "Flat No": ["flatno", "flat", "unit"],
+    Code: ["code", "membercode", "memberid", "memberno", "membernumber"],
+    Name: ["name", "membername", "nameofmember", "member", "ownername"],
+    "Flat No": ["flatno", "flat", "flatnumber", "unit", "house", "shop", "premises"],
     Wing: ["wing", "building", "block"],
     Phone: ["phone", "mobile", "contact"],
-    Opening: ["openingbalance", "opening", "balance", "outstanding"],
+    Opening: ["openingbalance", "opening", "balance", "outstanding", "amountdue", "arrears"],
     "Opening date": ["openingdate", "asof", "ason"],
   },
   tariffs: {
-    Name: ["name", "tariff", "tariffname", "charge", "head"],
+    Name: ["name", "tariff", "tariffname", "charge", "head", "type"],
     Amount: ["amount", "rate"],
     Account: ["account", "accountcode", "accountname", "ledger", "incomeaccount"],
     Unit: ["unit", "basis"],
@@ -84,7 +84,7 @@ const COLUMN_KEYS: Record<UploadKind, Record<string, string[]>> = {
     Member: ["membercode", "code", "member", "memberid"],
     Amount: ["amount", "received", "paid"],
     Mode: ["mode", "paymentmode", "bank"],
-    Reference: ["reference", "ref", "receiptno", "utrn", "txn"],
+    Reference: ["reference", "ref", "receiptno", "utr", "utrn", "txn"],
     Narration: ["narration", "remarks", "note"],
   },
   payments: {
@@ -92,7 +92,7 @@ const COLUMN_KEYS: Record<UploadKind, Record<string, string[]>> = {
     Account: ["account", "ledger", "expense", "paidto", "particulars"],
     Amount: ["amount", "paid", "payment"],
     Bank: ["bank", "mode", "paidfrom", "bankaccount"],
-    Reference: ["reference", "ref", "chequeno", "utrn"],
+    Reference: ["reference", "ref", "chequeno", "utr", "utrn"],
     Narration: ["narration", "remarks", "note"],
   },
 };

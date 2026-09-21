@@ -14,11 +14,36 @@ export function parseExcelFile(file: File): Promise<ParsedSheet> {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
         const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+        // Read with the header off so we can locate the real header row first —
+        // exported sheets often carry a title banner above the headers.
+        const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
           defval: "",
+          blankrows: false,
           raw: false,
         });
-        const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+        const filled = (r: unknown[]) => r.filter((c) => String(c ?? "").trim() !== "").length;
+        let headerIdx = matrix.findIndex((r) => filled(r) >= 2);
+        if (headerIdx === -1) headerIdx = 0;
+        const rawHeaders = (matrix[headerIdx] ?? []).map((h) => String(h ?? "").trim());
+        // Drop trailing empties and de-duplicate repeated headers (Col, Col.1…).
+        while (rawHeaders.length > 0 && rawHeaders[rawHeaders.length - 1] === "") rawHeaders.pop();
+        const seen = new Map<string, number>();
+        const headers = rawHeaders.map((h) => {
+          const key = h || "Column";
+          const count = seen.get(key) ?? 0;
+          seen.set(key, count + 1);
+          return count === 0 ? h : `${h || "Column"}.${count}`;
+        });
+        const rows: Record<string, unknown>[] = [];
+        for (const r of matrix.slice(headerIdx + 1)) {
+          if (r.every((c) => String(c ?? "").trim() === "")) continue; // blank row
+          const row: Record<string, unknown> = {};
+          headers.forEach((h, i) => {
+            if (h) row[h] = r[i] ?? "";
+          });
+          rows.push(row);
+        }
         resolve({ rows, headers });
       } catch (err) {
         reject(err instanceof Error ? err : new Error("Failed to parse Excel."));

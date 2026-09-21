@@ -12,9 +12,18 @@ import {
 
 type Result = { inserted: number; updated: number; skipped: number; errors: string[] };
 
+/**
+ * Normalises an Excel header for flexible matching: strips punctuation/spaces
+ * and lowercases, so "Member Code", "member_code" and "MEMBERCODE" all match.
+ */
+const normHeader = (h: string) => h.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
 function str(row: Record<string, unknown>, keys: string[]): string | undefined {
+  // keys are normalized aliases; resolve against the row's actual headers.
+  const headerMap = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(row)) headerMap.set(normHeader(k), v);
   for (const k of keys) {
-    const raw = row[k];
+    const raw = headerMap.get(k);
     if (raw === undefined || raw === null) continue;
     const s = String(raw).trim();
     if (s !== "") return s;
@@ -63,16 +72,21 @@ export const uploadMembers = mutation({
     const byCode = new Map(existing.map((m) => [m.code.toLowerCase(), m]));
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const code = str(row, ["code", "membercode", "member_code", "member id", "memberid"]);
-      const name = str(row, ["name", "membername", "member_name"]);
+      // Skip fully blank rows (common after the last data row in exported sheets).
+      if (Object.values(row).every((v) => v === undefined || v === null || String(v).trim() === ""))
+        continue;
+      const code = str(row, ["code", "membercode", "memberid", "memberno", "membernumber"]);
+      const name = str(row, ["name", "membername", "nameofmember", "member", "ownername"]);
       if (!code || !name) {
-        result.errors.push(`Row ${i + 2}: missing member code or name.`);
+        result.errors.push(
+          `Data row ${i + 1}: missing member code or name. Detected columns: ${Object.keys(row).join(", ") || "none"}.`,
+        );
         continue;
       }
       const match = byCode.get(code.toLowerCase());
       // A flat like "A-101" with wing "A" would render as "A-A-101" — strip
       // a leading wing prefix when it duplicates the wing value.
-      const rawFlat = str(row, ["flatno", "flat_no", "flat", "unit"]);
+      const rawFlat = str(row, ["flatno", "flat", "flatnumber", "unit", "house", "shop", "premises"]);
       const rawWing = str(row, ["wing", "building", "block"]);
       const flatNo =
         rawFlat && rawWing
@@ -90,10 +104,10 @@ export const uploadMembers = mutation({
           if (!o) return undefined;
           return o.toLowerCase().startsWith("t") ? "tenant" : "owner";
         })(),
-        joinDate: normalizeDate(str(row, ["joindate", "join_date"])),
-        openingBalance: num(row, ["openingbalance", "opening_balance", "opening", "balance", "outstanding"]) ?? 0,
+        joinDate: normalizeDate(str(row, ["joindate", "dateofjoin", "joiningdate"])),
+        openingBalance: num(row, ["openingbalance", "opening", "balance", "outstanding", "amountdue", "arrears"]) ?? 0,
         openingDate:
-          normalizeDate(str(row, ["openingdate", "opening_date", "asof", "as_on"])) ??
+          normalizeDate(str(row, ["openingdate", "asof", "ason", "asondate"])) ??
           defaultOpeningDate,
         isActive: true,
       };
@@ -138,7 +152,7 @@ export const uploadTariffs = mutation({
     };
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const name = str(row, ["name", "tariff", "tariffname", "tariff_name", "charge", "head"]);
+      const name = str(row, ["name", "tariff", "tariffname", "charge", "head", "type"]);
       const amount = num(row, ["amount", "rate", "charge"]);
       if (!name || amount === undefined) {
         result.errors.push(`Row ${i + 2}: missing tariff name or amount.`);
@@ -358,10 +372,12 @@ export const uploadReceipts = mutation({
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const memberKey = str(row, ["membercode", "member_code", "code", "member", "memberid"]);
+      const memberKey = str(row, ["membercode", "code", "member", "memberid", "memberno"]);
       const amount = num(row, ["amount", "received", "paid"]);
+      if (Object.values(row).every((v) => v === undefined || v === null || String(v).trim() === ""))
+        continue;
       if (!memberKey || amount === undefined || amount <= 0) {
-        result.errors.push(`Row ${i + 2}: missing member code or amount.`);
+        result.errors.push(`Data row ${i + 1}: missing member code or amount.`);
         continue;
       }
       const member = members.find(
@@ -371,7 +387,9 @@ export const uploadReceipts = mutation({
           m.flatNo?.toLowerCase() === memberKey.toLowerCase(),
       );
       if (!member) {
-        result.errors.push(`Row ${i + 2}: member "${memberKey}" not found.`);
+        result.errors.push(
+          `Data row ${i + 1}: member "${memberKey}" not found. Detected columns: ${Object.keys(row).join(", ") || "none"}.`,
+        );
         continue;
       }
       const bankAccountId =
@@ -405,7 +423,7 @@ export const uploadReceipts = mutation({
         memberId: member._id,
         mode: str(row, ["mode", "paymentmode"]),
         bankCashAccountId: bankAccountId,
-        reference: str(row, ["reference", "ref", "receiptno", "utrn", "txn"]),
+        reference: str(row, ["reference", "ref", "receiptno", "utr", "utrn", "txn"]),
         narration: str(row, ["narration", "remarks", "note"]),
         total: amount,
         lines: [
@@ -485,7 +503,7 @@ export const uploadPayments = mutation({
         date,
         mode: bankName,
         bankCashAccountId: bankAccount._id,
-        reference: str(row, ["reference", "ref", "chequeno", "utrn"]),
+        reference: str(row, ["reference", "ref", "chequeno", "chequeno", "utr", "utrn"]),
         narration: str(row, ["narration", "remarks", "note"]),
         total: amount,
         lines: [
