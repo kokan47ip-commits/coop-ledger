@@ -30,9 +30,10 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatDate, formatMoney, formatPeriod, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Plus, Printer, RefreshCw, Trash2 } from "lucide-react";
+import { BookText, Download, FileText, HandCoins, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -59,6 +60,9 @@ export default function BillRegister() {
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip") as Tariff[] | undefined;
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Doc<"accounts">[] | undefined;
+  const vouchersData = useQuery(api.vouchers.list, societyId ? { societyId } : "skip") as
+    | Doc<"vouchers">[]
+    | undefined;
   const generate = useMutation(api.bills.generate);
   const removeBill = useMutation(api.bills.remove);
   const createVoucher = useMutation(api.vouchers.create);
@@ -167,6 +171,38 @@ export default function BillRegister() {
     return t;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, periodFilter, tariffColumns, bills]);
+
+  /** Legacy-format receipt for the latest receipt against this bill. */
+  const exportBillReceipt = (b: Bill, kind: "pdf" | "word" | "print") => {
+    if (!society) return;
+    const receipt = (vouchersData ?? [])
+      .filter((v) => v.memberId === b.memberId && v.type === "member_receipt")
+      .sort((a, c) => c.date.localeCompare(a.date))[0];
+    if (!receipt) {
+      toast.error("No receipt found against this bill yet.");
+      return;
+    }
+    const mem = memberOf(b.memberId);
+    const receiptData: LegacyReceiptData = {
+      society: {
+        name: society.name,
+        address: [society.address, society.city, society.state, society.pincode].filter(Boolean).join(", "),
+        registrationNo: society.registrationNo,
+      },
+      receiptNo: receipt.voucherNo.replace(/^[A-Z]+-/, ""),
+      receiptDate: receipt.date,
+      memberName: mem?.name ?? "Member",
+      flatNo: [mem?.wing, mem?.flatNo].filter(Boolean).join("-") || undefined,
+      amount: receipt.total,
+      paymentKind: b.total - b.paidAmount <= 0 ? "full" : "part",
+      purpose: `Maintenance for the Month ${periodLabelLong(b.period)}`,
+      mode: receipt.mode,
+      reference: receipt.reference,
+    };
+    if (kind === "pdf") receiptPdf(receiptData, `receipt-${receipt.voucherNo}.pdf`);
+    else if (kind === "word") receiptWord(receiptData, `receipt-${receipt.voucherNo}.doc`);
+    else receiptPrint(receiptData);
+  };
 
   const exportSingle = (b: Bill, kind: "pdf" | "word") => {
     if (!society) return;
@@ -531,6 +567,15 @@ export default function BillRegister() {
                         </Button>
                         <Button variant="ghost" size="icon" className="size-8" title="Export bill as Word" onClick={() => exportSingle(b, "word")}>
                           <FileText className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          title="Print receipt for this bill"
+                          onClick={() => exportBillReceipt(b, "print")}
+                        >
+                          <ReceiptIcon className="size-3.5" />
                         </Button>
                         <Button
                           variant="ghost"

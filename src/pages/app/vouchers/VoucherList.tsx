@@ -22,7 +22,7 @@ import { EmptyHint, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { formatDate, formatINR, VOUCHER_TYPE_LABEL } from "@/lib/format";
-import { Download, FileText, Printer, Trash2 } from "lucide-react";
+import { Download, FileText, Printer, Receipt as ReceiptIcon, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -41,10 +41,13 @@ export function VoucherList({
   title,
   fixedType,
   description,
+  renderReceipt,
 }: {
   title: string;
   description: string;
   fixedType?: "member_receipt" | "other_receipt" | "payment" | "journal";
+  /** When provided, member receipt rows get a legacy-format receipt action. */
+  renderReceipt?: (v: Voucher, kind: "pdf" | "word" | "print") => void;
 }) {
   const { societyId, society } = useSociety();
   const vouchers = useQuery(
@@ -191,9 +194,42 @@ export function VoucherList({
                     </TableCell>
                     <TableCell className="text-right"><RightMoney value={v.total} /></TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(v)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        {renderReceipt && v.type === "member_receipt" && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              title="Print legacy receipt (PDF)"
+                              onClick={() => renderReceipt(v, "pdf")}
+                            >
+                              <Download className="size-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              title="Legacy receipt as Word"
+                              onClick={() => renderReceipt(v, "word")}
+                            >
+                              <FileText className="size-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              title="Print legacy receipt"
+                              onClick={() => renderReceipt(v, "print")}
+                            >
+                              <ReceiptIcon className="size-3.5" />
+                            </Button>
+                          </>
+                        )}
+                        <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(v)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

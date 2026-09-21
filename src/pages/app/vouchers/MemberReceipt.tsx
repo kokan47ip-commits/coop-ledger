@@ -12,6 +12,7 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
+import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
 import { formatDate, formatPeriod, todayISO } from "@/lib/format";
 import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -24,7 +25,8 @@ type Bill = Doc<"bills">;
 type Account = Doc<"accounts">;
 
 export default function MemberReceipt() {
-  const { societyId } = useSociety();
+  const societyCtx = useSociety();
+  const { societyId } = societyCtx;
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Account[] | undefined;
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
@@ -95,6 +97,35 @@ export default function MemberReceipt() {
     `₹ ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n)}`;
 
   const selectedMember = members?.find((m) => m._id === form.memberId);
+
+  /** Print the legacy-format receipt for a saved member receipt voucher. */
+  const printReceiptFor = (v: Doc<"vouchers">, kind: "pdf" | "word" | "print") => {
+    const s = societyCtx.society;
+    if (!s) return;
+    const mem = members?.find((m) => m._id === v.memberId);
+    const firstBill = (bills ?? [])
+      .filter((b) => (v.allocations ?? []).some((a) => a.billId === b._id))
+      .sort((a, b) => b.period.localeCompare(a.period))[0];
+    const data: LegacyReceiptData = {
+      society: {
+        name: s.name,
+        address: [s.address, s.city, s.state, s.pincode].filter(Boolean).join(", "),
+        registrationNo: s.registrationNo,
+      },
+      receiptNo: v.voucherNo.replace(/^[A-Z]+-/, ""),
+      receiptDate: v.date,
+      memberName: mem?.name ?? "Member",
+      flatNo: [mem?.wing, mem?.flatNo].filter(Boolean).join("-") || undefined,
+      amount: v.total,
+      paymentKind: "part",
+      purpose: `Maintenance for the Month${firstBill ? ` ${periodLabelLong(firstBill.period)}` : ""}`,
+      mode: v.mode,
+      reference: v.reference,
+    };
+    if (kind === "pdf") receiptPdf(data, `receipt-${v.voucherNo}.pdf`);
+    else if (kind === "word") receiptWord(data, `receipt-${v.voucherNo}.doc`);
+    else receiptPrint(data);
+  };
 
   return (
     <div>
@@ -208,6 +239,7 @@ export default function MemberReceipt() {
         title="Member Receipts"
         description="Member receipt vouchers"
         fixedType="member_receipt"
+        renderReceipt={(v, kind) => printReceiptFor(v, kind)}
       />
     </div>
   );

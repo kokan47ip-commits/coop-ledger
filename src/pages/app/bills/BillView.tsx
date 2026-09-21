@@ -1,37 +1,25 @@
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
-import { exportPDF, exportWord, printTables, type TableSpec } from "@/lib/export";
-import { useCommitteeSignatures } from "@/lib/committee";
-import { formatDate, formatPeriod } from "@/lib/format";
+import { billPdf, billPrint, billWord, periodLabelLong, type LegacyBillData } from "@/lib/billDoc";
+import { amountInWords } from "@/lib/amountWords";
+import { formatDate } from "@/lib/format";
 import { ArrowLeft, Download, FileText, Printer } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { useQuery } from "convex/react";
+import { toast } from "sonner";
 
 export default function BillView() {
   const { billId } = useParams();
   const { societyId, society } = useSociety();
-  const bill = useQuery(
-    api.bills.list,
-    societyId ? { societyId } : "skip",
-  )?.find((b) => b._id === billId);
-  const member = useQuery(
-    api.members.list,
-    societyId ? { societyId } : "skip",
-  )?.find((m) => m._id === bill?.memberId);
-  const accounts = useQuery(
-    api.accounts.list,
-    societyId ? { societyId } : "skip",
-  );
-  const accountName = (id: string) => {
-    const a = accounts?.find((x) => x._id === id);
-    return a ? `${a.code} — ${a.name}` : "—";
-  };
-  const signatures = useCommitteeSignatures();
+  const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip");
+  const members = useQuery(api.members.list, societyId ? { societyId } : "skip");
 
-  if (!societyId || !bill) {
+  const bill = bills?.find((b) => b._id === billId);
+  const m = members?.find((x) => x._id === bill?.memberId);
+
+  if (!societyId || !bill || !society) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
@@ -40,30 +28,54 @@ export default function BillView() {
     );
   }
 
-  const m = member;
-  const meta = {
-    societyName: society?.name ?? "Society",
-    societyAddress: [society?.address, society?.city, society?.state, society?.pincode]
-      .filter(Boolean)
-      .join(", "),
-    registrationNo: society?.registrationNo,
-    title: `Maintenance Bill — ${formatPeriod(bill.period)}`,
-    subtitle: `Bill No: ${bill.billNo} · Issue: ${formatDate(bill.issueDate)} · Due: ${formatDate(bill.dueDate)}`,
-    signatures,
-  };
+  // Arrears: earlier-period unpaid balances plus any carried opening line on
+  // this bill. Current charge lines are everything else.
+  const isArrearsLine = (name: string) => name.toLowerCase().startsWith("arrears");
+  const arrears =
+    (bills ?? [])
+      .filter((b) => b.memberId === bill.memberId && b.period < bill.period)
+      .reduce((s, b) => s + (b.total - b.paidAmount), 0) +
+    (bill.lines ?? [])
+      .filter((l) => isArrearsLine(l.name))
+      .reduce((s, l) => s + l.amount, 0);
+  const currentCharges = (bill.lines ?? [])
+    .filter((l) => !isArrearsLine(l.name))
+    .reduce((s, l) => s + l.amount, 0);
 
-  const table: TableSpec = {
-    head: ["#", "Charge head", "Income account", "Amount"],
-    body: bill.lines.map((l, i) => [String(i + 1), l.name, accountName(l.accountId), l.amount]),
-    foot: [["", "", "TOTAL", bill.total]],
-    columnStyles: { 3: { halign: "right" } },
+  const data: LegacyBillData = {
+    society: {
+      name: society.name,
+      address: [society.address, society.city, society.state, society.pincode]
+        .filter(Boolean)
+        .join(", "),
+      registrationNo: society.registrationNo,
+    },
+    billNo: bill.billNo.replace(/^BILL-/, ""),
+    billDate: bill.issueDate,
+    dueDate: bill.dueDate,
+    periodLabel: periodLabelLong(bill.period),
+    memberName: m?.name ?? "Member",
+    flatNo: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
+    lines: (bill.lines ?? [])
+      .filter((l) => !isArrearsLine(l.name))
+      .map((l) => ({ name: l.name, amount: l.amount })),
+    total: currentCharges,
+    arrears,
+    totalDue: currentCharges + arrears,
+    paidAmount: bill.paidAmount,
   };
 
   const doExport = (kind: "pdf" | "word" | "print") => {
-    if (kind === "pdf") exportPDF(meta, [table], `${bill.billNo}.pdf`);
-    else if (kind === "word") exportWord(meta, [table], `${bill.billNo}.doc`);
-    else printTables(meta, [table]);
+    try {
+      if (kind === "pdf") billPdf(data, `${bill.billNo}.pdf`);
+      else if (kind === "word") billWord(data, `${bill.billNo}.doc`);
+      else billPrint(data);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    }
   };
+
+  const fmt = (n: number) => n.toFixed(2);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -86,81 +98,112 @@ export default function BillView() {
         </div>
       </div>
 
-      <div className="rounded-lg border p-8">
-        <div className="text-center">
-          <h2 className="text-lg font-semibold tracking-tight">{society?.name}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {[society?.address, society?.city, society?.state, society?.pincode].filter(Boolean).join(", ")}
+      {/* On-screen legacy bill */}
+      <div className="rounded-lg border border-foreground/40">
+        <div className="px-6 pt-6 pb-2 text-center">
+          <h2 className="text-base font-bold uppercase tracking-tight">{society.name}</h2>
+          {society.registrationNo && <p className="mt-1 text-xs">{society.registrationNo}</p>}
+          <p className="mt-1 text-xs">
+            {[society.address, society.city, society.state, society.pincode]
+              .filter(Boolean)
+              .join(", ")}
           </p>
-          {society?.registrationNo && (
-            <p className="text-xs text-muted-foreground">Reg. No: {society.registrationNo}</p>
-          )}
+          <p className="mt-2 border-y border-foreground/40 py-1.5 text-sm font-bold">
+            Bill for the Month of {periodLabelLong(bill.period)}
+          </p>
         </div>
-        <Separator className="my-6" />
-        <div className="flex items-start justify-between gap-6">
-          <div className="text-sm">
-            <p className="font-medium">{m?.name ?? "Member"}</p>
-            <p className="text-muted-foreground">
-              {[m?.wing, m?.flatNo].filter(Boolean).join("-") || "—"}
+
+        <div className="grid grid-cols-2 gap-x-10 px-6 py-3 text-sm">
+          <div className="space-y-1.5">
+            <p>
+              <span className="text-muted-foreground">Bill No:</span>{" "}
+              <span className="font-bold">{bill.billNo.replace(/^BILL-/, "")}</span>
             </p>
-            <p className="text-muted-foreground">Code: {m?.code ?? "—"}</p>
+            <p>
+              <span className="text-muted-foreground">Name:</span>{" "}
+              <span className="font-bold uppercase">{m?.name ?? "Member"}</span>
+            </p>
+            <p>
+              <span className="text-muted-foreground">Flat</span>{" "}
+              <span className="font-medium">
+                {[m?.wing, m?.flatNo].filter(Boolean).join("-") || "—"}
+              </span>
+            </p>
           </div>
-          <div className="text-right text-sm">
-            <p className="font-mono text-xs text-muted-foreground">{bill.billNo}</p>
-            <p className="text-muted-foreground">Period: {formatPeriod(bill.period)}</p>
-            <p className="text-muted-foreground">Due: {formatDate(bill.dueDate)}</p>
-            {bill.arrearsDate && (
-              <p className="text-muted-foreground">Arrears as on: {formatDate(bill.arrearsDate)}</p>
-            )}
-            <p className="mt-1 inline-block rounded-lg border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]">
-              {bill.status}
+          <div className="space-y-1.5 text-right">
+            <p>
+              <span className="text-muted-foreground">Bill Date:</span>{" "}
+              {formatDate(bill.issueDate)}
             </p>
+            <p>
+              <span className="text-muted-foreground">Due Date:</span> {formatDate(bill.dueDate)}
+            </p>
+            {bill.arrearsDate && (
+              <p className="text-xs text-muted-foreground">
+                Arrears as on: {formatDate(bill.arrearsDate)}
+              </p>
+            )}
           </div>
         </div>
 
-        <table className="mt-8 w-full text-sm">
+        <table className="w-full border-t border-foreground/40 text-sm">
           <thead>
-            <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <th className="pb-2 font-medium">Charge head</th>
-              <th className="pb-2 text-right font-medium">Amount (₹)</th>
+            <tr className="border-b border-foreground/40">
+              <th className="px-6 py-1.5 text-left font-bold tracking-[0.2em]">PARTICULARS</th>
+              <th className="px-4 py-1.5 text-right font-bold tracking-[0.2em]">AMOUNT</th>
             </tr>
           </thead>
           <tbody>
-            {bill.lines.map((l, i) => (
-              <tr key={i} className="border-b last:border-0">
-                <td className="py-2.5">{l.name}</td>
-                <td className="py-2.5 text-right tabular-nums">
-                  {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(l.amount)}
+            {data.lines.map((l, i) => (
+              <tr key={i}>
+                <td className="px-6 py-1">
+                  {i + 1}. {l.name.toUpperCase()}
                 </td>
+                <td className="px-4 py-1 text-right tabular-nums">{fmt(l.amount)}</td>
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-foreground/70">
-              <td className="pt-3 font-semibold">Total</td>
-              <td className="pt-3 text-right font-semibold tabular-nums">
-                {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(bill.total)}
-              </td>
-            </tr>
-            <tr>
-              <td className="pt-1 text-xs text-muted-foreground">Paid</td>
-              <td className="pt-1 text-right text-xs tabular-nums text-muted-foreground">
-                {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(bill.paidAmount)}
-              </td>
-            </tr>
-            <tr>
-              <td className="pt-1 font-medium">Balance due</td>
-              <td className="pt-1 text-right font-medium tabular-nums">
-                {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(bill.total - bill.paidAmount)}
-              </td>
-            </tr>
-          </tfoot>
         </table>
 
-        <p className="mt-10 text-center text-xs text-muted-foreground">
-          Please pay before the due date to avoid late fees. This is a computer-generated bill.
-        </p>
+        <div className="grid grid-cols-[1fr_190px] border-t border-foreground/40 text-sm">
+          <div className="border-r border-foreground/40 px-6 py-3">
+            Rupees: {amountInWords(data.totalDue)} Only
+          </div>
+          <div>
+            <div className="flex justify-between px-4 py-1">
+              <span className="text-muted-foreground">Total:</span>
+              <span className="tabular-nums">{fmt(data.total)}</span>
+            </div>
+            <div className="flex justify-between px-4 py-1">
+              <span className="text-muted-foreground">Arrears</span>
+              <span className="tabular-nums">{fmt(data.arrears)}</span>
+            </div>
+            <div className="flex justify-between border-t border-foreground/40 px-4 py-1.5 font-bold">
+              <span>Total Due:</span>
+              <span className="tabular-nums">{fmt(data.totalDue)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 border-t border-foreground/40 text-[11px]">
+          <div className="space-y-1 border-r border-foreground/40 px-6 py-3 text-muted-foreground">
+            <p>PLEASE PAY BY CROSSED A/C. PAYEE CHEQUE ONLY.</p>
+            <p>THIS BILL IS PAYABLE ON OR BEFORE LAST DAY OF THE MONTH</p>
+            <p>LATEFEES @18% WILL BE CHARGED ON OVERDUE MONTH</p>
+          </div>
+          <div className="px-6 py-3 text-right">
+            <p className="text-xs font-bold">For {society.name}</p>
+            <p className="mt-10 text-[11px] tracking-wide">SECRETARY</p>
+          </div>
+        </div>
       </div>
+
+      <div className="mt-6 border-b-2 border-dashed border-muted-foreground/40" />
+      <p className="mt-2 text-center text-[11px] text-muted-foreground">
+        {bill.status === "paid"
+          ? "Paid in full — thank you."
+          : `Paid so far: ${fmt(bill.paidAmount)} · Balance against this bill: ${fmt(bill.total - bill.paidAmount)}`}
+      </p>
     </div>
   );
 }
