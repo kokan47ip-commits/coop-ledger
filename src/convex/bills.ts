@@ -50,7 +50,14 @@ export const generate = mutation({
     memberIds: v.array(v.id("members")),
   },
   handler: async (ctx, { societyId, period, issueDate, dueDate, arrearsDate, memberIds }) => {
-    await requireSociety(ctx, societyId);
+    const society = await requireSociety(ctx, societyId);
+    const receivableId =
+      society.receivableAccountId ??
+      (await ctx.db
+        .query("accounts")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect())
+        .find((a) => a.kind === "receivable")?._id;
     const allTariffs = await ctx.db
       .query("tariffs")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -95,7 +102,29 @@ export const generate = mutation({
         skipped++;
         continue;
       }
-      const total = lines.reduce((s, l) => s + l.amount, 0);
+      // Opening receivable carried as a separate arrears line on the member's
+      // first bill — it appears on the printed bill and flows into the books
+      // (Dr receivable), while charge-head income stays untouched.
+      const hasEarlierBills = existing.some(
+        (b) => b.period < period || (b.period === period && b.issueDate <= issueDate),
+      );
+      const openingCarried =
+        member.openingBalance > 0 && !hasEarlierBills && receivableId
+          ? member.openingBalance
+          : 0;
+      const total = lines.reduce((s, l) => s + l.amount, 0) + openingCarried;
+      const insertLines =
+        openingCarried > 0 && receivableId
+          ? [
+              {
+                tariffId: undefined,
+                accountId: receivableId,
+                name: "Arrears — opening balance",
+                amount: openingCarried,
+              },
+              ...lines,
+            ]
+          : lines;
       const n = await nextNumber(ctx, `${societyId}:bill`);
       await ctx.db.insert("bills", {
         societyId,
@@ -105,7 +134,7 @@ export const generate = mutation({
         issueDate,
         dueDate,
         arrearsDate,
-        lines,
+        lines: insertLines,
         total,
         paidAmount: 0,
         status: "unpaid",

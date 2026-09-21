@@ -139,11 +139,15 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
         narration: `Bill ${b.period}`,
         lines: [
           { accountId: receivableId, debit: b.total, credit: 0, note: `Period ${b.period}` },
-          ...b.lines.map((l) => ({
-            accountId: l.accountId,
-            debit: 0,
-            credit: l.amount,
-          })),
+          // The carried opening-balance line is part of the receivable debit
+          // itself (it predates the system), so it is not credited anywhere.
+          ...b.lines
+            .filter((l) => l.accountId !== receivableId)
+            .map((l) => ({
+              accountId: l.accountId,
+              debit: 0,
+              credit: l.amount,
+            })),
         ],
       });
     }
@@ -291,17 +295,34 @@ export function computeMemberLedger(
         b.issueDate <= toDate,
     )
     .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
+  const receivableId = receivableIdOf(data);
   for (const b of relevantBills) {
+    // A carried opening-balance line on the bill restates the member's opening
+    // receivable — the OPENING row above already accounts for it, so it must
+    // not be debited twice.
+    const carried =
+      receivableId
+        ? b.lines
+            .filter((l) => !l.tariffId && l.accountId === receivableId)
+            .reduce((s, l) => s + l.amount, 0)
+        : 0;
     addRow({
       date: b.issueDate,
       voucherNo: b.billNo,
       voucherType: "bill",
-      particulars: `Maintenance Bill ${b.period} — ${b.lines.map((l) => l.name).join(", ")}`,
+      particulars: `Maintenance Bill ${b.period} — ${b.lines
+        .filter((l) => !(receivableId && !l.tariffId && l.accountId === receivableId))
+        .map((l) => l.name)
+        .join(", ")}`,
       accountId: null,
-      debit: b.total,
+      debit: b.total - carried,
       credit: 0,
-      note: `Due ${b.dueDate}`,
-      heads: b.lines.map((l) => ({ name: l.name, amount: l.amount })),
+      note: carried
+        ? `Due ${b.dueDate} · includes arrears of ${carried.toFixed(2)} carried from opening`
+        : `Due ${b.dueDate}`,
+      heads: b.lines
+        .filter((l) => !(receivableId && !l.tariffId && l.accountId === receivableId))
+        .map((l) => ({ name: l.name, amount: l.amount })),
     });
   }
 

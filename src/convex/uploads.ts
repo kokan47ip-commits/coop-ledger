@@ -92,6 +92,28 @@ export const uploadMembers = mutation({
         rawFlat && rawWing
           ? rawFlat.replace(new RegExp(`^${rawWing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[-/ ]?`, "i"), "")
           : rawFlat;
+      // Opening balance is a ledger fact: once set (manually or by an earlier
+      // upload), a later upload without that column must NOT reset it to 0.
+      // An explicit 0 in the sheet still means "clear to zero".
+      const uploadedOpening = num(row, [
+        "openingbalance",
+        "opening",
+        "openingbal",
+        "opbalance",
+        "opbal",
+        "opgbalance",
+        "opgbal",
+        "ob",
+        "balance",
+        "outstanding",
+        "amountdue",
+        "arrears",
+        "oldbalance",
+        "previousbalance",
+        "prevbalance",
+        "broughtforward",
+        "oparrears",
+      ]);
       const data = {
         code,
         name,
@@ -105,9 +127,11 @@ export const uploadMembers = mutation({
           return o.toLowerCase().startsWith("t") ? "tenant" : "owner";
         })(),
         joinDate: normalizeDate(str(row, ["joindate", "dateofjoin", "joiningdate"])),
-        openingBalance: num(row, ["openingbalance", "opening", "balance", "outstanding", "amountdue", "arrears"]) ?? 0,
+        openingBalance:
+          uploadedOpening !== undefined ? uploadedOpening : (match?.openingBalance ?? 0),
         openingDate:
           normalizeDate(str(row, ["openingdate", "asof", "ason", "asondate"])) ??
+          match?.openingDate ??
           defaultOpeningDate,
         isActive: true,
       };
