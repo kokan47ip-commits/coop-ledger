@@ -89,6 +89,14 @@ export function currentPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
+/** ISO range of the calendar month `YYYY-MM` (e.g. "2026-06" → 01–30). */
+export function monthRangeISO(month: string): { from: string; to: string } {
+  const [y, m] = month.split("-").map(Number);
+  const from = `${month}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  return { from, to: `${month}-${String(lastDay).padStart(2, "0")}` };
+}
+
 export const VOUCHER_TYPE_LABEL = {
   member_receipt: "Member Receipt",
   other_receipt: "Other Receipt",

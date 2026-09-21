@@ -26,6 +26,46 @@ export const generalLedger = query({
   },
 });
 
+/** Ledger rows for many accounts in one call — powers the selection-wise export. */
+export const generalLedgersBulk = query({
+  args: {
+    societyId: v.id("societies"),
+    accountIds: v.array(v.id("accounts")),
+    fromDate: v.string(),
+    toDate: v.string(),
+  },
+  handler: async (ctx, { societyId, accountIds, fromDate, toDate }) => {
+    const data = await loadSocietyData(ctx, societyId);
+    return accountIds
+      .slice(0, 300)
+      .map((accountId) => ({
+        accountId,
+        account: data.accounts.find((a) => a._id === accountId) ?? null,
+        rows: computeAccountLedger(data, accountId, fromDate, toDate),
+      }));
+  },
+});
+
+/** Member ledger rows for many members in one call — selection-wise export. */
+export const memberLedgersBulk = query({
+  args: {
+    societyId: v.id("societies"),
+    memberIds: v.array(v.id("members")),
+    fromDate: v.string(),
+    toDate: v.string(),
+  },
+  handler: async (ctx, { societyId, memberIds, fromDate, toDate }) => {
+    const data = await loadSocietyData(ctx, societyId);
+    return memberIds
+      .slice(0, 300)
+      .map((memberId) => ({
+        memberId,
+        member: data.members.find((m) => m._id === memberId) ?? null,
+        rows: computeMemberLedger(data, memberId, fromDate, toDate),
+      }));
+  },
+});
+
 export const memberLedger = query({
   args: {
     societyId: v.id("societies"),

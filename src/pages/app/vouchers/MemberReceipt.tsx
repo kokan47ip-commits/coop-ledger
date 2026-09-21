@@ -13,24 +13,35 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
-import { formatDate, formatPeriod, todayISO } from "@/lib/format";
+import { formatDate, formatPeriod, formatMoney, todayISO } from "@/lib/format";
 import { Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { VoucherList } from "./VoucherList";
 
 type Member = Doc<"members">;
 type Bill = Doc<"bills">;
 type Account = Doc<"accounts">;
+type Voucher = Doc<"vouchers">;
 
 export default function MemberReceipt() {
   const societyCtx = useSociety();
   const { societyId } = societyCtx;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editId = searchParams.get("edit");
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Account[] | undefined;
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
+  const editing = useQuery(
+    api.vouchers.getMany,
+    societyId && editId ? { societyId, ids: [editId as Id<"vouchers">] } : "skip",
+  ) as Voucher[] | undefined;
+  const editVoucherDoc = editing?.[0];
   const createVoucher = useMutation(api.vouchers.create);
+  const updateVoucher = useMutation(api.vouchers.update);
+  const removeVoucher = useMutation(api.vouchers.remove);
 
   const bankAccounts = (accounts ?? []).filter((a) => a.kind === "bank_cash");
   const [form, setForm] = useState({
@@ -93,6 +104,59 @@ export default function MemberReceipt() {
     }
   };
 
+  /** Update an existing member receipt — header fields only (total and bill
+   * allocations stay fixed; delete & re-enter to change the amount). */
+  const submitEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!societyId || !editId || !editVoucherDoc) return;
+    try {
+      await updateVoucher({
+        societyId,
+        id: editId as Id<"vouchers">,
+        date: form.date,
+        mode: form.mode,
+        bankCashAccountId: (form.bankCashAccountId || editVoucherDoc.bankCashAccountId) as never,
+        reference: form.reference || undefined,
+        narration: form.narration || undefined,
+        lines: editVoucherDoc.lines.map((l) => ({
+          accountId: l.accountId,
+          debit: l.debit,
+          credit: l.credit,
+        })),
+      });
+      toast.success("Receipt updated");
+      setSearchParams({});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update receipt");
+    }
+  };
+
+  const delEdit = async () => {
+    if (!societyId || !editId || !editVoucherDoc) return;
+    if (!confirm(`Delete receipt ${editVoucherDoc.voucherNo}? Bill settlements for it will be reversed.`)) return;
+    try {
+      await removeVoucher({ societyId, id: editId as Id<"vouchers"> });
+      toast.success("Receipt deleted");
+      setSearchParams({});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete");
+    }
+  };
+
+  // Prefill the edit form from the loaded voucher
+  useEffect(() => {
+    if (!editId || !editVoucherDoc) return;
+    setForm({
+      memberId: (editVoucherDoc.memberId as string) ?? "",
+      date: editVoucherDoc.date,
+      amount: String(editVoucherDoc.total),
+      mode: editVoucherDoc.mode ?? "cash",
+      bankCashAccountId: (editVoucherDoc.bankCashAccountId as string) ?? "",
+      reference: editVoucherDoc.reference ?? "",
+      narration: editVoucherDoc.narration ?? "",
+    });
+  }, [editId, editVoucherDoc]);
+
   const formatUnallocated = (n: number) =>
     `₹ ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n)}`;
 
@@ -130,11 +194,79 @@ export default function MemberReceipt() {
   return (
     <div>
       <PageHeader
-        title="Member Receipt"
-        description="Record maintenance collections from members. Receipts debit bank/cash and credit the member's receivable, settling outstanding bills oldest-first."
+        title={editId ? "Edit Member Receipt" : "Member Receipt"}
+        description={
+          editId
+            ? "Editing an existing collection — date, mode, bank/cash account and reference can change. The amount and its bill settlements stay fixed; delete and re-enter to change those."
+            : "Record maintenance collections from members. Receipts debit bank/cash and credit the member's receivable, settling outstanding bills oldest-first."
+        }
       />
 
-      <form onSubmit={submit} className="mb-10 rounded-lg border p-5">
+      {editId && editVoucherDoc ? (
+        <form onSubmit={submitEdit} className="mb-10 rounded-lg border p-5">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label>Member</Label>
+              <Input readOnly className="bg-muted/50"
+                value={members?.find((m) => m._id === editVoucherDoc.memberId)?.name ?? "—"} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="er-date">Date *</Label>
+              <Input id="er-date" type="date" required value={form.date}
+                onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="er-amount">Amount (₹)</Label>
+              <Input id="er-amount" readOnly className="bg-muted/50 text-right tabular-nums"
+                value={formatMoney(editVoucherDoc.total)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Mode</Label>
+              <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="bank">Bank transfer</SelectItem>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                  <SelectItem value="upi">UPI</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Bank / Cash account</Label>
+              <Select value={form.bankCashAccountId || undefined}
+                onValueChange={(v) => setForm({ ...form, bankCashAccountId: v })}>
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  {bankAccounts.map((a) => (
+                    <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="er-ref">Reference</Label>
+              <Input id="er-ref" value={form.reference}
+                onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+            </div>
+            <div className="space-y-2 sm:col-span-3">
+              <Label htmlFor="er-narr">Narration</Label>
+              <Input id="er-narr" value={form.narration}
+                onChange={(e) => setForm({ ...form, narration: e.target.value })} />
+            </div>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button type="button" variant="destructive" className="rounded-lg px-6" onClick={delEdit}>
+              Delete
+            </Button>
+            <Button type="button" variant="outline" className="rounded-lg px-6"
+              onClick={() => setSearchParams({})}>
+              Exit
+            </Button>
+            <Button type="submit" className="rounded-lg px-8">Update</Button>
+          </div>
+        </form>
+      ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
             <Label>Member *</Label>
@@ -233,6 +365,7 @@ export default function MemberReceipt() {
           </Button>
         </div>
       </form>
+      )}
 
       <h3 className="mb-4 text-sm font-medium">Recorded receipts</h3>
       <VoucherList

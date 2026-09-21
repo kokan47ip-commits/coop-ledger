@@ -446,3 +446,240 @@ export function receiptPrint(data: LegacyReceiptData): void {
   w.focus();
   setTimeout(() => w.print(), 300);
 }
+
+/* ------------------------------------------------------------------ */
+/* Vouchers (Receipt / Payment / Journal)                              */
+/* ------------------------------------------------------------------ */
+
+export type VoucherLine = {
+  code?: string;
+  name: string;
+  debit: number;
+  credit: number;
+  note?: string;
+};
+
+export type VoucherDocData = {
+  society: SocietyHeader;
+  /** "Receipt Voucher" | "Payment Voucher" | "Journal Voucher" */
+  title: string;
+  voucherNo: string;
+  voucherDate: string;
+  bookCode?: string;
+  /** Paid to / Received from / member name */
+  party?: string;
+  mode?: string;
+  reference?: string;
+  /** Cheque number / UTR */
+  chequeNo?: string;
+  chequeDate?: string;
+  bankName?: string;
+  narration?: string;
+  amount: number;
+  lines: VoucherLine[];
+};
+
+const VOUCHER_TITLES: Record<string, string> = {
+  member_receipt: "Receipt Voucher",
+  other_receipt: "Receipt Voucher",
+  payment: "Payment Voucher",
+  journal: "Journal Voucher",
+};
+
+export function voucherTitleFor(type: string): string {
+  return VOUCHER_TITLES[type] ?? "Voucher";
+}
+
+function voucherLinesTable(data: VoucherDocData): { head: string[]; rows: string[][]; totDr: number; totCr: number } {
+  const head = ["Code", "Ledger / Particulars", "Debit", "Credit"];
+  const rows = data.lines.map((l) => [
+    l.code ?? "",
+    [l.name.toUpperCase(), l.note ? `    ${l.note}` : ""].filter(Boolean).join("\n"),
+    money(l.debit),
+    money(l.credit),
+  ]);
+  const totDr = data.lines.reduce((s, l) => s + l.debit, 0);
+  const totCr = data.lines.reduce((s, l) => s + l.credit, 0);
+  rows.push(["", "TOTAL", money(totDr), money(totCr)]);
+  return { head, rows, totDr, totCr };
+}
+
+export function voucherPdf(data: VoucherDocData, filename: string) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const x = 40;
+  const w = W - x * 2;
+  const boxTop = 44;
+
+  drawSocietyHeader(doc, data.society, boxTop + 20);
+  let cy = boxTop + 78;
+  doc.setDrawColor(60);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy, x + w, cy);
+  cy += 24;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  const title = data.title.toUpperCase().split("").join(" ");
+  doc.text(title, W / 2, cy, { align: "center" });
+  doc.setLineWidth(0.6);
+  const tw = doc.getTextWidth(title);
+  doc.line(W / 2 - tw / 2, cy + 4, W / 2 + tw / 2, cy + 4);
+  cy += 28;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10.5);
+  doc.text("Voucher No.:", x + 8, cy);
+  doc.setFont("helvetica", "bold");
+  doc.text(data.voucherNo, x + 90, cy);
+  doc.setFont("helvetica", "normal");
+  doc.text("Voucher Date:", W - 210, cy);
+  doc.text(formatDate(data.voucherDate), W - 100, cy, { align: "right" });
+  cy += 18;
+  if (data.party) {
+    doc.text(`${data.title.startsWith("Payment") ? "Paid to" : data.title.startsWith("Receipt") ? "Received from" : "Party"}:`, x + 8, cy);
+    doc.setFont("helvetica", "bold");
+    doc.text(data.party.toUpperCase(), x + 90, cy);
+    doc.setFont("helvetica", "normal");
+    cy += 18;
+  }
+  if (data.chequeNo) {
+    doc.text(`Cheque No.~ ${data.chequeNo}${data.chequeDate ? `  dt ${formatDate(data.chequeDate)}` : ""}${data.bankName ? `  ·  ${data.bankName}` : ""}`, x + 8, cy);
+    cy += 18;
+  }
+  cy += 6;
+  doc.line(x, cy, x + w, cy);
+  cy += 16;
+
+  const { head, rows } = voucherLinesTable(data);
+  const colCode = x + 8;
+  const colLedger = x + 70;
+  const colDebit = x + w - 190;
+  const colCredit = x + w - 10;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.text(head[0], colCode, cy);
+  doc.text(head[1], colLedger, cy);
+  doc.text(head[2], colDebit, cy, { align: "right" });
+  doc.text(head[3], colCredit, cy, { align: "right" });
+  doc.line(x, cy + 5, x + w, cy + 5);
+  cy += 22;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  for (const r of rows) {
+    doc.text(String(r[0]), colCode, cy);
+    doc.setFont("helvetica", r[1] === "TOTAL" ? "bold" : "normal");
+    const noteLines = String(r[1]).split("\n");
+    doc.text(noteLines[0], colLedger, cy);
+    if (noteLines[1]) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.text(noteLines[1].trim(), colLedger + 10, cy + 11);
+      doc.setFontSize(10);
+    }
+    doc.setFont("helvetica", r[1] === "TOTAL" ? "bold" : "normal");
+    doc.text(r[2], colDebit, cy, { align: "right" });
+    doc.text(r[3], colCredit, cy, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    cy += r[1].includes("\n") ? 26 : 16;
+  }
+  doc.line(x, cy - 10, x + w, cy - 10);
+  cy += 16;
+
+  // Amount in words band
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(9.5);
+  doc.text(`Rupees: ${rupeesInWords(data.amount)} Only`, x + 8, cy, { maxWidth: w - 16 });
+  cy += 26;
+  if (data.narration) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Narration: ${data.narration}`, x + 8, cy, { maxWidth: w - 120 });
+    cy += 16;
+  }
+
+  // Signature block
+  const sigY = Math.max(cy + 40, doc.internal.pageSize.getHeight() - 150);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text(`For ${data.society.name}`, x + w - 8, sigY, { align: "right" });
+  doc.setDrawColor(60);
+  doc.setLineWidth(0.6);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + 10, sigY + 40, x + w * 0.3, sigY + 40);
+  doc.line(x + w * 0.45, sigY + 40, x + w - 10, sigY + 40);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text("Receiver's signature", x + 10, sigY + 54);
+  doc.text("Authorised signatory", x + w * 0.45, sigY + 54);
+
+  doc.setLineWidth(0.8);
+  doc.rect(x, boxTop, w, sigY + 66 - boxTop);
+  doc.save(filename);
+}
+
+function voucherHtml(data: VoucherDocData): string {
+  const { rows } = voucherLinesTable(data);
+  const partyLabel = data.title.startsWith("Payment")
+    ? "Paid to"
+    : data.title.startsWith("Receipt")
+      ? "Received from"
+      : "Party";
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head><meta charset="utf-8"><title>${esc(data.title)} ${esc(data.voucherNo)}</title><style>${docCss}
+  .vhead { width:100%; font-size:10pt; border-collapse:collapse; padding:0 10px; }
+  .vhead td { padding:3px 6px; }
+  .vtable { width:100%; border-collapse:collapse; margin-top:8px; }
+  .vtable th { border-top:1px solid #111; border-bottom:1px solid #111; font-size:10pt; padding:5px 8px; text-align:left; }
+  .vtable th.r { text-align:right; }
+  .vtable td { font-size:10pt; padding:4px 8px; border-bottom:1px solid #ddd; }
+  .vtable td.num { text-align:right; }
+  .vtable tr.total td { font-weight:bold; border-bottom:1px solid #111; border-top:1px solid #111; }
+  .words { font-size:10pt; font-style:italic; padding:10px; }
+  .vsig { width:100%; padding:10px; border-collapse:collapse; }
+  .vsig td { font-size:9pt; padding-top:36px; }
+  .sigline { border-top:1px dotted #555; margin:0 30px; }
+</style></head>
+<body><div class="wrap">
+  ${societyHeaderHtml(data.society)}
+  <div class="titlebar" style="text-decoration:underline; letter-spacing:3px;">${esc(data.title.toUpperCase())}</div>
+  <table class="vhead">
+    <tr><td>Voucher No.: <b>${esc(data.voucherNo)}</b></td><td style="text-align:right">Voucher Date: ${formatDate(data.voucherDate)}</td></tr>
+    ${data.party ? `<tr><td colspan="2">${esc(partyLabel)}: <b>${esc(data.party.toUpperCase())}</b></td></tr>` : ""}
+    ${data.chequeNo ? `<tr><td colspan="2">Cheque No.~ <b>${esc(data.chequeNo)}</b>${data.chequeDate ? ` dt ${formatDate(data.chequeDate)}` : ""}${data.bankName ? ` · ${esc(data.bankName)}` : ""}</td></tr>` : ""}
+  </table>
+  <table class="vtable">
+    <thead><tr><th>Code</th><th>Ledger / Particulars</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead>
+    <tbody>
+      ${data.lines.map((l) => `<tr><td>${esc(l.code ?? "")}</td><td>${esc(l.name.toUpperCase())}${l.note ? `<br><span style="font-size:8.5pt">&nbsp;&nbsp;&nbsp;${esc(l.note)}</span>` : ""}</td><td class="num">${money(l.debit)}</td><td class="num">${money(l.credit)}</td></tr>`).join("")}
+      <tr class="total"><td></td><td>TOTAL</td><td class="num">${money(data.lines.reduce((s, l) => s + l.debit, 0))}</td><td class="num">${money(data.lines.reduce((s, l) => s + l.credit, 0))}</td></tr>
+    </tbody>
+  </table>
+  <div class="words">Rupees: ${esc(rupeesInWords(data.amount))} Only</div>
+  ${data.narration ? `<div class="words" style="font-style:normal">Narration: ${esc(data.narration)}</div>` : ""}
+  <table class="vsig">
+    <tr>
+      <td style="width:50%"><div class="sigline"></div><div style="margin-top:4px">Receiver's signature</div></td>
+      <td style="width:50%; text-align:right"><b>For ${esc(data.society.name)}</b><div class="sigline"></div><div style="margin-top:4px">Authorised signatory</div></td>
+    </tr>
+  </table>
+</div><div class="tear"></div></body></html>`;
+}
+
+export function voucherWord(data: VoucherDocData, filename: string): void {
+  downloadDoc(voucherHtml(data), filename);
+}
+
+export function voucherPrint(data: VoucherDocData): void {
+  const w = window.open("", "_blank", "width=860,height=800");
+  if (!w) return;
+  w.document.write(
+    voucherHtml(data).replace(/^<html[^>]*>/, "<html>").replace(/<meta[^>]*>/, ""),
+  );
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 300);
+}

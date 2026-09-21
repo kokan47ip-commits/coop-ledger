@@ -23,11 +23,13 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { effectiveFyPeriod, formatDate, formatINR, formatMoney, formatPeriod } from "@/lib/format";
-import { Download, FileText, Printer } from "lucide-react";
+import { effectiveFyPeriod, formatDate, formatINR, formatMoney, formatPeriod, monthRangeISO } from "@/lib/format";
+import { Download, FileText, Printer, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery } from "convex/react";
+import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Member = Doc<"members">;
 type Bill = Doc<"bills">;
@@ -55,6 +57,21 @@ export default function MemberLedger() {
   const [from, setFrom] = useState(effectiveFyPeriod(society).from);
   const [to, setTo] = useState(effectiveFyPeriod(society).to);
   const [mode, setMode] = useState<"simple" | "detail">("simple");
+  const [month, setMonth] = useState("");
+  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+
+  const applyMonth = (m: string) => {
+    setMonth(m);
+    if (m) {
+      const r = monthRangeISO(m);
+      setFrom(r.from);
+      setTo(r.to);
+    } else {
+      const fy = effectiveFyPeriod(society);
+      setFrom(fy.from);
+      setTo(fy.to);
+    }
+  };
 
   const ledger = useQuery(
     api.api.memberLedger,
@@ -193,6 +210,101 @@ export default function MemberLedger() {
     else printTables(meta, [table]);
   };
 
+  const sortedMembers = useMemo(
+    () => [...(members ?? [])].sort((a, b) => a.code.localeCompare(b.code)),
+    [members],
+  );
+  const allMembersSelected =
+    sortedMembers.length > 0 && selectedMembers.size === sortedMembers.length;
+
+  const toggleAllMembers = (checked: boolean) =>
+    setSelectedMembers(checked ? new Set(sortedMembers.map((m) => m._id)) : new Set());
+  const toggleMember = (id: string, checked: boolean) =>
+    setSelectedMembers((s) => {
+      const next = new Set(s);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  /** Selection-wise export: one ledger section per ticked member. */
+  const bulk = useQuery(
+    api.api.memberLedgersBulk,
+    societyId && selectedMembers.size > 0
+      ? {
+          societyId,
+          memberIds: [...selectedMembers] as Id<"members">[],
+          fromDate: from,
+          toDate: to,
+        }
+      : "skip",
+  ) as { memberId: Id<"members">; member: Member | null; rows: LedgerRow[] }[] | undefined;
+
+  const doExportSelected = (kind: "pdf" | "word" | "print") => {
+    if (selectedMembers.size === 0) {
+      toast.error("Tick at least one member first.");
+      return;
+    }
+    if (!bulk || !society) {
+      toast.error("Loading selected ledgers… try again in a moment.");
+      return;
+    }
+    const m: ExportMeta = {
+      societyName: society.name,
+      societyAddress: [society.address, society.city, society.state, society.pincode]
+        .filter(Boolean)
+        .join(", "),
+      registrationNo: society.registrationNo,
+      title: "MEMBER LEDGERS — SELECTED",
+      subtitle: `For the period ${formatDate(from)} to ${formatDate(to)} · ${selectedMembers.size} members`,
+      signatures,
+    };
+    const order = sortedMembers.filter((mem) => selectedMembers.has(mem._id));
+    const tables: TableSpec[] = order
+      .map((mem) => {
+        const entry = bulk.find((b) => b.memberId === mem._id);
+        const rows = entry?.rows ?? [];
+        const body: (string | number)[][] = [];
+        if (mem.openingBalance !== 0) {
+          body.push([
+            "", "",
+            mem.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
+            mem.openingBalance > 0 ? mem.openingBalance : "",
+            mem.openingBalance < 0 ? -mem.openingBalance : "",
+            "",
+          ]);
+        }
+        let totDebit = 0;
+        let totCredit = 0;
+        for (const r of rows) {
+          totDebit += r.debit;
+          totCredit += r.credit;
+          body.push([
+            formatDate(r.date),
+            r.voucherNo,
+            r.particulars.split("—")[0].trim() + (r.note ? `\n${r.note}` : ""),
+            r.debit || "",
+            r.credit || "",
+            drCr(r.balance),
+          ]);
+        }
+        const closing = rows.length > 0 ? rows[rows.length - 1].balance : mem.openingBalance;
+        return {
+          sectionTitle: `${mem.code}  ${mem.name}`.toUpperCase(),
+          head: ["Date", "Bill / Voucher No.", "Narration", "Debit", "Credit", "Balance"],
+          body: body.length > 0 ? body : [["", "", "No transactions in this period", "", "", ""]],
+          foot: [
+            ["", "", closing >= 0 ? "To Closing balance cd" : "By Closing balance cd", closing < 0 ? -closing : "", closing > 0 ? closing : "", ""],
+            ["", "", "Total", totDebit, totCredit, ""],
+          ],
+          columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
+        };
+      });
+    if (kind === "pdf") exportPDF(m, tables, `member-ledgers-selected.pdf`);
+    else if (kind === "word") exportWord(m, tables, `member-ledgers-selected.doc`);
+    else printTables(m, tables);
+  };
+
   return (
     <div>
       <PageHeader
@@ -200,7 +312,7 @@ export default function MemberLedger() {
         description="Per-member statement of bills and receipts with running balance. Simple view collapses particulars; detail shows bill components and references."
       />
 
-      <div className="mb-6 grid gap-4 rounded-lg border p-5 sm:grid-cols-5">
+      <div className="mb-6 grid gap-4 rounded-lg border p-5 sm:grid-cols-6">
         <div className="space-y-2 sm:col-span-2">
           <Label>Member</Label>
           <Select value={memberId || undefined} onValueChange={setMemberId}>
@@ -216,11 +328,15 @@ export default function MemberLedger() {
         </div>
         <div className="space-y-2">
           <Label htmlFor="ml-from">From</Label>
-          <Input id="ml-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <Input id="ml-from" type="date" value={from} onChange={(e) => { setFrom(e.target.value); setMonth(""); }} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="ml-to">To</Label>
-          <Input id="ml-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <Input id="ml-to" type="date" value={to} onChange={(e) => { setTo(e.target.value); setMonth(""); }} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="ml-month">Month</Label>
+          <Input id="ml-month" type="month" value={month} onChange={(e) => applyMonth(e.target.value)} />
         </div>
         <div className="space-y-2">
           <Label>View</Label>
@@ -233,6 +349,59 @@ export default function MemberLedger() {
           </Select>
         </div>
       </div>
+
+      {/* Selection-wise printing: tick members and export their ledgers together */}
+      <details className="mb-6 rounded-lg border p-4">
+        <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium">
+          <Users className="size-4 text-primary" />
+          Print / download multiple members (selection-wise)
+          {selectedMembers.size > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+              {selectedMembers.size} selected
+            </span>
+          )}
+        </summary>
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={allMembersSelected}
+                onCheckedChange={(c) => toggleAllMembers(c === true)}
+              />
+              Select all members
+            </label>
+            <span className="text-xs text-muted-foreground">
+              For the period {formatDate(from)} to {formatDate(to)}
+            </span>
+          </div>
+          <div className="grid max-h-48 gap-1 overflow-y-auto rounded-md border p-3 sm:grid-cols-3">
+            {sortedMembers.map((m) => (
+              <label key={m._id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={selectedMembers.has(m._id)}
+                  onCheckedChange={(c) => toggleMember(m._id, c === true)}
+                />
+                <span className="font-mono text-xs text-muted-foreground">{m.code}</span>
+                <span className="truncate">{m.name}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" disabled={selectedMembers.size === 0}
+              onClick={() => doExportSelected("pdf")}>
+              <Download className="size-4" /> PDF selected ({selectedMembers.size})
+            </Button>
+            <Button variant="outline" size="sm" disabled={selectedMembers.size === 0}
+              onClick={() => doExportSelected("word")}>
+              <FileText className="size-4" /> Word selected
+            </Button>
+            <Button variant="outline" size="sm" disabled={selectedMembers.size === 0}
+              onClick={() => doExportSelected("print")}>
+              <Printer className="size-4" /> Print selected
+            </Button>
+          </div>
+        </div>
+      </details>
 
       {!memberId ? (
         <EmptyHint>Select a member to view their ledger statement.</EmptyHint>

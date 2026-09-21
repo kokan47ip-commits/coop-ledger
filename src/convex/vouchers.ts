@@ -33,6 +33,20 @@ export const listByMember = query({
   },
 });
 
+/** Fetch vouchers by id for the edit flow (ownership-checked). */
+export const getMany = query({
+  args: { societyId: v.id("societies"), ids: v.array(v.id("vouchers")) },
+  handler: async (ctx, { societyId, ids }) => {
+    await requireSociety(ctx, societyId);
+    const out = [];
+    for (const id of ids.slice(0, 100)) {
+      const v = await ctx.db.get(id);
+      if (v && v.societyId === societyId) out.push(v);
+    }
+    return out;
+  },
+});
+
 const voucherType = v.union(
   v.literal("member_receipt"),
   v.literal("other_receipt"),
@@ -231,6 +245,84 @@ export const create = mutation({
       allocations: undefined,
     });
     return voucherId;
+  },
+});
+
+/**
+ * Edit an existing voucher: replaces its entry lines, header fields and
+ * (for payment/other-receipt) the cash/bank side. Member receipts keep their
+ * original auto-posted structure — only date, mode, reference, narration and
+ * bank/cash account are editable (total stays, allocations stay).
+ */
+export const update = mutation({
+  args: {
+    societyId: v.id("societies"),
+    id: v.id("vouchers"),
+    date: v.string(),
+    narration: v.optional(v.string()),
+    mode: v.optional(v.string()),
+    bankCashAccountId: v.optional(v.id("accounts")),
+    reference: v.optional(v.string()),
+    lines: v.array(
+      v.object({
+        accountId: v.id("accounts"),
+        debit: v.number(),
+        credit: v.number(),
+        note: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, { societyId, id, date, narration, mode, bankCashAccountId, reference, lines }) => {
+    await requireSociety(ctx, societyId);
+    const voucher = await ctx.db.get(id);
+    if (!voucher || voucher.societyId !== societyId)
+      throw new Error("Voucher not found.");
+
+    const activeLines = lines.filter((l) => l.debit !== 0 || l.credit !== 0);
+    if (activeLines.length < 2)
+      throw new Error("A voucher needs at least two entry lines.");
+    const debit = activeLines.reduce((s, l) => s + l.debit, 0);
+    const credit = activeLines.reduce((s, l) => s + l.credit, 0);
+    if (Math.round(debit * 100) !== Math.round(credit * 100))
+      throw new Error("Debits and credits must balance.");
+
+    if (voucher.type === "member_receipt") {
+      // The amount and bill allocations are settled already, so they stay
+      // fixed — only header fields (and the receiving cash/bank account) edit.
+      const newBank = bankCashAccountId ?? voucher.bankCashAccountId;
+      const lines2 = newBank
+        ? voucher.lines.map((l) =>
+            l.debit > 0 && l.accountId !== newBank
+              ? { ...l, accountId: newBank }
+              : l,
+          )
+        : voucher.lines;
+      await ctx.db.patch(id, {
+        date,
+        narration,
+        mode,
+        bankCashAccountId: newBank,
+        reference,
+        lines: lines2,
+      });
+      return id;
+    }
+
+    await ctx.db.patch(id, {
+      date,
+      narration,
+      mode,
+      bankCashAccountId: bankCashAccountId ?? voucher.bankCashAccountId,
+      reference,
+      total: debit,
+      lines: activeLines.map((l) => ({
+        accountId: l.accountId,
+        debit: l.debit,
+        credit: l.credit,
+        note: l.note,
+      })),
+    });
+    return id;
   },
 });
 

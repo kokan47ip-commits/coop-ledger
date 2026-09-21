@@ -1,5 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -19,11 +22,34 @@ import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, RightMoney } from "@/components/PageParts";
-import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import {
+  exportPDF,
+  exportWord,
+  printTables,
+  type ExportMeta,
+  type TableSpec,
+} from "@/lib/export";
+import {
+  voucherPdf,
+  voucherPrint,
+  voucherWord,
+  voucherTitleFor,
+  type VoucherDocData,
+} from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { formatDate, formatINR, VOUCHER_TYPE_LABEL } from "@/lib/format";
-import { Download, FileText, Printer, Receipt as ReceiptIcon, Trash2 } from "lucide-react";
+import { formatDate, formatINR, formatMoney, monthRangeISO, VOUCHER_TYPE_LABEL } from "@/lib/format";
+import {
+  CalendarRange,
+  Download,
+  FileText,
+  Pencil,
+  Printer,
+  Receipt as ReceiptIcon,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -37,6 +63,20 @@ const TYPE_FILTERS = [
   { value: "journal", label: "Journals" },
 ];
 
+const EDIT_ROUTE: Record<string, string> = {
+  member_receipt: "/app/member-receipt",
+  other_receipt: "/app/other-receipt",
+  payment: "/app/payment",
+  journal: "/app/journal",
+};
+
+/**
+ * Recorded-voucher table shared by the four voucher pages. Provides:
+ * - type filter (or fixed), date-wise and month-wise filters
+ * - selection-wise printing via row checkboxes
+ * - per-row edit (routes back into the matching voucher form) and delete
+ * - legacy-format single-voucher print / PDF / Word
+ */
 export function VoucherList({
   title,
   fixedType,
@@ -50,6 +90,7 @@ export function VoucherList({
   renderReceipt?: (v: Voucher, kind: "pdf" | "word" | "print") => void;
 }) {
   const { societyId, society } = useSociety();
+  const navigate = useNavigate();
   const vouchers = useQuery(
     api.vouchers.list,
     societyId ? { societyId } : "skip",
@@ -59,6 +100,10 @@ export function VoucherList({
   const remove = useMutation(api.vouchers.remove);
   const signatures = useCommitteeSignatures();
   const [typeFilter, setTypeFilter] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [month, setMonth] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const filtered = useMemo(() => {
     let list = [...(vouchers ?? [])].sort((a, b) =>
@@ -68,31 +113,61 @@ export function VoucherList({
     );
     if (fixedType) list = list.filter((v) => v.type === fixedType);
     else if (typeFilter !== "all") list = list.filter((v) => v.type === typeFilter);
+    if (from) list = list.filter((v) => v.date >= from);
+    if (to) list = list.filter((v) => v.date <= to);
+    if (month) {
+      const r = monthRangeISO(month);
+      list = list.filter((v) => v.date >= r.from && v.date <= r.to);
+    }
     return list;
-  }, [vouchers, fixedType, typeFilter]);
+  }, [vouchers, fixedType, typeFilter, from, to, month]);
 
   const accountName = (id: string) =>
     accounts?.find((a) => a._id === id)?.name ?? "—";
 
   const total = filtered.reduce((s, v) => s + v.total, 0);
+  const selectedRows = filtered.filter((v) => selected.has(v._id));
+  const allChecked = filtered.length > 0 && selectedRows.length === filtered.length;
 
-  const meta: ExportMeta | null =
-    society && vouchers
+  const toggleAll = (checked: boolean) =>
+    setSelected(checked ? new Set(filtered.map((v) => v._id)) : new Set());
+  const toggleOne = (id: string, checked: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const voucherLines = (v: Voucher) =>
+    v.lines.map((l) => ({
+      code: accounts?.find((a) => a._id === l.accountId)?.code ?? "",
+      name: accountName(l.accountId),
+      debit: l.debit,
+      credit: l.credit,
+      note: l.note,
+    }));
+
+  const meta = (list: Voucher[], t = title): ExportMeta | null =>
+    society
       ? {
           societyName: society.name,
           societyAddress: [society.address, society.city, society.state, society.pincode]
             .filter(Boolean)
             .join(", "),
           registrationNo: society.registrationNo,
-          title,
-          subtitle: `${filtered.length} vouchers · Total ${formatINR(total)}`,
+          title: t,
+          subtitle:
+            list.length > 0
+              ? `${list.length} vouchers · ${formatDate(list[0].date)} to ${formatDate(list[list.length - 1].date)} · Total ${formatINR(list.reduce((s, v) => s + v.total, 0))}`
+              : "No vouchers in the selected range",
           signatures,
         }
       : null;
 
-  const buildTable = (): TableSpec => ({
+  const buildTable = (list: Voucher[]): TableSpec => ({
     head: ["Voucher No", "Date", "Type", "Member", "Particulars", "Amount"],
-    body: filtered.map((v) => {
+    body: list.map((v) => {
       const member = members?.find((m) => m._id === v.memberId);
       const particulars =
         v.lines
@@ -113,11 +188,55 @@ export function VoucherList({
   });
 
   const doExport = (kind: "pdf" | "word" | "print") => {
-    if (!meta) return;
-    const table = buildTable();
-    if (kind === "pdf") exportPDF(meta, [table], "vouchers.pdf");
-    else if (kind === "word") exportWord(meta, [table], "vouchers.doc");
-    else printTables(meta, [table]);
+    const m = meta(filtered);
+    if (!m) return;
+    const table = buildTable(filtered);
+    if (kind === "pdf") exportPDF(m, [table], "vouchers.pdf");
+    else if (kind === "word") exportWord(m, [table], "vouchers.doc");
+    else printTables(m, [table]);
+  };
+
+  /** Selection-wise export: each selected voucher as its own section. */
+  const doExportSelected = (kind: "pdf" | "word" | "print") => {
+    if (selectedRows.length === 0) {
+      toast.error("Tick at least one voucher first.");
+      return;
+    }
+    const m = meta(selectedRows, `${title} — Selected (${selectedRows.length})`);
+    if (!m) return;
+    const table = buildTable(selectedRows);
+    if (kind === "pdf") exportPDF(m, [table], "vouchers-selected.pdf");
+    else if (kind === "word") exportWord(m, [table], "vouchers-selected.doc");
+    else printTables(m, [table]);
+  };
+
+  /** Single voucher in the legacy bordered format. */
+  const printOne = (v: Voucher, kind: "pdf" | "word" | "print") => {
+    if (!society) return;
+    const member = members?.find((m) => m._id === v.memberId);
+    const data: VoucherDocData = {
+      society: {
+        name: society.name,
+        address: [society.address, society.city, society.state, society.pincode]
+          .filter(Boolean)
+          .join(", "),
+        registrationNo: society.registrationNo,
+      },
+      title: voucherTitleFor(v.type),
+      voucherNo: v.voucherNo,
+      voucherDate: v.date,
+      bookCode: fixedType ?? v.type,
+      party: v.mode || member?.name,
+      mode: v.type === "member_receipt" ? v.mode : undefined,
+      chequeNo: v.reference,
+      bankName: (v.narration ?? "").match(/^Bank: ([^—]+?)( — )?/)?.[1]?.trim(),
+      narration: v.narration ?? undefined,
+      amount: v.total,
+      lines: voucherLines(v),
+    };
+    if (kind === "pdf") voucherPdf(data, `${v.voucherNo}.pdf`);
+    else if (kind === "word") voucherWord(data, `${v.voucherNo}.doc`);
+    else voucherPrint(data);
   };
 
   const del = async (v: Voucher) => {
@@ -125,66 +244,130 @@ export function VoucherList({
     if (!confirm(`Delete voucher ${v.voucherNo}?`)) return;
     try {
       await remove({ societyId, id: v._id });
+      setSelected((s) => {
+        const next = new Set(s);
+        next.delete(v._id);
+        return next;
+      });
       toast.success("Voucher deleted");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete");
     }
   };
 
+  const editVoucher = (v: Voucher) => {
+    const route = EDIT_ROUTE[v.type] ?? "/app/journal";
+    navigate(`${route}?edit=${v._id}`);
+  };
+
+  const dateFiltersActive = Boolean(from || to || month);
+
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {!fixedType && (
+      {/* Filters: date-wise / month-wise */}
+      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border p-4">
+        <div className="space-y-1">
+          <Label htmlFor="vl-from" className="text-xs text-muted-foreground">From</Label>
+          <Input id="vl-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+            className="h-8 w-36" />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="vl-to" className="text-xs text-muted-foreground">To</Label>
+          <Input id="vl-to" type="date" value={to} onChange={(e) => setTo(e.target.value)}
+            className="h-8 w-36" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Month</Label>
+          <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+            className="h-8 w-36" />
+        </div>
+        {!fixedType && (
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Type</Label>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-8 w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {TYPE_FILTERS.map((t) => (
                   <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          )}
-          <span className="text-sm text-muted-foreground">
-            {filtered.length} vouchers · {formatINR(total)}
-          </span>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
-            <Download className="size-4" /> PDF
+          </div>
+        )}
+        {dateFiltersActive && (
+          <Button variant="ghost" size="sm" className="h-8"
+            onClick={() => { setFrom(""); setTo(""); setMonth(""); }}>
+            <X className="size-3.5" /> Clear
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
-            <FileText className="size-4" /> Word
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
-            <Printer className="size-4" /> Print
-          </Button>
-        </div>
+        )}
+        <span className="ml-auto text-sm text-muted-foreground">
+          {filtered.length} vouchers · {formatINR(total)}
+        </span>
+      </div>
+
+      {/* Export bar: date-wise/month-wise list + selection-wise */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Download className="size-4" /> PDF {dateFiltersActive ? "(filtered)" : ""}
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <FileText className="size-4" /> Word
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Printer className="size-4" /> Print
+        </Button>
+        <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+        <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+          onClick={() => doExportSelected("pdf")}>
+          <CalendarRange className="size-4" /> PDF selected ({selectedRows.length})
+        </Button>
+        <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+          onClick={() => doExportSelected("word")}>
+          <FileText className="size-4" /> Word selected
+        </Button>
+        <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+          onClick={() => doExportSelected("print")}>
+          <Printer className="size-4" /> Print selected
+        </Button>
       </div>
 
       {!vouchers ? null : filtered.length === 0 ? (
-        <EmptyHint>No vouchers recorded yet.</EmptyHint>
+        <EmptyHint>No vouchers match the current filters.</EmptyHint>
       ) : (
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={allChecked}
+                    onCheckedChange={(c) => toggleAll(c === true)}
+                    aria-label="Select all"
+                  />
+                </TableHead>
                 <TableHead>Voucher No</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Member</TableHead>
                 <TableHead>Narration</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="w-16 text-right">Del</TableHead>
+                <TableHead className="w-10 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((v) => {
                 const member = members?.find((m) => m._id === v.memberId);
                 return (
-                  <TableRow key={v._id}>
+                  <TableRow key={v._id} data-state={selected.has(v._id) ? "selected" : undefined}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(v._id)}
+                        onCheckedChange={(c) => toggleOne(v._id, c === true)}
+                        aria-label={`Select ${v.voucherNo}`}
+                      />
+                    </TableCell>
                     <TableCell className="font-mono text-xs font-medium">{v.voucherNo}</TableCell>
-                    <TableCell>{formatDate(v.date)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDate(v.date)}</TableCell>
                     <TableCell>
                       <Badge variant="outline">{VOUCHER_TYPE_LABEL[v.type]}</Badge>
                     </TableCell>
@@ -192,41 +375,48 @@ export function VoucherList({
                     <TableCell className="max-w-64 truncate text-muted-foreground">
                       {v.narration ?? v.lines.map((l) => accountName(l.accountId)).join(" / ")}
                     </TableCell>
-                    <TableCell className="text-right"><RightMoney value={v.total} /></TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        {renderReceipt && v.type === "member_receipt" && (
+                      <RightMoney value={v.total} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-0.5">
+                        {renderReceipt && v.type === "member_receipt" ? (
                           <>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-8"
-                              title="Print legacy receipt (PDF)"
-                              onClick={() => renderReceipt(v, "pdf")}
-                            >
+                            <Button variant="ghost" size="icon" className="size-7"
+                              title="Receipt PDF" onClick={() => renderReceipt(v, "pdf")}>
                               <Download className="size-3.5" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-8"
-                              title="Legacy receipt as Word"
-                              onClick={() => renderReceipt(v, "word")}
-                            >
+                            <Button variant="ghost" size="icon" className="size-7"
+                              title="Receipt Word" onClick={() => renderReceipt(v, "word")}>
                               <FileText className="size-3.5" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-8"
-                              title="Print legacy receipt"
-                              onClick={() => renderReceipt(v, "print")}
-                            >
+                            <Button variant="ghost" size="icon" className="size-7"
+                              title="Print receipt" onClick={() => renderReceipt(v, "print")}>
                               <ReceiptIcon className="size-3.5" />
                             </Button>
                           </>
+                        ) : (
+                          <>
+                            <Button variant="ghost" size="icon" className="size-7"
+                              title="Voucher PDF" onClick={() => printOne(v, "pdf")}>
+                              <Download className="size-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="size-7"
+                              title="Voucher Word" onClick={() => printOne(v, "word")}>
+                              <FileText className="size-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="size-7"
+                              title="Print voucher" onClick={() => printOne(v, "print")}>
+                              <Printer className="size-3.5" />
+                            </Button>
+                          </>
                         )}
-                        <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(v)}>
+                        <Button variant="ghost" size="icon" className="size-7"
+                          title="Edit" onClick={() => editVoucher(v)}>
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="size-7 text-destructive"
+                          title="Delete" onClick={() => del(v)}>
                           <Trash2 className="size-3.5" />
                         </Button>
                       </div>
