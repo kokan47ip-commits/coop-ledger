@@ -125,11 +125,30 @@ export default function MemberReceipt() {
     [form.narration, form.bankName ? `Bank: ${form.bankName}` : ""].filter(Boolean).join(" — ") ||
     undefined;
 
+  const receivableAccount = (accounts ?? []).find((a) => a.kind === "receivable");
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!societyId || !form.memberId) return;
     if (!amountNum || amountNum <= 0) {
       toast.error("Enter a valid amount.");
+      return;
+    }
+    const bankId = form.bankCashAccountId || bankAccounts[0]?._id;
+    // With no outstanding bills there are no allocations — send explicit
+    // balanced lines (Dr Bank/Cash, Cr Members Receivable) so the backend
+    // accepts an advance/against-account receipt.
+    const noAllocLines =
+      previewAllocation.rows.length === 0 && bankId && receivableAccount
+        ? [
+            { accountId: bankId as Id<"accounts">, debit: amountNum, credit: 0 },
+            { accountId: receivableAccount._id, debit: 0, credit: amountNum },
+          ]
+        : [];
+    if (previewAllocation.rows.length === 0 && !noAllocLines.length) {
+      toast.error(
+        "No outstanding bills and no Members Receivable / bank-cash account found — add them in Chart of Accounts first.",
+      );
       return;
     }
     try {
@@ -139,10 +158,10 @@ export default function MemberReceipt() {
         date: form.date,
         memberId: form.memberId as Id<"members">,
         mode: form.mode,
-        bankCashAccountId: (form.bankCashAccountId || bankAccounts[0]?._id) as never,
+        bankCashAccountId: bankId as never,
         reference: composeReference(),
         narration: composeNarration(),
-        lines: [],
+        lines: noAllocLines,
         allocations: previewAllocation.rows.map((r) => ({ billId: r.bill._id, amount: r.take })),
       });
       toast.success(
@@ -219,7 +238,7 @@ export default function MemberReceipt() {
       chequeNo: ref.includes(" dt ") ? ref.split(" dt ")[0] : ref,
       chequeDate: ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "",
       bankName: bankMatch?.[1]?.trim() ?? "",
-      narration: bankMatch ? raw.slice(0, bankMatch.index).replace(/ — $/, "") : raw,
+      narration: bankMatch ? raw.slice(0, bankMatch.index).trimEnd() : raw,
     });
     setEditLoadedFor(editId);
     // eslint-disable-next-line react-hooks/exhaustive-deps

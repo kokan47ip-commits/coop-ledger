@@ -183,7 +183,7 @@ export function VoucherList({
         v.total,
       ];
     }),
-    foot: [["", "", "", "", "TOTAL", total]],
+    foot: [["", "", "", "", "TOTAL", list.reduce((s, v) => s + v.total, 0)]],
     columnStyles: { 5: { halign: "right" } },
   });
 
@@ -229,7 +229,7 @@ export function VoucherList({
       party: v.mode || member?.name,
       mode: v.type === "member_receipt" ? v.mode : undefined,
       chequeNo: v.reference,
-      bankName: (v.narration ?? "").match(/^Bank: ([^—]+?)( — )?/)?.[1]?.trim(),
+      bankName: (v.narration ?? "").match(/(?:— )?Bank: (.+)$/)?.[1]?.trim(),
       narration: v.narration ?? undefined,
       amount: v.total,
       lines: voucherLines(v),
