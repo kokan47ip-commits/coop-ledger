@@ -163,6 +163,16 @@ export default function BillRegister() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bills, members, periodFilter, applied, tariffColumns]);
 
+  /** Row-level total due: edited/current tariff lines + arrears before this period. */
+  const rowTotal = (b: Bill, principal: number) => {
+    let sum = principal;
+    for (const t of tariffColumns) {
+      const edited = edits[b._id]?.[t._id];
+      sum += edited !== undefined && edited !== "" ? Number(edited) : lineAmount(b, t._id);
+    }
+    return sum;
+  };
+
   const totals = useMemo(() => {
     const t = {
       count: rows.length,
@@ -380,16 +390,6 @@ export default function BillRegister() {
       [billId]: { ...(prev[billId] ?? {}), [tariffId]: value },
     }));
   const clearEdits = () => setEdits({});
-
-  /** Row-level total due: bill total + arrears before this period. */
-  const rowTotal = (b: Bill, principal: number) => {
-    let sum = principal;
-    for (const t of tariffColumns) {
-      const edited = edits[b._id]?.[t._id];
-      sum += edited !== undefined && edited !== "" ? Number(edited) : lineAmount(b, t._id);
-    }
-    return sum;
-  };
 
   const saveEdits = async () => {
     if (!societyId) return;
