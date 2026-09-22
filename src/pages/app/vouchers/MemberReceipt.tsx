@@ -582,6 +582,8 @@ export default function MemberReceipt() {
         description="Member receipt vouchers"
         fixedType="member_receipt"
         renderReceipt={(v, kind) => printReceiptFor(v, kind)}
+        receiptMode="receipt"
+        receiptNoun="Receipts"
       />
     </div>
   );

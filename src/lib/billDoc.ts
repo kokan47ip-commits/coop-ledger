@@ -42,6 +42,8 @@ export type LegacyReceiptData = {
   purpose: string;
   mode?: string;
   reference?: string;
+  /** Optional copy tag rendered top-right, e.g. "Original" / "Duplicate". */
+  copyLabel?: string;
 };
 
 const FOOTER_NOTES = [
@@ -216,16 +218,18 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.save(filename);
 }
 
-/** Bordered legacy receipt with amount box and tear line. */
-export function receiptPdf(data: LegacyReceiptData, filename: string) {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const W = doc.internal.pageSize.getWidth();
-  const H = doc.internal.pageSize.getHeight();
-  const x = 40;
-  const w = W - x * 2;
-  const boxTop = 60;
-
+/** Draws one bordered legacy receipt box with its top edge at `y`. Returns the
+ * bottom edge of the box, so callers can stack copies or add tear lines. */
+function drawReceiptBox(doc: jsPDF, data: LegacyReceiptData, x: number, y: number, w: number): number {
+  const boxTop = y;
   drawSocietyHeader(doc, data.society, boxTop + 22);
+  if (data.copyLabel) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(90);
+    doc.text(data.copyLabel.toUpperCase(), x + w - 8, boxTop + 12, { align: "right" });
+    doc.setTextColor(30);
+  }
   let cy = boxTop + 78;
   doc.setDrawColor(60);
   doc.setLineWidth(0.8);
@@ -233,23 +237,22 @@ export function receiptPdf(data: LegacyReceiptData, filename: string) {
   cy += 26;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
-  doc.text("R E C E I P T", W / 2, cy, { align: "center" });
+  doc.text("R E C E I P T", x + w / 2, cy, { align: "center" });
   doc.setLineWidth(0.6);
   const tw = doc.getTextWidth("R E C E I P T");
-  doc.line(W / 2 - tw / 2, cy + 4, W / 2 + tw / 2, cy + 4);
+  doc.line(x + w / 2 - tw / 2, cy + 4, x + w / 2 + tw / 2, cy + 4);
   cy += 30;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10.5);
   doc.text("Receipt No.:", x + 8, cy);
   doc.text(String(data.receiptNo), x + 90, cy);
-  doc.text("Receipt Date:", W - 190, cy);
-  doc.text(formatDate(data.receiptDate), W - 100, cy, { align: "right" });
+  doc.text("Receipt Date:", x + w - 150, cy);
+  doc.text(formatDate(data.receiptDate), x + w - 60, cy, { align: "right" });
   cy += 22;
   doc.line(x, cy, x + w, cy);
   cy += 26;
 
-  const colW = 150;
   const lines: { pre?: string; bold?: string; post?: string; underline?: boolean }[] = [
     { pre: "Received with thanks from ", bold: data.memberName.toUpperCase() },
     { pre: "the sum of ", bold: `Rs. ${money(data.amount)}/-`, post: " in words ", underline: true, },
@@ -299,12 +302,60 @@ export function receiptPdf(data: LegacyReceiptData, filename: string) {
   // Outer box
   doc.setLineWidth(0.8);
   doc.rect(x, boxTop, w, ly + 70 - boxTop);
+  return ly + 70;
+}
+
+/** Bordered legacy receipt with amount box and tear line. */
+export function receiptPdf(data: LegacyReceiptData, filename: string) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const x = 40;
+  const w = W - x * 2;
+  const bottom = drawReceiptBox(doc, data, x, 60, w);
 
   doc.setDrawColor(120);
   doc.setLineDashPattern([6, 4], 0);
-  doc.line(x, ly + 100, x + w, ly + 100);
+  doc.line(x, bottom + 30, x + w, bottom + 30);
   doc.setLineDashPattern([], 0);
-  void H;
+  doc.save(filename);
+}
+
+export type ReceiptBatchItem = { data: LegacyReceiptData; copyLabel?: string };
+
+/**
+ * Batch of receipts in one PDF. With `twoUp` each A4 page carries two receipt
+ * boxes separated by a dashed cut line; otherwise one receipt per page.
+ */
+export function receiptsPdfBatch(items: ReceiptBatchItem[], filename: string, twoUp = false) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const x = 40;
+  const w = W - x * 2;
+  const perPage = twoUp ? 2 : 1;
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 50 : 421) : 60);
+  let slot = 0;
+  let lastBottom = 0;
+  for (const item of items) {
+    if (slot >= perPage) {
+      doc.addPage();
+      slot = 0;
+    }
+    if (twoUp && slot === 1) {
+      const cut = Math.round((lastBottom + yFor(1)) / 2);
+      doc.setDrawColor(120);
+      doc.setLineDashPattern([6, 4], 0);
+      doc.line(x, cut, x + w, cut);
+      doc.setLineDashPattern([], 0);
+    }
+    lastBottom = drawReceiptBox(
+      doc,
+      { ...item.data, copyLabel: item.copyLabel ?? item.data.copyLabel },
+      x,
+      yFor(slot),
+      w,
+    );
+    slot++;
+  }
   doc.save(filename);
 }
 
@@ -391,6 +442,7 @@ function receiptHtml(data: LegacyReceiptData): string {
 <body><div class="wrap">
   ${societyHeaderHtml(data.society)}
   <div class="titlebar" style="text-decoration:underline; letter-spacing:3px;">RECEIPT</div>
+  ${data.copyLabel ? `<p class="copytag">${esc(data.copyLabel.toUpperCase())}</p>` : ""}
   <table class="meta">
     <tr><td>Receipt No.:</td><td>${esc(String(data.receiptNo))}</td><td style="text-align:right">Receipt Date:</td><td>${formatDate(data.receiptDate)}</td></tr>
   </table>
@@ -409,6 +461,37 @@ function receiptHtml(data: LegacyReceiptData): string {
 
 export function receiptWord(data: LegacyReceiptData, filename: string): void {
   downloadDoc(receiptHtml(data), filename);
+}
+
+/** Inner markup of a full receiptHtml document (the bordered block + tear line). */
+function receiptBodyInner(data: LegacyReceiptData): string {
+  const full = receiptHtml(data);
+  const start = full.indexOf("<body>");
+  const end = full.lastIndexOf("</body>");
+  if (start < 0 || end < 0) return full;
+  return full.slice(start + "<body>".length, end);
+}
+
+function receiptHtmlCompact(data: LegacyReceiptData): string {
+  // Strip the trailing tear line; batching adds its own separators.
+  return receiptBodyInner(data).replace(/<div class="tear"><\/div>\s*$/, "");
+}
+
+export type ReceiptWordItem = { data: LegacyReceiptData; copyLabel?: string };
+
+/** Batch of receipts in one Word document, two receipts per printed page. */
+export function receiptsWordBatch(items: ReceiptWordItem[], filename: string): void {
+  const blocks = items
+    .map((it) => receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }))
+    .join('<div class="tear"></div>');
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head><meta charset="utf-8"><title>Receipts</title><style>${docCss}
+  @page { size: A4; margin: 1cm; }
+  .wrap { page-break-inside: avoid; }
+  .copytag { text-align:right; font-size:8pt; margin:0 10px; color:#333; }
+</style></head>
+<body>${blocks}<div class="tear"></div></body></html>`;
+  downloadDoc(html, filename);
 }
 
 function downloadDoc(html: string, filename: string): void {
@@ -437,11 +520,40 @@ export function billPrint(data: LegacyBillData): void {
 }
 
 export function receiptPrint(data: LegacyReceiptData): void {
+  printReceiptWindows([data]);
+}
+
+/**
+ * Print receipts — two boxes per A4 page, each pair separated by a dashed cut
+ * line. Pass every selected receipt in a single call so the browser produces
+ * one print job with the receipts flowing two-per-page.
+ */
+export function printReceiptWindows(items: (LegacyReceiptData & { copyLabel?: string })[]): void {
+  const blocks = items
+    .map((d) => receiptHtmlCompact(d))
+    .join('<div class="cutline"></div>');
+  const html = `<html><head><title>Receipts</title><style>
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; margin:0; }
+  .wrap { border:1.5px solid #111; padding:0; margin:0 auto; max-width:700px; page-break-inside:avoid; }
+  .hdr { text-align:center; padding:14px 10px 10px; }
+  .hdr h1 { font-size:15pt; margin:0; font-weight:bold; }
+  .hdr p { font-size:9pt; margin:3px 0; }
+  .titlebar { text-align:center; font-weight:bold; font-size:11pt; border-top:1px solid #111; border-bottom:1px solid #111; padding:6px; }
+  .copytag { text-align:right; font-size:8pt; margin:2px 10px 0; color:#333; }
+  .meta { width:100%; font-size:10pt; padding:10px; border-collapse:collapse; }
+  .meta td { padding:3px 6px; }
+  .receipt-body { padding:16px 14px; font-size:11pt; line-height:1.9; }
+  .amtbox { border:1px solid #111; display:inline-block; padding:6px 14px; font-weight:bold; margin-top:14px; }
+  table.sign { width:100%; }
+  .cutline { border-top:2px dashed #888; margin:8px auto; max-width:700px; }
+  @media print {
+    body { margin: 10mm 12mm; }
+    .cutline { margin: 6mm auto; }
+  }
+  </style></head><body>${blocks}</body></html>`;
   const w = window.open("", "_blank", "width=860,height=700");
   if (!w) return;
-  w.document.write(
-    receiptHtml(data).replace(/^<html[^>]*>/, "<html>").replace(/<meta[^>]*>/, ""),
-  );
+  w.document.write(html);
   w.document.close();
   w.focus();
   setTimeout(() => w.print(), 300);

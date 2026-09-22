@@ -29,7 +29,13 @@ export default function OtherReceipt() {
       ) : null}
 
       <h3 className="mb-4 text-sm font-medium">Recorded other receipts</h3>
-      <VoucherList title="Other Receipts" description="Other receipt vouchers" fixedType="other_receipt" />
+      <VoucherList
+        title="Other Receipts"
+        description="Other receipt vouchers"
+        fixedType="other_receipt"
+        receiptMode="receipt"
+        receiptNoun="Receipts"
+      />
     </div>
   );
 }

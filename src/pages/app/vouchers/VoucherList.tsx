@@ -30,10 +30,18 @@ import {
   type TableSpec,
 } from "@/lib/export";
 import {
+  periodLabelLong,
+  printReceiptWindows,
+  receiptPdf,
+  receiptPrint,
+  receiptWord,
+  receiptsPdfBatch,
+  receiptsWordBatch,
   voucherPdf,
   voucherPrint,
   voucherWord,
   voucherTitleFor,
+  type LegacyReceiptData,
   type VoucherDocData,
 } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
@@ -76,18 +84,28 @@ const EDIT_ROUTE: Record<string, string> = {
  * - selection-wise printing via row checkboxes
  * - per-row edit (routes back into the matching voucher form) and delete
  * - legacy-format single-voucher print / PDF / Word
+ *
+ * With `receiptMode="receipt"` the export buttons produce the legacy-format
+ * RECEIPT document for each selected voucher (optionally two receipts per A4
+ * page) instead of the voucher register.
  */
 export function VoucherList({
   title,
   fixedType,
   description,
   renderReceipt,
+  receiptMode = "voucher",
+  receiptNoun = "Vouchers",
 }: {
   title: string;
   description: string;
   fixedType?: "member_receipt" | "other_receipt" | "payment" | "journal";
-  /** When provided, member receipt rows get a legacy-format receipt action. */
+  /** Optional override for row-level legacy-receipt actions. */
   renderReceipt?: (v: Voucher, kind: "pdf" | "word" | "print") => void;
+  /** "voucher" (default) exports voucher documents; "receipt" exports receipts. */
+  receiptMode?: "voucher" | "receipt";
+  /** Label for the selection-wise buttons, e.g. "Receipts". */
+  receiptNoun?: string;
 }) {
   const { societyId, society } = useSociety();
   const navigate = useNavigate();
@@ -97,6 +115,10 @@ export function VoucherList({
   ) as Voucher[] | undefined;
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip");
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip");
+  const bills = useQuery(
+    api.bills.list,
+    societyId && receiptMode === "receipt" ? { societyId } : "skip",
+  );
   const remove = useMutation(api.vouchers.remove);
   const signatures = useCommitteeSignatures();
   const [typeFilter, setTypeFilter] = useState("all");
@@ -104,6 +126,8 @@ export function VoucherList({
   const [to, setTo] = useState("");
   const [month, setMonth] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** Pack two receipt boxes per A4 page when printing / exporting receipts. */
+  const [twoUp, setTwoUp] = useState(true);
 
   const filtered = useMemo(() => {
     let list = [...(vouchers ?? [])].sort((a, b) =>
@@ -147,6 +171,35 @@ export function VoucherList({
       credit: l.credit,
       note: l.note,
     }));
+
+  /** Legacy-format receipt document data for one saved voucher. */
+  const buildReceiptDataFor = (v: Voucher): LegacyReceiptData | null => {
+    if (!society) return null;
+    const mem = members?.find((m) => m._id === v.memberId);
+    const firstBill = (bills ?? [])
+      .filter((b) => (v.allocations ?? []).some((a) => a.billId === b._id))
+      .sort((a, b) => b.period.localeCompare(a.period))[0];
+    return {
+      society: {
+        name: society.name,
+        address: [society.address, society.city, society.state, society.pincode]
+          .filter(Boolean)
+          .join(", "),
+        registrationNo: society.registrationNo,
+      },
+      receiptNo: v.voucherNo.replace(/^[A-Z]+-/, ""),
+      receiptDate: v.date,
+      memberName: mem?.name ?? v.mode ?? "Member",
+      flatNo: [mem?.wing, mem?.flatNo].filter(Boolean).join("-") || undefined,
+      amount: v.total,
+      paymentKind: "part",
+      purpose: firstBill
+        ? `Maintenance for the Month ${periodLabelLong(firstBill.period)}`
+        : v.narration || "Maintenance dues",
+      mode: v.mode,
+      reference: v.reference,
+    };
+  };
 
   const meta = (list: Voucher[], t = title): ExportMeta | null =>
     society
@@ -196,10 +249,27 @@ export function VoucherList({
     else printTables(m, [table]);
   };
 
-  /** Selection-wise export: each selected voucher as its own section. */
+  /**
+   * Selection-wise export. In receipt mode the ticked vouchers become actual
+   * receipt documents (one file, two per A4 when enabled) — not a register.
+   */
   const doExportSelected = (kind: "pdf" | "word" | "print") => {
     if (selectedRows.length === 0) {
       toast.error("Tick at least one voucher first.");
+      return;
+    }
+    if (receiptMode === "receipt") {
+      const items = selectedRows
+        .map((v) => buildReceiptDataFor(v))
+        .filter((d): d is LegacyReceiptData => d !== null)
+        .map((data) => ({ data }));
+      if (items.length === 0) {
+        toast.error("Could not build receipts for the selection.");
+        return;
+      }
+      if (kind === "pdf") receiptsPdfBatch(items, "receipts.pdf", twoUp);
+      else if (kind === "word") receiptsWordBatch(items, "receipts.doc");
+      else printReceiptWindows(items.map((i) => i.data));
       return;
     }
     const m = meta(selectedRows, `${title} — Selected (${selectedRows.length})`);
@@ -208,6 +278,23 @@ export function VoucherList({
     if (kind === "pdf") exportPDF(m, [table], "vouchers-selected.pdf");
     else if (kind === "word") exportWord(m, [table], "vouchers-selected.doc");
     else printTables(m, [table]);
+  };
+
+  /** Rows that document as a RECEIPT (member/other receipts) rather than a voucher. */
+  const isReceiptRow = (v: Voucher) =>
+    v.type === "member_receipt" || v.type === "other_receipt";
+
+  /** Single-voucher / single-receipt row action. */
+  const rowPrint = (v: Voucher, kind: "pdf" | "word" | "print") => {
+    if (isReceiptRow(v)) {
+      const d = buildReceiptDataFor(v);
+      if (!d) return;
+      if (kind === "pdf") receiptPdf(d, `receipt-${v.voucherNo}.pdf`);
+      else if (kind === "word") receiptWord(d, `receipt-${v.voucherNo}.doc`);
+      else receiptPrint(d);
+      return;
+    }
+    printOne(v, kind);
   };
 
   /** Single voucher in the legacy bordered format. */
@@ -307,28 +394,40 @@ export function VoucherList({
 
       {/* Export bar: date-wise/month-wise list + selection-wise */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
-          <Download className="size-4" /> PDF {dateFiltersActive ? "(filtered)" : ""}
+        <Button variant="outline" size="sm" onClick={() => doExport("pdf")}
+          title={receiptMode === "receipt" ? "Receipt register for the filtered list" : undefined}>
+          <Download className="size-4" /> {receiptMode === "receipt" ? "Register PDF" : `PDF ${dateFiltersActive ? "(filtered)" : ""}`}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => doExport("word")}>
-          <FileText className="size-4" /> Word
+        <Button variant="outline" size="sm" onClick={() => doExport("word")}
+          title={receiptMode === "receipt" ? "Receipt register for the filtered list" : undefined}>
+          <FileText className="size-4" /> {receiptMode === "receipt" ? "Register Word" : "Word"}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => doExport("print")}>
-          <Printer className="size-4" /> Print
+        <Button variant="outline" size="sm" onClick={() => doExport("print")}
+          title={receiptMode === "receipt" ? "Receipt register for the filtered list" : undefined}>
+          <Printer className="size-4" /> {receiptMode === "receipt" ? "Register Print" : "Print"}
         </Button>
         <span className="mx-1 h-5 w-px bg-border" aria-hidden />
         <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
           onClick={() => doExportSelected("pdf")}>
-          <CalendarRange className="size-4" /> PDF selected ({selectedRows.length})
+          <CalendarRange className="size-4" /> {receiptNoun} PDF ({selectedRows.length})
         </Button>
         <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
           onClick={() => doExportSelected("word")}>
-          <FileText className="size-4" /> Word selected
+          <FileText className="size-4" /> {receiptNoun} Word
         </Button>
         <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
           onClick={() => doExportSelected("print")}>
-          <Printer className="size-4" /> Print selected
+          <Printer className="size-4" /> {receiptNoun} Print
         </Button>
+        {receiptMode === "receipt" && (
+          <>
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
+              <Checkbox checked={twoUp} onCheckedChange={(c) => setTwoUp(c === true)} />
+              2 per A4
+            </label>
+          </>
+        )}
       </div>
 
       {!vouchers ? null : filtered.length === 0 ? (
@@ -398,16 +497,16 @@ export function VoucherList({
                         ) : (
                           <>
                             <Button variant="ghost" size="icon" className="size-7"
-                              title="Voucher PDF" onClick={() => printOne(v, "pdf")}>
+                              title={isReceiptRow(v) ? "Receipt PDF" : "Voucher PDF"} onClick={() => rowPrint(v, "pdf")}>
                               <Download className="size-3.5" />
                             </Button>
                             <Button variant="ghost" size="icon" className="size-7"
-                              title="Voucher Word" onClick={() => printOne(v, "word")}>
+                              title={isReceiptRow(v) ? "Receipt Word" : "Voucher Word"} onClick={() => rowPrint(v, "word")}>
                               <FileText className="size-3.5" />
                             </Button>
                             <Button variant="ghost" size="icon" className="size-7"
-                              title="Print voucher" onClick={() => printOne(v, "print")}>
-                              <Printer className="size-3.5" />
+                              title={isReceiptRow(v) ? "Print receipt" : "Print voucher"} onClick={() => rowPrint(v, "print")}>
+                              {isReceiptRow(v) ? <ReceiptIcon className="size-3.5" /> : <Printer className="size-3.5" />}
                             </Button>
                           </>
                         )}
