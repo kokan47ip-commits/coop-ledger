@@ -8,13 +8,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
 import { formatDate, formatPeriod, formatMoney, todayISO } from "@/lib/format";
-import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
@@ -26,6 +33,14 @@ type Bill = Doc<"bills">;
 type Account = Doc<"accounts">;
 type Voucher = Doc<"vouchers">;
 
+/**
+ * Legacy-style Receipt Voucher screen for member collections: Book Code /
+ * Voucher Date / Last Voucher No header, the Cash/Bank side with its current
+ * balance, cheque details, and an entries grid showing the auto-posted
+ * Dr Bank/Cash · Cr Member(receivable) lines before saving. Also serves as
+ * the edit screen with ?edit=<voucherId> (header fields only — the amount and
+ * its bill settlements stay fixed).
+ */
 export default function MemberReceipt() {
   const societyCtx = useSociety();
   const { societyId } = societyCtx;
@@ -42,6 +57,10 @@ export default function MemberReceipt() {
   const createVoucher = useMutation(api.vouchers.create);
   const updateVoucher = useMutation(api.vouchers.update);
   const removeVoucher = useMutation(api.vouchers.remove);
+  const lastNo = useQuery(
+    api.vouchers.lastNo,
+    societyId && !editId ? { societyId, type: "member_receipt" } : "skip",
+  ) as { last: number; lastVoucherNo: string | null; prefix: string } | undefined;
 
   const bankAccounts = (accounts ?? []).filter((a) => a.kind === "bank_cash");
   const [form, setForm] = useState({
@@ -50,7 +69,9 @@ export default function MemberReceipt() {
     amount: "",
     mode: "cash",
     bankCashAccountId: "",
-    reference: "",
+    chequeNo: "",
+    chequeDate: "",
+    bankName: "",
     narration: "",
   });
 
@@ -61,8 +82,10 @@ export default function MemberReceipt() {
       .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
   }, [bills, form.memberId]);
 
+  const amountNum = Number(form.amount) || 0;
+
   const previewAllocation = useMemo(() => {
-    let remaining = Number(form.amount) || 0;
+    let remaining = amountNum;
     const rows: { bill: Bill; take: number }[] = [];
     for (const b of outstandingBills) {
       if (remaining <= 0) break;
@@ -72,13 +95,40 @@ export default function MemberReceipt() {
       remaining -= take;
     }
     return { rows, unallocated: remaining };
-  }, [outstandingBills, form.amount]);
+  }, [outstandingBills, amountNum]);
+
+  const selectedMember = members?.find((m) => m._id === form.memberId);
+  const selectedBank = bankAccounts.find((a) => a._id === form.bankCashAccountId) ?? bankAccounts[0];
+
+  const bankBal = useQuery(
+    api.api.accountBalance,
+    societyId && (form.bankCashAccountId || selectedBank?._id)
+      ? {
+          societyId,
+          accountId: (form.bankCashAccountId || selectedBank?._id) as Id<"accounts">,
+          asOf: form.date,
+        }
+      : "skip",
+  ) as { balance: number; debitNature: boolean } | undefined;
+
+  const balText = (b: { balance: number } | undefined) =>
+    b ? `${formatMoney(Math.abs(b.balance))} ${b.balance >= 0 ? "Dr" : "Cr"}` : "—";
+
+  const composeReference = () =>
+    form.chequeNo
+      ? form.chequeDate
+        ? `${form.chequeNo} dt ${form.chequeDate}`
+        : form.chequeNo
+      : undefined;
+
+  const composeNarration = () =>
+    [form.narration, form.bankName ? `Bank: ${form.bankName}` : ""].filter(Boolean).join(" — ") ||
+    undefined;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!societyId || !form.memberId) return;
-    const amount = Number(form.amount);
-    if (!amount || amount <= 0) {
+    if (!amountNum || amountNum <= 0) {
       toast.error("Enter a valid amount.");
       return;
     }
@@ -90,15 +140,23 @@ export default function MemberReceipt() {
         memberId: form.memberId as Id<"members">,
         mode: form.mode,
         bankCashAccountId: (form.bankCashAccountId || bankAccounts[0]?._id) as never,
-        reference: form.reference || undefined,
-        narration: form.narration || undefined,
+        reference: composeReference(),
+        narration: composeNarration(),
         lines: [],
         allocations: previewAllocation.rows.map((r) => ({ billId: r.bill._id, amount: r.take })),
       });
       toast.success(
         `Receipt saved${previewAllocation.unallocated > 0 ? ` · ${formatUnallocated(previewAllocation.unallocated)} kept as advance` : ""}`,
       );
-      setForm({ ...form, memberId: "", amount: "", reference: "", narration: "" });
+      setForm({
+        ...form,
+        memberId: "",
+        amount: "",
+        chequeNo: "",
+        chequeDate: "",
+        bankName: "",
+        narration: "",
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save receipt");
     }
@@ -116,8 +174,8 @@ export default function MemberReceipt() {
         date: form.date,
         mode: form.mode,
         bankCashAccountId: (form.bankCashAccountId || editVoucherDoc.bankCashAccountId) as never,
-        reference: form.reference || undefined,
-        narration: form.narration || undefined,
+        reference: composeReference(),
+        narration: composeNarration(),
         lines: editVoucherDoc.lines.map((l) => ({
           accountId: l.accountId,
           debit: l.debit,
@@ -148,14 +206,20 @@ export default function MemberReceipt() {
   const [editLoadedFor, setEditLoadedFor] = useState<string | null>(null);
   useEffect(() => {
     if (!editId || !editVoucherDoc || editLoadedFor === editId) return;
+    // Narration is stored as "text — Bank: X"; split it back apart.
+    const raw = editVoucherDoc.narration ?? "";
+    const bankMatch = raw.match(/— Bank: (.+)$/);
+    const ref = editVoucherDoc.reference ?? "";
     setForm({
       memberId: (editVoucherDoc.memberId as string) ?? "",
       date: editVoucherDoc.date,
       amount: String(editVoucherDoc.total),
       mode: editVoucherDoc.mode ?? "cash",
       bankCashAccountId: (editVoucherDoc.bankCashAccountId as string) ?? "",
-      reference: editVoucherDoc.reference ?? "",
-      narration: editVoucherDoc.narration ?? "",
+      chequeNo: ref.includes(" dt ") ? ref.split(" dt ")[0] : ref,
+      chequeDate: ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "",
+      bankName: bankMatch?.[1]?.trim() ?? "",
+      narration: bankMatch ? raw.slice(0, bankMatch.index).replace(/ — $/, "") : raw,
     });
     setEditLoadedFor(editId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,8 +227,6 @@ export default function MemberReceipt() {
 
   const formatUnallocated = (n: number) =>
     `₹ ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n)}`;
-
-  const selectedMember = members?.find((m) => m._id === form.memberId);
 
   /** Print the legacy-format receipt for a saved member receipt voucher. */
   const printReceiptFor = (v: Doc<"vouchers">, kind: "pdf" | "word" | "print") => {
@@ -195,111 +257,93 @@ export default function MemberReceipt() {
     else receiptPrint(data);
   };
 
+  const editMember = members?.find((m) => m._id === editVoucherDoc?.memberId);
+
   return (
     <div>
       <PageHeader
         title={editId ? "Edit Member Receipt" : "Member Receipt"}
         description={
           editId
-            ? "Editing an existing collection — date, mode, bank/cash account and reference can change. The amount and its bill settlements stay fixed; delete and re-enter to change those."
+            ? "Editing an existing collection — date, mode, bank/cash account, cheque details and narration can change. The amount and its bill settlements stay fixed; delete and re-enter to change those."
             : "Record maintenance collections from members. Receipts debit bank/cash and credit the member's receivable, settling outstanding bills oldest-first."
         }
       />
 
-      {editId && editVoucherDoc ? (
-        <form onSubmit={submitEdit} className="mb-10 rounded-lg border p-5">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-2">
-              <Label>Member</Label>
-              <Input readOnly className="bg-muted/50"
-                value={members?.find((m) => m._id === editVoucherDoc.memberId)?.name ?? "—"} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="er-date">Date *</Label>
-              <Input id="er-date" type="date" required value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="er-amount">Amount (₹)</Label>
-              <Input id="er-amount" readOnly className="bg-muted/50 text-right tabular-nums"
-                value={formatMoney(editVoucherDoc.total)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Mode</Label>
-              <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="bank">Bank transfer</SelectItem>
-                  <SelectItem value="cheque">Cheque</SelectItem>
-                  <SelectItem value="upi">UPI</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Bank / Cash account</Label>
-              <Select value={form.bankCashAccountId || undefined}
-                onValueChange={(v) => setForm({ ...form, bankCashAccountId: v })}>
-                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                <SelectContent>
-                  {bankAccounts.map((a) => (
-                    <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="er-ref">Reference</Label>
-              <Input id="er-ref" value={form.reference}
-                onChange={(e) => setForm({ ...form, reference: e.target.value })} />
-            </div>
-            <div className="space-y-2 sm:col-span-3">
-              <Label htmlFor="er-narr">Narration</Label>
-              <Input id="er-narr" value={form.narration}
-                onChange={(e) => setForm({ ...form, narration: e.target.value })} />
-            </div>
-          </div>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button type="button" variant="destructive" className="rounded-lg px-6" onClick={delEdit}>
-              Delete
-            </Button>
-            <Button type="button" variant="outline" className="rounded-lg px-6"
-              onClick={() => setSearchParams({})}>
-              Exit
-            </Button>
-            <Button type="submit" className="rounded-lg px-8">Update</Button>
-          </div>
-        </form>
-      ) : (
-        <form onSubmit={submit} className="mb-10 rounded-lg border p-5">
-        <div className="grid gap-4 sm:grid-cols-3">
+      <form onSubmit={editId ? submitEdit : submit} className="mb-10 rounded-lg border">
+        {/* Voucher header */}
+        <div className="grid gap-4 border-b p-5 sm:grid-cols-4">
           <div className="space-y-2">
-            <Label>Member *</Label>
-            <Select value={form.memberId || undefined}
-              onValueChange={(v) => setForm({ ...form, memberId: v })}>
-              <SelectTrigger><SelectValue placeholder="Select member" /></SelectTrigger>
-              <SelectContent>
-                {(members ?? []).filter((m) => m.isActive).map((m) => (
-                  <SelectItem key={m._id} value={m._id}>
-                    {m.code} — {m.name} ({[m.wing, m.flatNo].filter(Boolean).join("-")})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label>Book Code</Label>
+            <Input value="Receipts" readOnly className="bg-muted/50" />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="r-date">Date *</Label>
-            <Input id="r-date" type="date" required value={form.date}
+            <Label htmlFor="mr-date">Voucher Date *</Label>
+            <Input id="mr-date" type="date" required value={form.date}
               onChange={(e) => setForm({ ...form, date: e.target.value })} />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="r-amount">Amount (₹) *</Label>
-            <Input id="r-amount" type="number" step="0.01" min="0.01" required value={form.amount}
-              onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+            <Label>Last Voucher No</Label>
+            <Input
+              value={editVoucherDoc?.voucherNo ?? lastNo?.lastVoucherNo ?? "—"}
+              readOnly
+              className="bg-muted/50 font-mono text-xs"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Voucher No</Label>
+            <Input
+              value={
+                editId
+                  ? (editVoucherDoc?.voucherNo ?? "…")
+                  : lastNo
+                    ? `${lastNo.prefix}-${String((lastNo.last ?? 0) + 1).padStart(4, "0")}`
+                    : "auto"
+              }
+              readOnly
+              className="bg-muted/50 font-mono text-xs"
+              title="Assigned automatically on save"
+            />
+          </div>
+        </div>
+
+        {/* Cash/Bank + instrument details */}
+        <div className="grid gap-4 border-b p-5 sm:grid-cols-4">
+          <div className="space-y-2 sm:col-span-2">
+            <Label>{editId ? "Cash/Bank" : "Cash/Bank *"}</Label>
+            <Select
+              value={(editId ? form.bankCashAccountId || editVoucherDoc?.bankCashAccountId : form.bankCashAccountId) || undefined}
+              onValueChange={(v) => setForm({ ...form, bankCashAccountId: v })}
+            >
+              <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
+              <SelectContent>
+                {bankAccounts.map((a) => (
+                  <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Cur Bal: <span className="tabular-nums text-foreground">{balText(bankBal)}</span>
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="mr-amount">Amount (₹)</Label>
+            <Input
+              id="mr-amount"
+              value={editId ? formatMoney(editVoucherDoc?.total ?? 0) : amountNum > 0 ? formatMoney(amountNum) : ""}
+              readOnly={Boolean(editId)}
+              required={!editId}
+              type={editId ? "text" : "number"}
+              step={editId ? undefined : "0.01"}
+              min={editId ? undefined : "0.01"}
+              onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              className={`text-right font-medium tabular-nums ${editId ? "bg-muted/50" : ""}`}
+              placeholder={editId ? undefined : "Total of the entries below"}
+            />
           </div>
           <div className="space-y-2">
             <Label>Mode</Label>
-            <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v, bankCashAccountId: "" })}>
+            <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="cash">Cash</SelectItem>
@@ -310,33 +354,109 @@ export default function MemberReceipt() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Bank / Cash account</Label>
-            <Select value={form.bankCashAccountId || undefined}
-              onValueChange={(v) => setForm({ ...form, bankCashAccountId: v })}>
-              <SelectTrigger><SelectValue placeholder="Default" /></SelectTrigger>
-              <SelectContent>
-                {bankAccounts.map((a) => (
-                  <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="r-ref">Reference</Label>
-            <Input id="r-ref" value={form.reference}
-              onChange={(e) => setForm({ ...form, reference: e.target.value })}
+            <Label htmlFor="mr-chq">Cheque No</Label>
+            <Input id="mr-chq" value={form.chequeNo}
+              onChange={(e) => setForm({ ...form, chequeNo: e.target.value })}
               placeholder="UTR / cheque no." />
           </div>
-          <div className="space-y-2 sm:col-span-3">
-            <Label htmlFor="r-narr">Narration</Label>
-            <Input id="r-narr" value={form.narration}
+          <div className="space-y-2">
+            <Label htmlFor="mr-chqdt">Cheque Date</Label>
+            <Input id="mr-chqdt" type="date" value={form.chequeDate}
+              onChange={(e) => setForm({ ...form, chequeDate: e.target.value })} />
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="mr-bankname">Bank Name</Label>
+            <Input id="mr-bankname" value={form.bankName}
+              onChange={(e) => setForm({ ...form, bankName: e.target.value })}
+              placeholder="For cheque / NEFT instruments" />
+          </div>
+          <div className="space-y-2 sm:col-span-4">
+            <Label htmlFor="mr-narr">Narration</Label>
+            <Input id="mr-narr" value={form.narration}
               onChange={(e) => setForm({ ...form, narration: e.target.value })}
               placeholder="April maintenance collection" />
           </div>
         </div>
 
-        {selectedMember && outstandingBills.length > 0 && (
-          <div className="mt-5 rounded-md border bg-accent/30 p-4">
+        {/* Entries grid — auto-posted lines */}
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-24">Code</TableHead>
+              <TableHead>Ledger</TableHead>
+              <TableHead className="w-36 text-right">Debit</TableHead>
+              <TableHead className="w-36 text-right">Credit</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {editId && editVoucherDoc ? (
+              editVoucherDoc.lines.map((l, i) => {
+                const acc = accounts?.find((a) => a._id === l.accountId);
+                return (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono text-xs">{acc?.code ?? "—"}</TableCell>
+                    <TableCell className="font-medium">{acc?.name ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{l.debit ? formatMoney(l.debit) : ""}</TableCell>
+                    <TableCell className="text-right tabular-nums">{l.credit ? formatMoney(l.credit) : ""}</TableCell>
+                  </TableRow>
+                );
+              })
+            ) : (
+              <>
+                <TableRow>
+                  <TableCell className="font-mono text-xs">{selectedBank?.code ?? "—"}</TableCell>
+                  <TableCell className="font-medium">
+                    {selectedBank?.name ?? "Cash/Bank"}
+                    {!form.bankCashAccountId && bankAccounts.length > 0 && (
+                      <span className="ml-2 text-xs text-muted-foreground">(default)</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {amountNum > 0 ? formatMoney(amountNum) : ""}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums" />
+                </TableRow>
+                <TableRow>
+                  <TableCell className="font-mono text-xs">{selectedMember?.code ?? "—"}</TableCell>
+                  <TableCell className="font-medium">
+                    {selectedMember
+                      ? `${selectedMember.name} (${[selectedMember.wing, selectedMember.flatNo].filter(Boolean).join("-") || "member"})`
+                      : "Select a member above"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums" />
+                  <TableCell className="text-right tabular-nums">
+                    {amountNum > 0 ? formatMoney(amountNum) : ""}
+                  </TableCell>
+                </TableRow>
+              </>
+            )}
+            <TableRow className="border-t-2 hover:bg-transparent">
+              <TableCell colSpan={2} className="text-right text-muted-foreground">Total</TableCell>
+              <TableCell className="text-right font-semibold tabular-nums">
+                {editId && editVoucherDoc
+                  ? editVoucherDoc.lines.reduce((s, l) => s + l.debit, 0)
+                    ? formatMoney(editVoucherDoc.lines.reduce((s, l) => s + l.debit, 0))
+                    : ""
+                  : amountNum > 0
+                    ? formatMoney(amountNum)
+                    : ""}
+              </TableCell>
+              <TableCell className="text-right font-semibold tabular-nums">
+                {editId && editVoucherDoc
+                  ? editVoucherDoc.lines.reduce((s, l) => s + l.credit, 0)
+                    ? formatMoney(editVoucherDoc.lines.reduce((s, l) => s + l.credit, 0))
+                    : ""
+                  : amountNum > 0
+                    ? formatMoney(amountNum)
+                    : ""}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+
+        {/* Settlement preview */}
+        {!editId && selectedMember && outstandingBills.length > 0 && (
+          <div className="border-t p-5">
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Automatic settlement preview (oldest first)
             </p>
@@ -358,18 +478,50 @@ export default function MemberReceipt() {
             </div>
           </div>
         )}
-        {selectedMember && outstandingBills.length === 0 && (
-          <p className="mt-4 text-sm text-muted-foreground">
-            No outstanding bills for this member — the receipt will still credit their account.
-          </p>
+        {!editId && selectedMember && outstandingBills.length === 0 && (
+          <div className="border-t p-5">
+            <p className="text-sm text-muted-foreground">
+              No outstanding bills for {selectedMember.name} — the receipt will still credit their account.
+            </p>
+          </div>
         )}
 
-        <div className="mt-5 flex justify-end">
-          <Button type="submit" className="rounded-lg px-6">
-            <Plus className="size-4" /> Save receipt
+        <div className="flex justify-end gap-2 border-t p-5">
+          {editId && (
+            <Button type="button" variant="destructive" className="rounded-lg px-6" onClick={delEdit}>
+              Delete
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-lg px-6"
+            onClick={() => (editId ? setSearchParams({}) : setForm({
+              ...form,
+              memberId: "",
+              amount: "",
+              chequeNo: "",
+              chequeDate: "",
+              bankName: "",
+              narration: "",
+            }))}
+          >
+            Exit
+          </Button>
+          <Button
+            type="submit"
+            className="rounded-lg px-8"
+            disabled={!editId && (!form.memberId || amountNum <= 0)}
+          >
+            {editId ? "Update" : "Save"}
           </Button>
         </div>
       </form>
+
+      {editId && editVoucherDoc && (
+        <p className="mb-6 -mt-6 text-xs text-muted-foreground">
+          Editing {editVoucherDoc.voucherNo} for {editMember?.name ?? "member"} — amount ₹ {formatMoney(editVoucherDoc.total)} is fixed.
+        </p>
       )}
 
       <h3 className="mb-4 text-sm font-medium">Recorded receipts</h3>
