@@ -145,6 +145,48 @@ export const generate = mutation({
   },
 });
 
+/**
+ * Editable bill grid: replace a bill's charge lines (excluding its arrears
+ * line) with edited amounts and recompute the total. Receipts already
+ * allocated to the bill are protected — paid amount cannot exceed the new
+ * total.
+ */
+export const updateLines = mutation({
+  args: {
+    societyId: v.id("societies"),
+    id: v.id("bills"),
+    lines: v.array(
+      v.object({
+        tariffId: v.optional(v.id("tariffs")),
+        accountId: v.id("accounts"),
+        name: v.string(),
+        amount: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, { societyId, id, lines }) => {
+    await requireSociety(ctx, societyId);
+    const bill = await ctx.db.get(id);
+    if (!bill || bill.societyId !== societyId)
+      throw new Error("Bill not found.");
+    // Arrears is computed from earlier bills at print/report time; the grid
+    // only edits current-period charge heads, so keep any arrears line as-is.
+    const isArrearsLine = (name: string) => name.toLowerCase().startsWith("arrears");
+    const arrearsLines = (bill.lines ?? []).filter((l) => isArrearsLine(l.name));
+    const chargeLines = lines.filter((l) => !isArrearsLine(l.name) && l.amount !== 0);
+    const total =
+      chargeLines.reduce((s, l) => s + l.amount, 0) +
+      arrearsLines.reduce((s, l) => s + l.amount, 0);
+    if (total < bill.paidAmount)
+      throw new Error(
+        `Total (${total}) cannot be less than already received (${bill.paidAmount}).`,
+      );
+    const status =
+      bill.paidAmount <= 0 ? "unpaid" : bill.paidAmount >= total ? "paid" : "partial";
+    await ctx.db.patch(id, { lines: [...arrearsLines, ...chargeLines], total, status });
+  },
+});
+
 export const remove = mutation({
   args: { societyId: v.id("societies"), id: v.id("bills") },
   handler: async (ctx, { societyId, id }) => {

@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -32,8 +33,8 @@ import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { billPdf, billWord, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { currentPeriod, effectiveFyPeriod, formatDate, formatMoney, formatPeriod, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Trash2 } from "lucide-react";
+import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
+import { BookText, Download, FileText, HandCoins, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -64,6 +65,7 @@ export default function BillRegister() {
     | Doc<"vouchers">[]
     | undefined;
   const generate = useMutation(api.bills.generate);
+  const updateLines = useMutation(api.bills.updateLines);
   const removeBill = useMutation(api.bills.remove);
   const createVoucher = useMutation(api.vouchers.create);
   const signatures = useCommitteeSignatures();
@@ -86,7 +88,17 @@ export default function BillRegister() {
   const [wing, setWing] = useState("");
   const [unitType, setUnitType] = useState("");
   const [floor, setFloor] = useState("");
-  const [applied, setApplied] = useState({ building: "", wing: "", unitType: "", floor: "" });
+  const [buildupArea, setBuildupArea] = useState("");
+  const [carpetArea, setCarpetArea] = useState("");
+  const [applied, setApplied] = useState({
+    building: "", wing: "", unitType: "", floor: "", buildupArea: "", carpetArea: "",
+  });
+
+  // ---- Editable grid state: { [billId]: { [tariffId]: raw string } } ----
+  const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const hasEdits = Object.keys(edits).length > 0;
 
   // Bill generation inputs
   const [period, setPeriod] = useState(currentPeriod());
@@ -133,12 +145,16 @@ export default function BillRegister() {
     if (!bills) return [];
     const inPeriod = bills.filter((b) => b.period === periodFilter);
     const f = applied;
+    const numEq = (val: number | undefined, filter: string) =>
+      filter !== "" && (val ?? 0) !== Number(filter);
     const match = (m?: Member) => {
       if (!m) return false;
       if (f.building && !(m.building ?? "").toLowerCase().includes(f.building.toLowerCase())) return false;
       if (f.wing && !(m.wing ?? "").toLowerCase().includes(f.wing.toLowerCase())) return false;
       if (f.unitType && !(m.unitType ?? "").toLowerCase().includes(f.unitType.toLowerCase())) return false;
       if (f.floor && !(m.floor ?? "").toLowerCase().includes(f.floor.toLowerCase())) return false;
+      if (numEq(m.buildupArea, f.buildupArea)) return false;
+      if (numEq(m.carpetArea, f.carpetArea)) return false;
       return true;
     };
     return inPeriod
@@ -159,18 +175,20 @@ export default function BillRegister() {
     };
     for (const b of rows) {
       const principal = arrearsBefore(b.memberId, periodFilter);
-      const due = b.total + principal;
-      t.billTotal += b.total;
+      const due = rowTotal(b, principal);
+      t.billTotal += due - principal;
       t.principalArr += principal;
       t.totalArr += principal;
       t.totalDue += due;
       for (const tc of tariffColumns) {
-        t.perTariff[tc._id] = (t.perTariff[tc._id] ?? 0) + lineAmount(b, tc._id);
+        const edited = edits[b._id]?.[tc._id];
+        const amt = edited !== undefined && edited !== "" ? Number(edited) : lineAmount(b, tc._id);
+        t.perTariff[tc._id] = (t.perTariff[tc._id] ?? 0) + amt;
       }
     }
     return t;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, periodFilter, tariffColumns, bills]);
+  }, [rows, periodFilter, tariffColumns, bills, edits]);
 
   /** Legacy-format receipt for the latest receipt against this bill. */
   const exportBillReceipt = (b: Bill, kind: "pdf" | "word" | "print") => {
@@ -356,6 +374,122 @@ export default function BillRegister() {
     (a) => "kind" in a && a.kind === "bank_cash",
   );
 
+  const setCellEdit = (billId: string, tariffId: string, value: string) =>
+    setEdits((prev) => ({
+      ...prev,
+      [billId]: { ...(prev[billId] ?? {}), [tariffId]: value },
+    }));
+  const clearEdits = () => setEdits({});
+
+  /** Row-level total due: bill total + arrears before this period. */
+  const rowTotal = (b: Bill, principal: number) => {
+    let sum = principal;
+    for (const t of tariffColumns) {
+      const edited = edits[b._id]?.[t._id];
+      sum += edited !== undefined && edited !== "" ? Number(edited) : lineAmount(b, t._id);
+    }
+    return sum;
+  };
+
+  const saveEdits = async () => {
+    if (!societyId) return;
+    const isArr = (name: string) => name.toLowerCase().startsWith("arrears");
+    // Rebuild each edited bill's charge lines: tariff columns first (honoring
+    // cell edits, creating lines for previously-exempt heads), then any custom
+    // charge lines that don't belong to a tariff column. Arrears lines are
+    // preserved server-side.
+    const pending: {
+      billId: Id<"bills">;
+      lines: { tariffId?: Id<"tariffs">; accountId: Id<"accounts">; name: string; amount: number }[];
+    }[] = [];
+    for (const billIdStr of Object.keys(edits)) {
+      const b = (bills ?? []).find((x) => x._id === billIdStr);
+      if (!b) continue;
+      const cellEdits = edits[billIdStr];
+      const chargeLines: { tariffId?: Id<"tariffs">; accountId: Id<"accounts">; name: string; amount: number }[] = [];
+      const seen = new Set<string>();
+      for (const t of tariffColumns) {
+        seen.add(t._id);
+        const existing = (b.lines ?? []).find((l) => l.tariffId === t._id && !isArr(l.name));
+        const e = cellEdits[t._id];
+        if (e !== undefined && e !== "") {
+          const amount = Number(e);
+          if (Number.isNaN(amount) || amount < 0) {
+            toast.error(`Invalid amount for ${t.name} in bill ${b.billNo}.`);
+            return;
+          }
+          chargeLines.push({
+            tariffId: t._id,
+            accountId: existing?.accountId ?? t.accountId,
+            name: existing?.name ?? t.name,
+            amount,
+          });
+        } else if (existing && existing.amount !== 0) {
+          chargeLines.push({
+            tariffId: existing.tariffId,
+            accountId: existing.accountId,
+            name: existing.name,
+            amount: existing.amount,
+          });
+        }
+      }
+      for (const l of b.lines ?? []) {
+        if (!isArr(l.name) && (!l.tariffId || !seen.has(l.tariffId))) {
+          chargeLines.push({ tariffId: l.tariffId, accountId: l.accountId, name: l.name, amount: l.amount });
+        }
+      }
+      pending.push({ billId: b._id, lines: chargeLines });
+    }
+    if (pending.length === 0) {
+      toast.info("No cell edits to save.");
+      return;
+    }
+    setSaving(true);
+    try {
+      for (const p of pending) {
+        await updateLines({ societyId, id: p.billId, lines: p.lines });
+      }
+      toast.success(`Saved ${pending.length} bill(s).`);
+      clearEdits();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!societyId || selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} selected bill(s)? This cannot be undone.`)) return;
+    try {
+      let ok = 0;
+      for (const id of selected) {
+        try {
+          await removeBill({ societyId, id: id as Id<"bills"> });
+          ok++;
+        } catch {
+          // Bill with receipts allocated — surface which failed via toast below.
+        }
+      }
+      toast.success(`Deleted ${ok} of ${selected.size} bill(s). Bills with receipts cannot be deleted.`);
+      setSelected(new Set());
+      clearEdits();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete");
+    }
+  };
+
+  const toggleRow = (billId: string, checked: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(billId);
+      else next.delete(billId);
+      return next;
+    });
+  const allSelected = rows.length > 0 && rows.every((b) => selected.has(b._id));
+  const toggleAll = (checked: boolean) =>
+    setSelected(checked ? new Set(rows.map((b) => b._id)) : new Set());
+
   const openPay = (b: Bill) => {
     setPayBill(b);
     setPayForm({
@@ -422,7 +556,7 @@ export default function BillRegister() {
 
       {/* View Bills filter bar */}
       <div className="mb-8 rounded-lg border p-5">
-        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-8">
           <div className="space-y-2">
             <Label htmlFor="vb-period">Billing period</Label>
             <Select value={periodFilter} onValueChange={setPeriodFilter}>
@@ -450,11 +584,19 @@ export default function BillRegister() {
             <Label htmlFor="vb-floor">Floor</Label>
             <Input id="vb-floor" value={floor} onChange={(e) => setFloor(e.target.value)} />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-buildup">Buildup area</Label>
+            <Input id="vb-buildup" type="number" value={buildupArea} onChange={(e) => setBuildupArea(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-carpet">Carpet area</Label>
+            <Input id="vb-carpet" type="number" value={carpetArea} onChange={(e) => setCarpetArea(e.target.value)} />
+          </div>
           <div className="flex items-end">
             <Button
               variant="outline"
               className="w-full rounded-lg"
-              onClick={() => setApplied({ building, wing, unitType, floor })}
+              onClick={() => setApplied({ building, wing, unitType, floor, buildupArea, carpetArea })}
             >
               <RefreshCw className="size-4" /> Refresh
             </Button>
@@ -505,6 +647,7 @@ export default function BillRegister() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           {rows.length} bill{rows.length === 1 ? "" : "s"} for {formatPeriod(periodFilter)}
+          {hasEdits && <span className="ml-2 font-medium text-foreground">· {Object.keys(edits).length} row(s) edited — Save to apply</span>}
         </p>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
@@ -528,6 +671,13 @@ export default function BillRegister() {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-8">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={(v) => toggleAll(v === true)}
+                    aria-label="Select all bills"
+                  />
+                </TableHead>
                 <TableHead className="sticky left-0 bg-background">Unit No</TableHead>
                 <TableHead>Bill No</TableHead>
                 <TableHead>Name</TableHead>
@@ -535,7 +685,7 @@ export default function BillRegister() {
                 <TableHead className="text-right">Principal Arr.</TableHead>
                 <TableHead className="text-right">Interest Arr.</TableHead>
                 <TableHead className="text-right">Total Arr.</TableHead>
-                <TableHead className="bg-accent/60 text-right">Total Due</TableHead>
+                <TableHead className="bg-emerald-500/10 text-right">Total Due</TableHead>
                 {tariffColumns.map((t) => (
                   <TableHead key={t._id} className="text-right">
                     <span className="block max-w-24 truncate" title={t.name}>{t.name}</span>
@@ -550,6 +700,13 @@ export default function BillRegister() {
                 const principal = arrearsBefore(b.memberId, periodFilter);
                 return (
                   <TableRow key={b._id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(b._id)}
+                        onCheckedChange={(v) => toggleRow(b._id, v === true)}
+                        aria-label={`Select bill ${b.billNo}`}
+                      />
+                    </TableCell>
                     <TableCell className="sticky left-0 bg-background font-medium">{unitNo(m)}</TableCell>
                     <TableCell>
                       <Link to={`/app/bills/${b._id}`} className="hover:underline">
@@ -561,14 +718,23 @@ export default function BillRegister() {
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(0)}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
-                    <TableCell className={`bg-accent/40 font-medium ${rightAlign}`}>
-                      {formatMoney(b.total + principal)}
+                    <TableCell className={`bg-emerald-500/10 font-medium ${rightAlign}`}>
+                      {formatMoney(rowTotal(b, principal))}
                     </TableCell>
-                    {tariffColumns.map((t) => (
-                      <TableCell key={t._id} className={rightAlign}>
-                        {formatMoney(lineAmount(b, t._id))}
-                      </TableCell>
-                    ))}
+                    {tariffColumns.map((t) => {
+                      const e = edits[b._id]?.[t._id] ?? "";
+                      return (
+                        <TableCell key={t._id} className="p-0 text-right">
+                          <Input
+                            type="number"
+                            step="0.01"
+                            className="h-8 w-24 rounded-none border-0 border-l border-dashed bg-transparent px-2 text-right tabular-nums focus-visible:ring-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                            value={e === "" ? String(lineAmount(b, t._id)) : e}
+                            onChange={(ev) => setCellEdit(b._id, t._id, ev.target.value)}
+                          />
+                        </TableCell>
+                      );
+                    })}
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         {b.status !== "paid" && (
@@ -611,13 +777,14 @@ export default function BillRegister() {
             </TableBody>
             <tfoot>
               <tr className="border-t-2 border-foreground/60 font-semibold">
+                <td />
                 <td className="sticky left-0 bg-background px-2 py-3 text-right">Total {totals.count}</td>
                 <td colSpan={2} />
                 <td className={rightAlign}>{formatMoney(totals.billTotal)}</td>
                 <td className={rightAlign}>{formatMoney(totals.principalArr)}</td>
                 <td className={rightAlign}>{formatMoney(totals.interestArr)}</td>
                 <td className={rightAlign}>{formatMoney(totals.totalArr)}</td>
-                <td className={`bg-accent/40 ${rightAlign}`}>{formatMoney(totals.totalDue)}</td>
+                <td className={`bg-emerald-500/10 ${rightAlign}`}>{formatMoney(totals.totalDue)}</td>
                 {tariffColumns.map((t) => (
                   <td key={t._id} className={rightAlign}>{formatMoney(totals.perTariff[t._id] ?? 0)}</td>
                 ))}
@@ -645,6 +812,30 @@ export default function BillRegister() {
               </Badge>
             );
           })}
+        </div>
+      )}
+
+      {/* Save / Delete / Exit bar (legacy View Bills layout) */}
+      {(hasEdits || selected.size > 0) && (
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-2 rounded-lg border p-4">
+          {hasEdits && (
+            <>
+              <Button onClick={saveEdits} disabled={saving} className="rounded-lg">
+                <Save className="size-4" /> {saving ? "Saving…" : "Save changes"}
+              </Button>
+              <Button variant="ghost" onClick={clearEdits} disabled={saving}>
+                <X className="size-4" /> Discard edits
+              </Button>
+            </>
+          )}
+          {selected.size > 0 && (
+            <Button variant="destructive" onClick={deleteSelected} disabled={saving} className="rounded-lg">
+              <Trash2 className="size-4" /> Delete selected ({selected.size})
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => { clearEdits(); setSelected(new Set()); }}>
+            Exit
+          </Button>
         </div>
       )}
 
