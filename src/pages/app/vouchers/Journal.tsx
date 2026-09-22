@@ -282,10 +282,10 @@ export default function Journal() {
           </div>
         </div>
 
-        {/* Ledger quick-add row */}
+        {/* Ledger quick-add row — Dr stacked over Cr for a compact form */}
         <div className="border-b p-5">
           <div className="grid items-start gap-3 sm:grid-cols-12">
-            <div className="space-y-2 sm:col-span-6">
+            <div className="space-y-2 sm:col-span-7">
               <Label>Ledger</Label>
               <Select value={ledgerId || undefined}
                 onValueChange={(v) => { setLedgerId(v); setDebit(""); setCredit(""); }}>
@@ -300,15 +300,17 @@ export default function Journal() {
                 Cur Bal: <span className="tabular-nums text-foreground">{balText(curBal)}</span>
               </p>
             </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="j-dr">Debit</Label>
-              <Input id="j-dr" type="number" step="0.01" min="0" className="text-right"
-                value={debit} onChange={(e) => { setDebit(e.target.value); setCredit(""); }} />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="j-cr">Credit</Label>
-              <Input id="j-cr" type="number" step="0.01" min="0" className="text-right"
-                value={credit} onChange={(e) => { setCredit(e.target.value); setDebit(""); }} />
+            <div className="grid gap-2 sm:col-span-3">
+              <div className="space-y-1">
+                <Label htmlFor="j-dr" className="text-xs text-muted-foreground">Debit (Dr)</Label>
+                <Input id="j-dr" type="number" step="0.01" min="0" className="h-8 text-right"
+                  value={debit} onChange={(e) => { setDebit(e.target.value); setCredit(""); }} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="j-cr" className="text-xs text-muted-foreground">Credit (Cr)</Label>
+                <Input id="j-cr" type="number" step="0.01" min="0" className="h-8 text-right"
+                  value={credit} onChange={(e) => { setCredit(e.target.value); setDebit(""); }} />
+              </div>
             </div>
             <div className="flex items-end sm:col-span-2">
               <Button type="button" variant="outline" className="w-full rounded-lg" onClick={addLine}>

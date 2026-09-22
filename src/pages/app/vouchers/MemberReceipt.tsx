@@ -67,7 +67,7 @@ export default function MemberReceipt() {
     memberId: "",
     date: todayISO(),
     amount: "",
-    mode: "cash",
+    mode: "auto",
     bankCashAccountId: "",
     chequeNo: "",
     chequeDate: "",
@@ -99,6 +99,14 @@ export default function MemberReceipt() {
 
   const selectedMember = members?.find((m) => m._id === form.memberId);
   const selectedBank = bankAccounts.find((a) => a._id === form.bankCashAccountId) ?? bankAccounts[0];
+
+  // Mode is optional — derived from the instrument/account unless overridden.
+  const derivedMode = form.chequeNo
+    ? "cheque"
+    : (selectedBank?.name ?? "").toLowerCase().includes("bank")
+      ? "bank"
+      : "cash";
+  const effectiveMode = form.mode === "auto" ? derivedMode : form.mode;
 
   const bankBal = useQuery(
     api.api.accountBalance,
@@ -157,7 +165,7 @@ export default function MemberReceipt() {
         type: "member_receipt",
         date: form.date,
         memberId: form.memberId as Id<"members">,
-        mode: form.mode,
+        mode: effectiveMode,
         bankCashAccountId: bankId as never,
         reference: composeReference(),
         narration: composeNarration(),
@@ -191,7 +199,7 @@ export default function MemberReceipt() {
         societyId,
         id: editId as Id<"vouchers">,
         date: form.date,
-        mode: form.mode,
+        mode: effectiveMode,
         bankCashAccountId: (form.bankCashAccountId || editVoucherDoc.bankCashAccountId) as never,
         reference: composeReference(),
         narration: composeNarration(),
@@ -233,7 +241,7 @@ export default function MemberReceipt() {
       memberId: (editVoucherDoc.memberId as string) ?? "",
       date: editVoucherDoc.date,
       amount: String(editVoucherDoc.total),
-      mode: editVoucherDoc.mode ?? "cash",
+      mode: editVoucherDoc.mode ?? "auto",
       bankCashAccountId: (editVoucherDoc.bankCashAccountId as string) ?? "",
       chequeNo: ref.includes(" dt ") ? ref.split(" dt ")[0] : ref,
       chequeDate: ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "",
@@ -326,8 +334,30 @@ export default function MemberReceipt() {
           </div>
         </div>
 
-        {/* Cash/Bank + instrument details */}
+        {/* Member + Cash/Bank + instrument details */}
         <div className="grid gap-4 border-b p-5 sm:grid-cols-4">
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="mr-member">{editId ? "Member" : "Member *"}</Label>
+            <Select
+              value={form.memberId || undefined}
+              onValueChange={(v) => setForm({ ...form, memberId: v })}
+              disabled={Boolean(editId)}
+            >
+              <SelectTrigger id="mr-member">
+                <SelectValue placeholder={editId ? (editMember?.name ?? "—") : "Select member"} />
+              </SelectTrigger>
+              <SelectContent>
+                {(members ?? []).map((m) => (
+                  <SelectItem key={m._id} value={m._id}>
+                    {m.name}
+                    {[m.wing, m.flatNo].filter(Boolean).length
+                      ? ` — ${[m.wing, m.flatNo].filter(Boolean).join("-")}`
+                      : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-2 sm:col-span-2">
             <Label>{editId ? "Cash/Bank" : "Cash/Bank *"}</Label>
             <Select
@@ -349,7 +379,7 @@ export default function MemberReceipt() {
             <Label htmlFor="mr-amount">Amount (₹)</Label>
             <Input
               id="mr-amount"
-              value={editId ? formatMoney(editVoucherDoc?.total ?? 0) : amountNum > 0 ? formatMoney(amountNum) : ""}
+              value={editId ? formatMoney(editVoucherDoc?.total ?? 0) : form.amount}
               readOnly={Boolean(editId)}
               required={!editId}
               type={editId ? "text" : "number"}
@@ -357,14 +387,17 @@ export default function MemberReceipt() {
               min={editId ? undefined : "0.01"}
               onChange={(e) => setForm({ ...form, amount: e.target.value })}
               className={`text-right font-medium tabular-nums ${editId ? "bg-muted/50" : ""}`}
-              placeholder={editId ? undefined : "Total of the entries below"}
+              placeholder={editId ? undefined : "0.00"}
             />
           </div>
           <div className="space-y-2">
-            <Label>Mode</Label>
+            <Label htmlFor="mr-mode">
+              Mode <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
             <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger id="mr-mode"><SelectValue /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="auto">Auto — from cash/bank</SelectItem>
                 <SelectItem value="cash">Cash</SelectItem>
                 <SelectItem value="bank">Bank transfer</SelectItem>
                 <SelectItem value="cheque">Cheque</SelectItem>

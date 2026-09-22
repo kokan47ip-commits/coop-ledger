@@ -313,10 +313,9 @@ export function LedgerVoucherForm({
         </div>
       </div>
 
-      {/* Cash/Bank + instrument details */}
-      <div className="grid gap-4 border-b p-5 sm:grid-cols-3">
-        <div className="space-y-2">
-          <Label>Cash/Bank *</Label>
+        <div className="grid gap-4 border-b p-5 sm:grid-cols-3 sm:gap-x-3">
+          <div className="space-y-2">
+            <Label>Cash/Bank *</Label>
           <Select value={bankCashAccountId || undefined}
             onValueChange={setBankCashAccountId}>
             <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
@@ -362,10 +361,10 @@ export function LedgerVoucherForm({
         </div>
       </div>
 
-      {/* Ledger quick-add row */}
+      {/* Ledger quick-add row — Dr stacked over Cr for a compact form */}
       <div className="border-b p-5">
         <div className="grid items-start gap-3 sm:grid-cols-12">
-          <div className="space-y-2 sm:col-span-6">
+          <div className="space-y-2 sm:col-span-7">
             <Label>Ledger</Label>
             <Select value={ledgerId || undefined}
               onValueChange={(v) => { setLedgerId(v); setDebit(""); setCredit(""); }}>
@@ -380,18 +379,20 @@ export function LedgerVoucherForm({
               Cur Bal: <span className="tabular-nums text-foreground">{balText(ledgerBal)}</span>
             </p>
           </div>
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="v-dr">Debit</Label>
-            <Input id="v-dr" type="number" step="0.01" min="0" className="text-right"
-              value={debit} onChange={(e) => { setDebit(e.target.value); setCredit(""); }} />
-          </div>
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="v-cr">Credit</Label>
-            <Input id="v-cr" type="number" step="0.01" min="0" className="text-right"
-              value={credit} onChange={(e) => { setCredit(e.target.value); setDebit(""); }} />
+          <div className="grid gap-2 sm:col-span-3">
+            <div className="space-y-1">
+              <Label htmlFor="v-dr" className="text-xs text-muted-foreground">Debit (Dr)</Label>
+              <Input id="v-dr" type="number" step="0.01" min="0" className="h-8 text-right"
+                value={debit} onChange={(e) => { setDebit(e.target.value); setCredit(""); }} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="v-cr" className="text-xs text-muted-foreground">Credit (Cr)</Label>
+              <Input id="v-cr" type="number" step="0.01" min="0" className="h-8 text-right"
+                value={credit} onChange={(e) => { setCredit(e.target.value); setDebit(""); }} />
+            </div>
           </div>
           <div className="flex items-end sm:col-span-2">
-            <Button type="button" variant="outline" className="w-full rounded-lg" onClick={addLine}>
+            <Button type="button" variant="outline" className="h-8 w-full rounded-lg" onClick={addLine}>
               <Plus className="size-4" /> Add
             </Button>
           </div>
