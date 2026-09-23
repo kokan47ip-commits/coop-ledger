@@ -118,3 +118,36 @@ export function fyStartDateString(fyStartMonth: number, onOrBefore: string) {
   const year = m >= fyStartMonth ? y : y - 1;
   return `${year}-${String(fyStartMonth).padStart(2, "0")}-01`;
 }
+
+/**
+ * ISO from/to of the society's current books period — anchored on the explicit
+ * fyStartDate when set, otherwise the financial year containing today (mirrors
+ * effectiveFyPeriod on the client).
+ */
+export function societyFyPeriod(society: Doc<"societies">): { from: string; to: string } {
+  const today = new Date().toISOString().slice(0, 10);
+  const from =
+    society.fyStartDate?.slice(0, 10) ?? fyStartDateString(society.fyStartMonth, today);
+  const end = new Date(`${from}T00:00:00Z`);
+  end.setUTCFullYear(end.getUTCFullYear() + 1);
+  end.setUTCDate(end.getUTCDate() - 1);
+  return { from, to: end.toISOString().slice(0, 10) };
+}
+
+/**
+ * Guard: a dated transaction must fall inside the current financial year.
+ * Anything outside is declined with a clear message so books never pick up
+ * entries from another accounting year.
+ */
+export function assertInFy(society: Doc<"societies">, date: string, label: string) {
+  const d = (date ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d))
+    throw new Error(`${label} date is invalid — enter a valid YYYY-MM-DD date.`);
+  const { from, to } = societyFyPeriod(society);
+  if (d < from || d > to) {
+    const fyLabel = society.fyYear ?? `${from.slice(0, 4)}-${to.slice(2, 4)}`;
+    throw new Error(
+      `${label} dated ${d} is outside the current financial year (${fyLabel}: ${from} to ${to}). Entry declined — not saved.`,
+    );
+  }
+}

@@ -19,7 +19,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { formatMoney, todayISO } from "@/lib/format";
+import { formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -104,7 +104,7 @@ export function LedgerVoucherForm({
   onEditDone?: () => void;
 }) {
   const isPayment = kind === "payment";
-  const { societyId } = useSociety();
+  const { society, societyId } = useSociety();
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Account[] | undefined;
   const createVoucher = useMutation(api.vouchers.create);
   const updateVoucher = useMutation(api.vouchers.update);
@@ -136,6 +136,9 @@ export function LedgerVoucherForm({
   const [loadedFrom, setLoadedFrom] = useState<string | null>(null);
 
   const isEdit = Boolean(editId);
+
+  /** Financial-year guard: dated entries outside the books period are declined. */
+  const fyWarning = fyWarningMessage(society, date);
 
   // Prefill when editing
   useEffect(() => {
@@ -232,6 +235,10 @@ export function LedgerVoucherForm({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!societyId) return;
+    if (fyWarning) {
+      toast.error(fyWarning);
+      return;
+    }
     if (!bankCashAccountId) {
       toast.error("Select the cash/bank account.");
       return;
@@ -349,6 +356,9 @@ export function LedgerVoucherForm({
           <Label htmlFor="v-date">Voucher Date *</Label>
           <Input id="v-date" type="date" required value={date}
             onChange={(e) => setDate(e.target.value)} />
+          {fyWarning && (
+            <p className="text-xs font-medium text-destructive">{fyWarning}</p>
+          )}
         </div>
         <div className="space-y-2">
           <Label>Last Voucher No.</Label>

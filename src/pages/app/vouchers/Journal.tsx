@@ -20,7 +20,7 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
-import { formatMoney, todayISO } from "@/lib/format";
+import { formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { NumInput } from "./LedgerVoucherForm";
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -54,7 +54,7 @@ function TotalBox({ value }: { value: string }) {
  * bottom. Also serves as the edit screen when opened with ?edit=<voucherId>.
  */
 export default function Journal() {
-  const { societyId } = useSociety();
+  const { society, societyId } = useSociety();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = searchParams.get("edit");
@@ -82,6 +82,9 @@ export default function Journal() {
   const [lines, setLines] = useState<Line[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadedFrom, setLoadedFrom] = useState<string | null>(null);
+
+  /** Financial-year guard: dated entries outside the books period are declined. */
+  const fyWarning = fyWarningMessage(society, date);
 
   // Prefill when editing — guarded so refetches never overwrite user edits.
   useEffect(() => {
@@ -164,6 +167,10 @@ export default function Journal() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!societyId) return;
+    if (fyWarning) {
+      toast.error(fyWarning);
+      return;
+    }
     if (!balanced) {
       toast.error("Total debits must equal total credits before saving.");
       return;
@@ -254,6 +261,9 @@ export default function Journal() {
             <Label htmlFor="j-date">Voucher Date *</Label>
             <Input id="j-date" type="date" required value={date}
               onChange={(e) => setDate(e.target.value)} />
+            {fyWarning && (
+              <p className="text-xs font-medium text-destructive">{fyWarning}</p>
+            )}
           </div>
           <div className="space-y-2">
             <Label>Last Voucher No.</Label>

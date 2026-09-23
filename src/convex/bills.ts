@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { nextNumber, pad, requireSociety } from "./lib";
+import { assertInFy, nextNumber, pad, requireSociety } from "./lib";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -51,6 +51,8 @@ export const generate = mutation({
   },
   handler: async (ctx, { societyId, period, issueDate, dueDate, arrearsDate, memberIds }) => {
     const society = await requireSociety(ctx, societyId);
+    // Bills post income to the books — decline bills issued outside the year.
+    assertInFy(society, issueDate, "Bill");
     const receivableId =
       society.receivableAccountId ??
       (await ctx.db

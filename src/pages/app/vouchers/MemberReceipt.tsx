@@ -21,7 +21,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
-import { formatDate, formatPeriod, formatMoney, todayISO } from "@/lib/format";
+import { formatDate, formatPeriod, formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { NumInput } from "./LedgerVoucherForm";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -55,7 +55,7 @@ function TotalBox({ value }: { value: string }) {
  */
 export default function MemberReceipt() {
   const societyCtx = useSociety();
-  const { societyId } = societyCtx;
+  const { society, societyId } = societyCtx;
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = searchParams.get("edit");
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
@@ -111,6 +111,9 @@ export default function MemberReceipt() {
   const selectedMember = members?.find((m) => m._id === form.memberId);
   const selectedBank = bankAccounts.find((a) => a._id === form.bankCashAccountId) ?? bankAccounts[0];
 
+  /** Financial-year guard: dated entries outside the books period are declined. */
+  const fyWarning = fyWarningMessage(society, form.date);
+
   // Mode is derived from the instrument/account — no manual tab needed.
   const derivedMode = form.chequeNo
     ? "cheque"
@@ -148,6 +151,10 @@ export default function MemberReceipt() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!societyId || !form.memberId) return;
+    if (fyWarning) {
+      toast.error(fyWarning);
+      return;
+    }
     if (!amountNum || amountNum <= 0) {
       toast.error("Enter a valid amount.");
       return;
@@ -204,6 +211,10 @@ export default function MemberReceipt() {
   const submitEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!societyId || !editId || !editVoucherDoc) return;
+    if (fyWarning) {
+      toast.error(fyWarning);
+      return;
+    }
     try {
       await updateVoucher({
         societyId,
@@ -319,6 +330,9 @@ export default function MemberReceipt() {
             <Label htmlFor="mr-date">Voucher Date *</Label>
             <Input id="mr-date" type="date" required value={form.date}
               onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            {fyWarning && (
+              <p className="text-xs font-medium text-destructive">{fyWarning}</p>
+            )}
           </div>
           <div className="space-y-2">
             <Label>Last Voucher No.</Label>

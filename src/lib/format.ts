@@ -89,6 +89,32 @@ export function currentPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }
 
+/**
+ * True when a transaction date falls outside the society's current books
+ * period (financial year) — such entries are declined with a message.
+ */
+export function isOutsideFy(
+  society: { fyStartMonth?: number; fyYear?: string; fyStartDate?: string } | null | undefined,
+  date: string | undefined | null,
+): boolean {
+  if (!date) return false;
+  const d = date.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const fy = effectiveFyPeriod(society ?? null);
+  return d < fy.from || d > fy.to;
+}
+
+/** Warning message shown when a voucher date sits outside the books period. */
+export function fyWarningMessage(
+  society: { fyStartMonth?: number; fyYear?: string; fyStartDate?: string } | null | undefined,
+  date: string | undefined | null,
+): string | null {
+  const d = (date ?? "").slice(0, 10);
+  if (!isOutsideFy(society, d)) return null;
+  const fy = effectiveFyPeriod(society ?? null);
+  return `Date ${d} is outside the financial year ${fy.label} (${fy.from} to ${fy.to}) — entry will be declined.`;
+}
+
 /** ISO range of the calendar month `YYYY-MM` (e.g. "2026-06" → 01–30). */
 export function monthRangeISO(month: string): { from: string; to: string } {
   const [y, m] = month.split("-").map(Number);

@@ -7,6 +7,7 @@ import {
   pad,
   recomputeBillStatus,
   requireSociety,
+  societyFyPeriod,
   VOUCHER_PREFIX,
 } from "./lib";
 
@@ -367,9 +368,8 @@ export const uploadReceipts = mutation({
     defaultAccountId: v.id("accounts"),
   },
   handler: async (ctx, { societyId, rows, defaultAccountId }): Promise<Result> => {
-    await requireSociety(ctx, societyId);
+    const society = await requireSociety(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
-    const society = await ctx.db.get(societyId);
     const allAccounts = await ctx.db
       .query("accounts")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -423,6 +423,14 @@ export const uploadReceipts = mutation({
             str(row, ["mode", "bank", "account"])?.toLowerCase().includes(a.name.toLowerCase().split(" ")[0] ?? "#"),
         )?._id ?? defaultAccountId;
       const date = normalizeDate(str(row, ["date", "receiptdate", "receiveddate"])) ?? new Date().toISOString().slice(0, 10);
+      // Decline receipts dated outside the current financial year.
+      const fy = societyFyPeriod(society);
+      if (date < fy.from || date > fy.to) {
+        result.errors.push(
+          `Data row ${i + 1}: receipt date ${date} is outside the financial year (${fy.from} to ${fy.to}) — entry declined.`,
+        );
+        continue;
+      }
       const n = await nextNumber(ctx, `${societyId}:voucher:member_receipt`);
 
       // Allocate FIFO across unpaid bills of the member
@@ -474,7 +482,7 @@ export const uploadPayments = mutation({
     defaultBankCashAccountId: v.id("accounts"),
   },
   handler: async (ctx, { societyId, rows, defaultBankCashAccountId }): Promise<Result> => {
-    await requireSociety(ctx, societyId);
+    const society = await requireSociety(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
     const accounts = await ctx.db
       .query("accounts")
@@ -519,6 +527,14 @@ export const uploadPayments = mutation({
       const date =
         normalizeDate(str(row, ["date", "paymentdate"])) ??
         new Date().toISOString().slice(0, 10);
+      // Decline payments dated outside the current financial year.
+      const fy = societyFyPeriod(society);
+      if (date < fy.from || date > fy.to) {
+        result.errors.push(
+          `Row ${i + 2}: payment date ${date} is outside the financial year (${fy.from} to ${fy.to}) — entry declined.`,
+        );
+        continue;
+      }
       const n = await nextNumber(ctx, `${societyId}:voucher:payment`);
       await ctx.db.insert("vouchers", {
         societyId,

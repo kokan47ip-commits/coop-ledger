@@ -3,6 +3,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, mutation, query } from "./_generated/server";
 import {
   applyAllocationToBill,
+  assertInFy,
   nextNumber,
   pad,
   requireSociety,
@@ -180,7 +181,9 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const { societyId, type, lines, allocations } = args;
-    await requireSociety(ctx, societyId);
+    const society = await requireSociety(ctx, societyId);
+    // Decline transactions dated outside the current accounting year.
+    assertInFy(society, args.date, "Voucher");
 
     const activeLines = lines.filter((l) => l.debit !== 0 || l.credit !== 0);
 
@@ -273,7 +276,9 @@ export const update = mutation({
     ),
   },
   handler: async (ctx, { societyId, id, date, narration, mode, bankCashAccountId, reference, lines }) => {
-    await requireSociety(ctx, societyId);
+    const society = await requireSociety(ctx, societyId);
+    // Decline edits that would move a voucher outside the current year.
+    assertInFy(society, date, "Voucher");
     const voucher = await ctx.db.get(id);
     if (!voucher || voucher.societyId !== societyId)
       throw new Error("Voucher not found.");
