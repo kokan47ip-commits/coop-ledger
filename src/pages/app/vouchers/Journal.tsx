@@ -21,6 +21,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { formatMoney, todayISO } from "@/lib/format";
+import { NumInput } from "./LedgerVoucherForm";
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -31,16 +32,26 @@ import { VoucherList } from "./VoucherList";
 type Account = Doc<"accounts">;
 type Voucher = Doc<"vouchers">;
 
-type Line = { key: number; accountId: string; debit: string; credit: string };
+type Line = { key: number; accountId: string; code?: string; debit: string; credit: string };
 
 let lineKey = 1;
-const newLine = (): Line => ({ key: lineKey++, accountId: "", debit: "", credit: "" });
+
+/** Boxed total cell shown bottom-right of the entries grid (legacy style). */
+function TotalBox({ value }: { value: string }) {
+  return (
+    <div className="w-36 rounded-none border bg-background px-3 py-1.5 text-right text-sm font-semibold tabular-nums">
+      {value}
+    </div>
+  );
+}
 
 /**
- * Legacy-style Journal Voucher screen: Book Code / Voucher Date / Last Voucher
- * No header, a Ledger · Debit · Credit · Add quick-entry row, an entries grid
- * with code + running totals, and Save / Delete / Exit actions. Also serves as
- * the edit screen when opened with ?edit=<voucherId>.
+ * Legacy-style Journal Voucher screen — same-to-same with the desktop format:
+ * Book Code / Voucher Date / Last Voucher No header, Cheque No · Cheque Date ·
+ * Total Amount row, full-width narration, a Ledger · Debit · Credit · Add
+ * entry row with the account's current balance, an entries grid with the ▶
+ * marker, boxed Dr/Cr totals bottom-right and Save · Delete · Exit at the
+ * bottom. Also serves as the edit screen when opened with ?edit=<voucherId>.
  */
 export default function Journal() {
   const { societyId } = useSociety();
@@ -83,12 +94,16 @@ export default function Journal() {
     setChequeNo(ref.includes(" dt ") ? ref.split(" dt ")[0] : ref);
     setChequeDate(ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "");
     setLines(
-      v.lines.map((l) => ({
-        key: lineKey++,
-        accountId: l.accountId as string,
-        debit: l.debit ? String(l.debit) : "",
-        credit: l.credit ? String(l.credit) : "",
-      })),
+      v.lines.map((l) => {
+        const acc = accounts?.find((a) => a._id === l.accountId);
+        return {
+          key: lineKey++,
+          accountId: l.accountId as string,
+          code: acc?.code,
+          debit: l.debit ? String(l.debit) : "",
+          credit: l.credit ? String(l.credit) : "",
+        };
+      }),
     );
     setLoadedFrom(v._id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -206,7 +221,7 @@ export default function Journal() {
 
   const del = async () => {
     if (!societyId || !editId) return;
-    if (!confirm("Delete this journal voucher? This reverses nothing — balances recalculate without it.")) return;
+    if (!confirm("Delete this journal voucher? Balances recalculate without it.")) return;
     try {
       await removeVoucher({ societyId, id: editId as Id<"vouchers"> });
       toast.success("Journal deleted");
@@ -229,8 +244,8 @@ export default function Journal() {
       />
 
       <form onSubmit={submit} className="mb-10 rounded-lg border">
-        {/* Voucher header */}
-        <div className="grid gap-4 border-b p-5 sm:grid-cols-4">
+        {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
+        <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
           <div className="space-y-2">
             <Label>Book Code</Label>
             <Input value="Journal" readOnly className="bg-muted/50" />
@@ -241,11 +256,11 @@ export default function Journal() {
               onChange={(e) => setDate(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label>Last Voucher No</Label>
-            <Input value={lastNo?.lastVoucherNo ?? "—"} readOnly className="bg-muted/50 font-mono text-xs" />
+            <Label>Last Voucher No.</Label>
+            <Input value={editing?.[0]?.voucherNo ?? lastNo?.lastVoucherNo ?? "—"} readOnly className="bg-muted/50 font-mono text-xs" />
           </div>
           <div className="space-y-2">
-            <Label>Voucher No</Label>
+            <Label>Voucher No.</Label>
             <Input
               value={
                 editId
@@ -259,22 +274,26 @@ export default function Journal() {
               title="Assigned automatically"
             />
           </div>
-          <div className="space-y-2">
+        </div>
+
+        {/* Cheque No · Cheque Date · Total Amount — journal header row */}
+        <div className="grid gap-4 border-b p-4 sm:grid-cols-12">
+          <div className="space-y-2 sm:col-span-4">
             <Label htmlFor="j-chq">Cheque No</Label>
             <Input id="j-chq" value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 sm:col-span-3">
             <Label htmlFor="j-chqdt">Cheque Date</Label>
             <Input id="j-chqdt" type="date" value={chequeDate}
               onChange={(e) => setChequeDate(e.target.value)} />
           </div>
-          <div className="space-y-2 sm:col-span-2">
+          <div className="space-y-2 sm:col-span-3 sm:col-start-10">
             <Label htmlFor="j-total">Total Amount</Label>
             <Input id="j-total" value={totalDebit > 0 ? formatMoney(totalDebit) : ""} readOnly
-              className="bg-muted/50 text-right font-medium tabular-nums"
+              className="bg-muted/50 text-right font-semibold tabular-nums"
               placeholder="0.00" />
           </div>
-          <div className="space-y-2 sm:col-span-4">
+          <div className="space-y-2 sm:col-span-12">
             <Label htmlFor="j-narr">Narration</Label>
             <Input id="j-narr" value={narration}
               onChange={(e) => setNarration(e.target.value)}
@@ -282,10 +301,10 @@ export default function Journal() {
           </div>
         </div>
 
-        {/* Ledger quick-add row — Dr stacked over Cr for a compact form */}
-        <div className="border-b p-5">
+        {/* Ledger · Debit · Credit · Add — one row, Cur Bal below the ledger */}
+        <div className="border-b p-4">
           <div className="grid items-start gap-3 sm:grid-cols-12">
-            <div className="space-y-2 sm:col-span-7">
+            <div className="space-y-2 sm:col-span-6">
               <Label>Ledger</Label>
               <Select value={ledgerId || undefined}
                 onValueChange={(v) => { setLedgerId(v); setDebit(""); setCredit(""); }}>
@@ -297,23 +316,21 @@ export default function Journal() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Cur Bal: <span className="tabular-nums text-foreground">{balText(curBal)}</span>
+                Cur Bal: <span className="font-medium tabular-nums text-foreground">{balText(curBal)}</span>
               </p>
             </div>
-            <div className="grid gap-2 sm:col-span-3">
-              <div className="space-y-1">
-                <Label htmlFor="j-dr" className="text-xs text-muted-foreground">Debit (Dr)</Label>
-                <Input id="j-dr" type="number" step="0.01" min="0" className="h-8 text-right"
-                  value={debit} onChange={(e) => { setDebit(e.target.value); setCredit(""); }} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="j-cr" className="text-xs text-muted-foreground">Credit (Cr)</Label>
-                <Input id="j-cr" type="number" step="0.01" min="0" className="h-8 text-right"
-                  value={credit} onChange={(e) => { setCredit(e.target.value); setDebit(""); }} />
-              </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="j-dr" className="text-center text-muted-foreground">Debit</Label>
+              <NumInput id="j-dr" className="text-right" value={debit}
+                onChange={(v) => { setDebit(v); setCredit(""); }} />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="j-cr" className="text-center text-muted-foreground">Credit</Label>
+              <NumInput id="j-cr" className="text-right" value={credit}
+                onChange={(v) => { setCredit(v); setDebit(""); }} />
             </div>
             <div className="flex items-end sm:col-span-2">
-              <Button type="button" variant="outline" className="w-full rounded-lg" onClick={addLine}>
+              <Button type="button" variant="outline" className="w-full" onClick={addLine}>
                 <Plus className="size-4" /> Add
               </Button>
             </div>
@@ -324,17 +341,18 @@ export default function Journal() {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
+              <TableHead className="w-8" />
               <TableHead className="w-24">Code</TableHead>
               <TableHead>Ledger</TableHead>
-              <TableHead className="w-36 text-right">Debit</TableHead>
-              <TableHead className="w-36 text-right">Credit</TableHead>
-              <TableHead className="w-12" />
+              <TableHead className="w-32 text-right">Debit</TableHead>
+              <TableHead className="w-32 text-right">Credit</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {lines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
                   Add journal lines above — at least one debit and one credit.
                 </TableCell>
               </TableRow>
@@ -343,21 +361,25 @@ export default function Journal() {
                 const acc = accounts?.find((a) => a._id === l.accountId);
                 return (
                   <TableRow key={l.key}>
-                    <TableCell className="font-mono text-xs">{acc?.code ?? "—"}</TableCell>
-                    <TableCell className="font-medium">{acc?.name ?? "—"}</TableCell>
+                    <TableCell className="w-8 text-xs text-muted-foreground">
+                      {l === lines[0] ? "▶" : ""}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{l.code || acc?.code || "—"}</TableCell>
+                    <TableCell className="font-medium uppercase">{acc?.name ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      <Input type="number" step="0.01" min="0" className="h-8 border-0 bg-transparent text-right shadow-none focus-visible:bg-background"
+                      <NumInput className="h-8 border-0 bg-transparent text-right shadow-none focus-visible:bg-background"
                         value={l.debit}
-                        onChange={(e) => updateLine(l.key, { debit: e.target.value, credit: "" })} />
+                        onChange={(v) => updateLine(l.key, { debit: v, credit: "" })} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      <Input type="number" step="0.01" min="0" className="h-8 border-0 bg-transparent text-right shadow-none focus-visible:bg-background"
+                      <NumInput className="h-8 border-0 bg-transparent text-right shadow-none focus-visible:bg-background"
                         value={l.credit}
-                        onChange={(e) => updateLine(l.key, { credit: e.target.value, debit: "" })} />
+                        onChange={(v) => updateLine(l.key, { credit: v, debit: "" })} />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="w-10">
                       <Button type="button" variant="ghost" size="icon" className="size-8 text-destructive"
-                        onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}>
+                        onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+                        title="Remove line">
                         <Trash2 className="size-3.5" />
                       </Button>
                     </TableCell>
@@ -365,30 +387,27 @@ export default function Journal() {
                 );
               })
             )}
-            <TableRow className="border-t-2 hover:bg-transparent">
-              <TableCell colSpan={2} />
-              <TableCell className="text-right font-semibold tabular-nums">
-                {totalDebit ? formatMoney(totalDebit) : ""}
-              </TableCell>
-              <TableCell className="text-right font-semibold tabular-nums">
-                {totalCredit ? formatMoney(totalCredit) : ""}
-              </TableCell>
-              <TableCell />
-            </TableRow>
           </TableBody>
         </Table>
 
-        <div className="flex justify-end gap-2 border-t p-5">
+        {/* Boxed totals — legacy bottom-right Dr / Cr boxes */}
+        <div className="flex items-center justify-end gap-2 border-t px-4 py-2">
+          <TotalBox value={totalDebit ? formatMoney(totalDebit) : "0.00"} />
+          <TotalBox value={totalCredit ? formatMoney(totalCredit) : "0.00"} />
+        </div>
+
+        {/* Save · Delete · Exit — legacy order */}
+        <div className="flex justify-end gap-2 border-t p-4">
+          <Button type="submit" variant="outline" className="min-w-24 rounded-none" disabled={saving || !balanced}>
+            {editId ? "Update" : "Save"}
+          </Button>
           {editId && (
-            <Button type="button" variant="destructive" className="rounded-lg px-6" onClick={del}>
+            <Button type="button" variant="outline" className="min-w-24 rounded-none text-destructive hover:text-destructive" onClick={del}>
               Delete
             </Button>
           )}
-          <Button type="button" variant="outline" className="rounded-lg px-6" onClick={exit}>
+          <Button type="button" variant="outline" className="min-w-24 rounded-none" onClick={exit}>
             Exit
-          </Button>
-          <Button type="submit" className="rounded-lg px-8" disabled={saving || !balanced}>
-            {editId ? "Update" : "Save"}
           </Button>
         </div>
       </form>

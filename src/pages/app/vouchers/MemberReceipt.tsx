@@ -22,6 +22,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
 import { formatDate, formatPeriod, formatMoney, todayISO } from "@/lib/format";
+import { NumInput } from "./LedgerVoucherForm";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
@@ -33,13 +34,24 @@ type Bill = Doc<"bills">;
 type Account = Doc<"accounts">;
 type Voucher = Doc<"vouchers">;
 
+/** Boxed total cell shown bottom-right of the entries grid (legacy style). */
+function TotalBox({ value }: { value: string }) {
+  return (
+    <div className="w-36 rounded-none border bg-background px-3 py-1.5 text-right text-sm font-semibold tabular-nums">
+      {value}
+    </div>
+  );
+}
+
 /**
- * Legacy-style Receipt Voucher screen for member collections: Book Code /
- * Voucher Date / Last Voucher No header, the Cash/Bank side with its current
- * balance, cheque details, and an entries grid showing the auto-posted
- * Dr Bank/Cash · Cr Member(receivable) lines before saving. Also serves as
- * the edit screen with ?edit=<voucherId> (header fields only — the amount and
- * its bill settlements stay fixed).
+ * Legacy-style Receipt Voucher screen for member collections — same-to-same
+ * with the desktop format: Book Code / Voucher Date / Last Voucher No header,
+ * Cash/Bank with its current balance, Amount, cheque details, full-width Bank
+ * Name and Narration, and an entries grid showing the auto-posted
+ * Dr Bank/Cash · Cr Member lines with boxed totals. Mode is derived
+ * automatically from the instrument/account. Also serves as the edit screen
+ * with ?edit=<voucherId> (header fields only — amount and bill settlements
+ * stay fixed).
  */
 export default function MemberReceipt() {
   const societyCtx = useSociety();
@@ -67,7 +79,6 @@ export default function MemberReceipt() {
     memberId: "",
     date: todayISO(),
     amount: "",
-    mode: "auto",
     bankCashAccountId: "",
     chequeNo: "",
     chequeDate: "",
@@ -100,13 +111,12 @@ export default function MemberReceipt() {
   const selectedMember = members?.find((m) => m._id === form.memberId);
   const selectedBank = bankAccounts.find((a) => a._id === form.bankCashAccountId) ?? bankAccounts[0];
 
-  // Mode is optional — derived from the instrument/account unless overridden.
+  // Mode is derived from the instrument/account — no manual tab needed.
   const derivedMode = form.chequeNo
     ? "cheque"
     : (selectedBank?.name ?? "").toLowerCase().includes("bank")
       ? "bank"
       : "cash";
-  const effectiveMode = form.mode === "auto" ? derivedMode : form.mode;
 
   const bankBal = useQuery(
     api.api.accountBalance,
@@ -165,7 +175,7 @@ export default function MemberReceipt() {
         type: "member_receipt",
         date: form.date,
         memberId: form.memberId as Id<"members">,
-        mode: effectiveMode,
+        mode: derivedMode,
         bankCashAccountId: bankId as never,
         reference: composeReference(),
         narration: composeNarration(),
@@ -199,7 +209,7 @@ export default function MemberReceipt() {
         societyId,
         id: editId as Id<"vouchers">,
         date: form.date,
-        mode: effectiveMode,
+        mode: derivedMode,
         bankCashAccountId: (form.bankCashAccountId || editVoucherDoc.bankCashAccountId) as never,
         reference: composeReference(),
         narration: composeNarration(),
@@ -241,7 +251,6 @@ export default function MemberReceipt() {
       memberId: (editVoucherDoc.memberId as string) ?? "",
       date: editVoucherDoc.date,
       amount: String(editVoucherDoc.total),
-      mode: editVoucherDoc.mode ?? "auto",
       bankCashAccountId: (editVoucherDoc.bankCashAccountId as string) ?? "",
       chequeNo: ref.includes(" dt ") ? ref.split(" dt ")[0] : ref,
       chequeDate: ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "",
@@ -285,6 +294,8 @@ export default function MemberReceipt() {
   };
 
   const editMember = members?.find((m) => m._id === editVoucherDoc?.memberId);
+  const editTotDr = editVoucherDoc?.lines.reduce((s, l) => s + l.debit, 0) ?? 0;
+  const editTotCr = editVoucherDoc?.lines.reduce((s, l) => s + l.credit, 0) ?? 0;
 
   return (
     <div>
@@ -292,14 +303,14 @@ export default function MemberReceipt() {
         title={editId ? "Edit Member Receipt" : "Member Receipt"}
         description={
           editId
-            ? "Editing an existing collection — date, mode, bank/cash account, cheque details and narration can change. The amount and its bill settlements stay fixed; delete and re-enter to change those."
+            ? "Editing an existing collection — date, cash/bank account, cheque details and narration can change. The amount and its bill settlements stay fixed; delete and re-enter to change those."
             : "Record maintenance collections from members. Receipts debit bank/cash and credit the member's receivable, settling outstanding bills oldest-first."
         }
       />
 
       <form onSubmit={editId ? submitEdit : submit} className="mb-10 rounded-lg border">
-        {/* Voucher header */}
-        <div className="grid gap-4 border-b p-5 sm:grid-cols-4">
+        {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
+        <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
           <div className="space-y-2">
             <Label>Book Code</Label>
             <Input value="Receipts" readOnly className="bg-muted/50" />
@@ -310,7 +321,7 @@ export default function MemberReceipt() {
               onChange={(e) => setForm({ ...form, date: e.target.value })} />
           </div>
           <div className="space-y-2">
-            <Label>Last Voucher No</Label>
+            <Label>Last Voucher No.</Label>
             <Input
               value={editVoucherDoc?.voucherNo ?? lastNo?.lastVoucherNo ?? "—"}
               readOnly
@@ -318,7 +329,7 @@ export default function MemberReceipt() {
             />
           </div>
           <div className="space-y-2">
-            <Label>Voucher No</Label>
+            <Label>Voucher No.</Label>
             <Input
               value={
                 editId
@@ -334,9 +345,9 @@ export default function MemberReceipt() {
           </div>
         </div>
 
-        {/* Member + Cash/Bank + instrument details */}
-        <div className="grid gap-4 border-b p-5 sm:grid-cols-4">
-          <div className="space-y-2 sm:col-span-2">
+        {/* Member + Cash/Bank + Cur Bal + Amount + Cheque No + Cheque Date */}
+        <div className="grid gap-4 border-b p-4 sm:grid-cols-12">
+          <div className="space-y-2 sm:col-span-3">
             <Label htmlFor="mr-member">{editId ? "Member" : "Member *"}</Label>
             <Select
               value={form.memberId || undefined}
@@ -358,86 +369,78 @@ export default function MemberReceipt() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2 sm:col-span-2">
+          <div className="space-y-2 sm:col-span-3">
             <Label>{editId ? "Cash/Bank" : "Cash/Bank *"}</Label>
-            <Select
-              value={(editId ? form.bankCashAccountId || editVoucherDoc?.bankCashAccountId : form.bankCashAccountId) || undefined}
-              onValueChange={(v) => setForm({ ...form, bankCashAccountId: v })}
-            >
-              <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
-              <SelectContent>
-                {bankAccounts.map((a) => (
-                  <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select
+                value={(editId ? form.bankCashAccountId || editVoucherDoc?.bankCashAccountId : form.bankCashAccountId) || undefined}
+                onValueChange={(v) => setForm({ ...form, bankCashAccountId: v })}
+              >
+                <SelectTrigger className="min-w-0 flex-1"><SelectValue placeholder="Select account" /></SelectTrigger>
+                <SelectContent>
+                  {bankAccounts.map((a) => (
+                    <SelectItem key={a._id} value={a._id}>{a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <p className="text-xs text-muted-foreground">
-              Cur Bal: <span className="tabular-nums text-foreground">{balText(bankBal)}</span>
+              Cur Bal: <span className="font-medium tabular-nums text-foreground">{balText(bankBal)}</span>
             </p>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="mr-amount">Amount (₹)</Label>
-            <Input
-              id="mr-amount"
-              value={editId ? formatMoney(editVoucherDoc?.total ?? 0) : form.amount}
-              readOnly={Boolean(editId)}
-              required={!editId}
-              type={editId ? "text" : "number"}
-              step={editId ? undefined : "0.01"}
-              min={editId ? undefined : "0.01"}
-              onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              className={`text-right font-medium tabular-nums ${editId ? "bg-muted/50" : ""}`}
-              placeholder={editId ? undefined : "0.00"}
-            />
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="mr-amount">Amount</Label>
+            {editId ? (
+              <Input
+                id="mr-amount"
+                value={formatMoney(editVoucherDoc?.total ?? 0)}
+                readOnly
+                className="bg-muted/50 text-right font-semibold tabular-nums"
+              />
+            ) : (
+              <NumInput
+                id="mr-amount"
+                value={form.amount}
+                onChange={(v) => setForm({ ...form, amount: v })}
+                className="text-right font-semibold tabular-nums"
+                placeholder="0.00"
+              />
+            )}
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="mr-mode">
-              Mode <span className="font-normal text-muted-foreground">(optional)</span>
-            </Label>
-            <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
-              <SelectTrigger id="mr-mode"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Auto — from cash/bank</SelectItem>
-                <SelectItem value="cash">Cash</SelectItem>
-                <SelectItem value="bank">Bank transfer</SelectItem>
-                <SelectItem value="cheque">Cheque</SelectItem>
-                <SelectItem value="upi">UPI</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
+          <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="mr-chq">Cheque No</Label>
             <Input id="mr-chq" value={form.chequeNo}
               onChange={(e) => setForm({ ...form, chequeNo: e.target.value })}
               placeholder="UTR / cheque no." />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="mr-chqdt">Cheque Date</Label>
             <Input id="mr-chqdt" type="date" value={form.chequeDate}
               onChange={(e) => setForm({ ...form, chequeDate: e.target.value })} />
           </div>
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="mr-bankname">Bank Name</Label>
+          <div className="space-y-2 sm:col-span-12">
+            <Label htmlFor="mr-bankname" className="text-muted-foreground">Bank Name</Label>
             <Input id="mr-bankname" value={form.bankName}
               onChange={(e) => setForm({ ...form, bankName: e.target.value })}
               placeholder="For cheque / NEFT instruments" />
           </div>
-          <div className="space-y-2 sm:col-span-4">
+          <div className="space-y-2 sm:col-span-12">
             <Label htmlFor="mr-narr">Narration</Label>
             <Input id="mr-narr" value={form.narration}
               onChange={(e) => setForm({ ...form, narration: e.target.value })}
-              placeholder="April maintenance collection" />
+              placeholder="Maintenance collection" />
           </div>
         </div>
 
-        {/* Entries grid — auto-posted lines */}
+        {/* Entries grid — auto-posted Dr Bank/Cash · Cr Member lines */}
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
+              <TableHead className="w-8" />
               <TableHead className="w-24">Code</TableHead>
               <TableHead>Ledger</TableHead>
-              <TableHead className="w-36 text-right">Debit</TableHead>
-              <TableHead className="w-36 text-right">Credit</TableHead>
+              <TableHead className="w-32 text-right">Debit</TableHead>
+              <TableHead className="w-32 text-right">Credit</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -446,108 +449,79 @@ export default function MemberReceipt() {
                 const acc = accounts?.find((a) => a._id === l.accountId);
                 return (
                   <TableRow key={i}>
+                    <TableCell className="w-8 text-xs text-muted-foreground">{i === 0 ? "▶" : ""}</TableCell>
                     <TableCell className="font-mono text-xs">{acc?.code ?? "—"}</TableCell>
-                    <TableCell className="font-medium">{acc?.name ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{l.debit ? formatMoney(l.debit) : ""}</TableCell>
-                    <TableCell className="text-right tabular-nums">{l.credit ? formatMoney(l.credit) : ""}</TableCell>
+                    <TableCell className="font-medium uppercase">{acc?.name ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{l.debit ? formatMoney(l.debit) : "0.00"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{l.credit ? formatMoney(l.credit) : "0.00"}</TableCell>
                   </TableRow>
                 );
               })
             ) : (
               <>
                 <TableRow>
+                  <TableCell className="w-8 text-xs text-muted-foreground">▶</TableCell>
                   <TableCell className="font-mono text-xs">{selectedBank?.code ?? "—"}</TableCell>
-                  <TableCell className="font-medium">
+                  <TableCell className="font-medium uppercase">
                     {selectedBank?.name ?? "Cash/Bank"}
                     {!form.bankCashAccountId && bankAccounts.length > 0 && (
-                      <span className="ml-2 text-xs text-muted-foreground">(default)</span>
+                      <span className="ml-2 text-xs normal-case text-muted-foreground">(default)</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {amountNum > 0 ? formatMoney(amountNum) : ""}
+                    {amountNum > 0 ? formatMoney(amountNum) : "0.00"}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums" />
+                  <TableCell className="text-right tabular-nums">0.00</TableCell>
                 </TableRow>
                 <TableRow>
+                  <TableCell className="w-8" />
                   <TableCell className="font-mono text-xs">{selectedMember?.code ?? "—"}</TableCell>
-                  <TableCell className="font-medium">
+                  <TableCell className="font-medium uppercase">
                     {selectedMember
-                      ? `${selectedMember.name} (${[selectedMember.wing, selectedMember.flatNo].filter(Boolean).join("-") || "member"})`
+                      ? selectedMember.name
                       : "Select a member above"}
+                    {selectedMember && [selectedMember.wing, selectedMember.flatNo].filter(Boolean).length > 0 && (
+                      <span className="ml-2 text-xs normal-case text-muted-foreground">
+                        ({[selectedMember.wing, selectedMember.flatNo].filter(Boolean).join("-")})
+                      </span>
+                    )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums" />
+                  <TableCell className="text-right tabular-nums">0.00</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {amountNum > 0 ? formatMoney(amountNum) : ""}
+                    {amountNum > 0 ? formatMoney(amountNum) : "0.00"}
                   </TableCell>
                 </TableRow>
               </>
             )}
-            <TableRow className="border-t-2 hover:bg-transparent">
-              <TableCell colSpan={2} className="text-right text-muted-foreground">Total</TableCell>
-              <TableCell className="text-right font-semibold tabular-nums">
-                {editId && editVoucherDoc
-                  ? editVoucherDoc.lines.reduce((s, l) => s + l.debit, 0)
-                    ? formatMoney(editVoucherDoc.lines.reduce((s, l) => s + l.debit, 0))
-                    : ""
-                  : amountNum > 0
-                    ? formatMoney(amountNum)
-                    : ""}
-              </TableCell>
-              <TableCell className="text-right font-semibold tabular-nums">
-                {editId && editVoucherDoc
-                  ? editVoucherDoc.lines.reduce((s, l) => s + l.credit, 0)
-                    ? formatMoney(editVoucherDoc.lines.reduce((s, l) => s + l.credit, 0))
-                    : ""
-                  : amountNum > 0
-                    ? formatMoney(amountNum)
-                    : ""}
-              </TableCell>
-            </TableRow>
           </TableBody>
         </Table>
 
-        {/* Settlement preview */}
-        {!editId && selectedMember && outstandingBills.length > 0 && (
-          <div className="border-t p-5">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Automatic settlement preview (oldest first)
-            </p>
-            <div className="space-y-1 text-sm">
-              {previewAllocation.rows.map((r) => (
-                <div key={r.bill._id} className="flex justify-between">
-                  <span>
-                    {r.bill.billNo} · {formatPeriod(r.bill.period)} · due {formatDate(r.bill.dueDate)}
-                  </span>
-                  <span className="tabular-nums">{formatUnallocated(r.take)}</span>
-                </div>
-              ))}
-              {previewAllocation.unallocated > 0 && (
-                <div className="flex justify-between font-medium">
-                  <span>Excess kept as advance</span>
-                  <span className="tabular-nums">{formatUnallocated(previewAllocation.unallocated)}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {!editId && selectedMember && outstandingBills.length === 0 && (
-          <div className="border-t p-5">
-            <p className="text-sm text-muted-foreground">
-              No outstanding bills for {selectedMember.name} — the receipt will still credit their account.
-            </p>
-          </div>
-        )}
+        {/* Boxed totals — legacy bottom-right Dr / Cr boxes */}
+        <div className="flex items-center justify-end gap-2 border-t px-4 py-2">
+          {editId && editVoucherDoc ? (
+            <>
+              <TotalBox value={editTotDr ? formatMoney(editTotDr) : "0.00"} />
+              <TotalBox value={editTotCr ? formatMoney(editTotCr) : "0.00"} />
+            </>
+          ) : (
+            <>
+              <TotalBox value={amountNum > 0 ? formatMoney(amountNum) : "0.00"} />
+              <TotalBox value={amountNum > 0 ? formatMoney(amountNum) : "0.00"} />
+            </>
+          )}
+        </div>
 
-        <div className="flex justify-end gap-2 border-t p-5">
+        {/* Save · Delete · Exit — legacy order */}
+        <div className="flex justify-end gap-2 border-t p-4">
           {editId && (
-            <Button type="button" variant="destructive" className="rounded-lg px-6" onClick={delEdit}>
+            <Button type="button" variant="outline" className="min-w-24 rounded-none text-destructive hover:text-destructive" onClick={delEdit}>
               Delete
             </Button>
           )}
           <Button
             type="button"
             variant="outline"
-            className="rounded-lg px-6"
+            className="min-w-24 rounded-none"
             onClick={() => (editId ? setSearchParams({}) : setForm({
               ...form,
               memberId: "",
@@ -562,7 +536,8 @@ export default function MemberReceipt() {
           </Button>
           <Button
             type="submit"
-            className="rounded-lg px-8"
+            variant="outline"
+            className="min-w-24 rounded-none"
             disabled={!editId && (!form.memberId || amountNum <= 0)}
           >
             {editId ? "Update" : "Save"}
@@ -570,8 +545,40 @@ export default function MemberReceipt() {
         </div>
       </form>
 
+      {/* Settlement preview */}
+      {!editId && selectedMember && outstandingBills.length > 0 && (
+        <div className="mb-6 -mt-4 rounded-lg border p-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Automatic settlement preview (oldest first)
+          </p>
+          <div className="space-y-1 text-sm">
+            {previewAllocation.rows.map((r) => (
+              <div key={r.bill._id} className="flex justify-between">
+                <span>
+                  {r.bill.billNo} · {formatPeriod(r.bill.period)} · due {formatDate(r.bill.dueDate)}
+                </span>
+                <span className="tabular-nums">{formatUnallocated(r.take)}</span>
+              </div>
+            ))}
+            {previewAllocation.unallocated > 0 && (
+              <div className="flex justify-between font-medium">
+                <span>Excess kept as advance</span>
+                <span className="tabular-nums">{formatUnallocated(previewAllocation.unallocated)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {!editId && selectedMember && outstandingBills.length === 0 && (
+        <div className="mb-6 -mt-4 rounded-lg border p-4">
+          <p className="text-sm text-muted-foreground">
+            No outstanding bills for {selectedMember.name} — the receipt will still credit their account.
+          </p>
+        </div>
+      )}
+
       {editId && editVoucherDoc && (
-        <p className="mb-6 -mt-6 text-xs text-muted-foreground">
+        <p className="mb-6 -mt-4 text-xs text-muted-foreground">
           Editing {editVoucherDoc.voucherNo} for {editMember?.name ?? "member"} — amount ₹ {formatMoney(editVoucherDoc.total)} is fixed.
         </p>
       )}
