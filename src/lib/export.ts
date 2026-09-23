@@ -22,6 +22,8 @@ export type ExportMeta = {
 
 type TableSpec = {
   head: string[];
+  /** Start this table on a fresh page (Skip Page After Ledger). */
+  pageBreakBefore?: boolean;
   /**
    * Optional grouped header row rendered above `head` (Crystal-style column
    * bands). Each entry is a label with the number of columns it spans; entries
@@ -93,6 +95,10 @@ export function exportPDF(meta: ExportMeta, tables: TableSpec[], filename: strin
   cursorY = drawHeader();
 
   for (const t of tables) {
+    if (t.pageBreakBefore && cursorY > 56) {
+      doc.addPage();
+      cursorY = drawHeader();
+    }
     if (t.sectionTitle) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
@@ -280,8 +286,11 @@ ${meta.societyAddress ? `<p class="sub">${escapeHtml(meta.societyAddress)}</p>` 
 ${meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationNo)}</p>` : ""}
 <p class="title">${escapeHtml(meta.title)}</p>
 ${meta.subtitle ? `<p class="sub">${escapeHtml(meta.subtitle)}</p>` : ""}
-<hr/>
-${tables.map(tableToHtml).join("<br/>")}
+<hr/>  ${tables
+    .map((t, i) =>
+      `${i > 0 && t.pageBreakBefore ? '<br style="page-break-before:always"/>' : ""}${tableToHtml(t)}`,
+    )
+    .join("<br/>")}
 ${signaturesHtml(meta)}
 </body></html>`;
   const blob = new Blob(["\ufeff", html], { type: "application/msword" });
@@ -323,7 +332,7 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
   ${meta.subtitle ? `<p class="sub">${escapeHtml(meta.subtitle)}</p>` : ""}
   <hr/>
   ${tables
-    .map((t) => {
+    .map((t, ti) => {
       const head = t.head
         .map((h, i) => {
           const align = t.columnStyles?.[i]?.halign;
@@ -354,7 +363,8 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
             })
             .join("")}</tr></tfoot>`
         : "";
-      return `${t.sectionTitle ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>` : ""}<table><thead>${
+      const brk = ti > 0 && t.pageBreakBefore ? '<div style="page-break-before:always"></div>' : "";
+      return `${brk}${t.sectionTitle ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>` : ""}<table><thead>${
         t.groupHead
           ? `<tr>${t.groupHead
               .map((g) => {

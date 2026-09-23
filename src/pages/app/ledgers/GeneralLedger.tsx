@@ -2,13 +2,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -17,18 +10,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ReportPreview } from "@/components/ReportPreview";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { effectiveFyPeriod, formatDate, formatINR, formatMoney, monthRangeISO } from "@/lib/format";
-import { Download, FileText, Printer, ListChecks } from "lucide-react";
+import { effectiveFyPeriod, formatDate, formatMoney, monthRangeISO } from "@/lib/format";
 import { useState } from "react";
 import { useQuery } from "convex/react";
 import { toast } from "sonner";
-import { Checkbox } from "@/components/ui/checkbox";
 
 type Account = Doc<"accounts">;
 type LedgerRow = {
@@ -49,17 +42,33 @@ type TrialBalanceRow = {
   credit: number;
 };
 
+/** One rendered ledger section — shared by the on-screen preview and every export. */
+type LedgerSection = {
+  account: Account;
+  title: string;
+  items: { date: string; voucherNo: string; narration: string[]; debit: number; credit: number; balance: number }[];
+  totDr: number;
+  totCr: number;
+  closing: number;
+};
+
 const drCr = (n: number) => `${formatMoney(n)} ${n >= 0 ? "Dr" : "Cr"}`;
 
 export default function GeneralLedger() {
   const { societyId, society } = useSociety();
   const signatures = useCommitteeSignatures();
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Account[] | undefined;
-  const [accountId, setAccountId] = useState("");
-  const [from, setFrom] = useState(effectiveFyPeriod(society).from);
-  const [to, setTo] = useState(effectiveFyPeriod(society).to);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cursor, setCursor] = useState(0); // ▶ row marker (last clicked row)
+  const fy = effectiveFyPeriod(society);
+  const [from, setFrom] = useState(fy.from);
+  const [to, setTo] = useState(fy.to);
   const [month, setMonth] = useState("");
-  const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
+  // Report options, mirroring the legacy Account Ledger window.
+  const [skipPage, setSkipPage] = useState(true); // Skip Page After Ledger
+  const [printNarration, setPrintNarration] = useState(true); // Print Narration
+  const [detailed, setDetailed] = useState(false); // Show Detailed Entries
 
   const applyMonth = (m: string) => {
     setMonth(m);
@@ -68,87 +77,176 @@ export default function GeneralLedger() {
       setFrom(r.from);
       setTo(r.to);
     } else {
-      const fy = effectiveFyPeriod(society);
-      setFrom(fy.from);
-      setTo(fy.to);
+      const p = effectiveFyPeriod(society);
+      setFrom(p.from);
+      setTo(p.to);
     }
   };
 
-  const ledger = useQuery(
-    api.api.generalLedger,
-    societyId && accountId
-      ? { societyId, accountId: accountId as Id<"accounts">, fromDate: from, toDate: to }
+  const sortedAccounts = (accounts ?? []).slice().sort((a, b) => a.code.localeCompare(b.code));
+  const allSelected = sortedAccounts.length > 0 && selected.size === sortedAccounts.length;
+
+  const toggleAll = (checked: boolean) => {
+    setSelected(checked ? new Set(sortedAccounts.map((a) => a._id)) : new Set());
+    setCursor(0);
+  };
+  const toggleAccount = (id: string, checked: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  /** Ledgers for every ticked account, fetched in one reactive query. */
+  const bulk = useQuery(
+    api.api.generalLedgersBulk,
+    societyId && selected.size > 0
+      ? { societyId, accountIds: [...selected] as Id<"accounts">[], fromDate: from, toDate: to }
       : "skip",
-  ) as { account: Account | null; rows: LedgerRow[] } | undefined;
+  ) as { accountId: Id<"accounts">; account: Account | null; rows: LedgerRow[] }[] | undefined;
 
-  const trialBalance = useQuery(
-    api.api.trialBalance,
-    societyId ? { societyId, fromDate: from, toDate: to } : "skip",
-  ) as TrialBalanceRow[] | undefined;
-
-  const account = accounts?.find((a) => a._id === accountId);
-  const ledgerRows = ledger?.rows ?? [];
-  const closing = ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].balance : 0;
-
-  const meta: ExportMeta | null =
-    society && account
-      ? {
-          societyName: society.name,
-          societyAddress: [society.address, society.city, society.state, society.pincode]
-            .filter(Boolean)
-            .join(", "),
-          registrationNo: society.registrationNo,
-          title: "ACCOUNT LEDGER",
-          subtitle: `For the period ${formatDate(from)} to ${formatDate(to)}`,
-          signatures,
+  /** Build the render model for one account's ledger (consolidation + totals). */
+  const buildSection = (acc: Account, allRows: LedgerRow[]): LedgerSection => {
+    const rows = allRows.filter((r) => r.voucherNo !== "OPENING");
+    // "Show Detailed Entries" off → collapse each voucher into a single row.
+    const items: LedgerSection["items"] = [];
+    if (!detailed) {
+      let i = 0;
+      while (i < rows.length) {
+        let j = i;
+        let dr = 0;
+        let cr = 0;
+        while (
+          j < rows.length &&
+          rows[j].voucherNo === rows[i].voucherNo &&
+          rows[j].date === rows[i].date
+        ) {
+          dr += rows[j].debit;
+          cr += rows[j].credit;
+          j++;
         }
-      : null;
-
-  const buildLedgerTable = (): TableSpec => {
-    const drCr = (n: number) => `${formatMoney(n)} ${n >= 0 ? "Dr" : "Cr"}`;
-    const body: (string | number)[][] = [];
-    if (account && account.openingBalance !== 0) {
-      body.push([
-        "",
-        "",
-        account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
-        account.openingBalance > 0 ? account.openingBalance : "",
-        account.openingBalance < 0 ? -account.openingBalance : "",
-        "",
-      ]);
+        const group = rows.slice(i, j);
+        items.push({
+          date: group[0].date,
+          voucherNo: group[0].voucherNo,
+          narration: group.map((r) =>
+            `${r.debit > 0 ? "To " : "By "}${r.particulars}${printNarration && r.note ? `\n${r.note}` : ""}`,
+          ),
+          debit: dr,
+          credit: cr,
+          balance: group[group.length - 1].balance,
+        });
+        i = j;
+      }
+    } else {
+      for (const r of rows) {
+        items.push({
+          date: r.date,
+          voucherNo: r.voucherNo,
+          narration: [
+            `${r.debit > 0 ? "To " : "By "}${r.particulars}`,
+            ...(printNarration && r.note ? [r.note] : []),
+          ],
+          debit: r.debit,
+          credit: r.credit,
+          balance: r.balance,
+        });
+      }
     }
-    let totDr = 0;
-    let totCr = 0;
-    for (const r of ledger?.rows ?? []) {
-      totDr += r.debit;
-      totCr += r.credit;
-      body.push([
-        formatDate(r.date),
-        r.voucherNo,
-        `${r.debit > 0 ? "To " : "By "}${r.particulars}${r.note ? `\n${r.note}` : ""}`,
-        r.debit || "",
-        r.credit || "",
-        drCr(r.balance),
-      ]);
-    }
+    const totDr = items.reduce((s, r) => s + r.debit, 0);
+    const totCr = items.reduce((s, r) => s + r.credit, 0);
+    const closing = rows.length > 0 ? rows[rows.length - 1].balance : acc.openingBalance;
     return {
-      sectionTitle: account ? `${account.code}  ${account.name}`.toUpperCase() : undefined,
+      account: acc,
+      title: `${acc.code}  ${acc.name}`.toUpperCase(),
+      items,
+      totDr,
+      totCr,
+      closing,
+    };
+  };
+
+  const sections: LedgerSection[] =
+    bulk && society
+      ? sortedAccounts
+          .filter((a) => selected.has(a._id))
+          .map((acc) => {
+            const entry = bulk.find((b) => b.accountId === acc._id);
+            return buildSection(acc, entry?.rows ?? []);
+          })
+      : [];
+
+  const meta: ExportMeta | null = society
+    ? {
+        societyName: society.name,
+        societyAddress: [society.address, society.city, society.state, society.pincode]
+          .filter(Boolean)
+          .join(", "),
+        registrationNo: society.registrationNo,
+        title: "ACCOUNT LEDGER",
+        subtitle: `For the period ${formatDate(from)} to ${formatDate(to)}`,
+        signatures,
+      }
+    : null;
+
+  const sectionTable = (s: LedgerSection, first: boolean): TableSpec => {
+    const body: (string | number)[][] = [];
+    if (s.account.openingBalance !== 0) {
+      body.push([
+        "",
+        "",
+        s.account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
+        s.account.openingBalance > 0 ? s.account.openingBalance : "",
+        s.account.openingBalance < 0 ? -s.account.openingBalance : "",
+        "",
+      ]);
+    }
+    for (const r of s.items) {
+      body.push([formatDate(r.date), r.voucherNo, r.narration.join("\n"), r.debit || "", r.credit || "", drCr(r.balance)]);
+    }
+    if (body.length === 0) body.push(["", "", "No transactions in this period", "", "", ""]);
+    return {
+      sectionTitle: s.title,
+      pageBreakBefore: !first && skipPage,
       head: ["Date", "Voucher No", "Narration", "Debit", "Credit", "Balance"],
       body,
       foot: [
         [
           "",
           "",
-          closing >= 0 ? "To Closing balance cd" : "By Closing balance cd",
-          closing < 0 ? -closing : "",
-          closing >= 0 ? closing : "",
+          s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd",
+          s.closing < 0 ? -s.closing : "",
+          s.closing >= 0 ? s.closing : "",
           "",
         ],
-        ["", "", "", totDr, totCr, ""],
+        ["", "", "Total", s.totDr, s.totCr, ""],
       ],
       columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
     };
   };
+
+  const doExport = (kind: "pdf" | "word" | "print") => {
+    if (selected.size === 0) {
+      toast.error("Tick at least one ledger first.");
+      return;
+    }
+    if (!bulk || !meta) {
+      toast.error("Loading ledgers… try again in a moment.");
+      return;
+    }
+    const tables = sections.map((s, i) => sectionTable(s, i === 0));
+    const name = selected.size === 1 ? `ledger-${sections[0]?.account.code}` : "account-ledgers";
+    if (kind === "pdf") exportPDF(meta, tables, `${name}.pdf`);
+    else if (kind === "word") exportWord(meta, tables, `${name}.doc`);
+    else printTables(meta, tables);
+  };
+
+  // ---------- Trial balance (kept as a secondary tab) ----------
+  const trialBalance = useQuery(
+    api.api.trialBalance,
+    societyId ? { societyId, fromDate: from, toDate: to } : "skip",
+  ) as TrialBalanceRow[] | undefined;
 
   const buildTrialTable = (): TableSpec => {
     const rows = (trialBalance ?? []).map((r) => [r.code, r.name, r.debit, r.credit]);
@@ -175,110 +273,19 @@ export default function GeneralLedger() {
       }
     : null;
 
-  const doExport = (kind: "pdf" | "word" | "print", table: TableSpec, m: ExportMeta, name: string) => {
-    if (kind === "pdf") exportPDF(m, [table], name);
-    else if (kind === "word") exportWord(m, [table], name.replace(".pdf", ".doc"));
-    else printTables(m, [table]);
-  };
-
-  const sortedAccounts = (accounts ?? [])
-    .slice()
-    .sort((a, b) => a.code.localeCompare(b.code));
-  const allAccountsSelected =
-    sortedAccounts.length > 0 && selectedAccounts.size === sortedAccounts.length;
-
-  const toggleAllAccounts = (checked: boolean) =>
-    setSelectedAccounts(checked ? new Set(sortedAccounts.map((a) => a._id)) : new Set());
-  const toggleAccount = (id: string, checked: boolean) =>
-    setSelectedAccounts((s) => {
-      const next = new Set(s);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-
-  /** Selection-wise export: one ledger section per ticked account. */
-  const bulk = useQuery(
-    api.api.generalLedgersBulk,
-    societyId && selectedAccounts.size > 0
-      ? {
-          societyId,
-          accountIds: [...selectedAccounts] as Id<"accounts">[],
-          fromDate: from,
-          toDate: to,
-        }
-      : "skip",
-  ) as { accountId: Id<"accounts">; account: Account | null; rows: LedgerRow[] }[] | undefined;
-
-  const doExportSelected = (kind: "pdf" | "word" | "print") => {
-    if (selectedAccounts.size === 0) {
-      toast.error("Tick at least one account first.");
-      return;
-    }
-    if (!bulk || !society) {
-      toast.error("Loading selected ledgers… try again in a moment.");
-      return;
-    }
-    const m: ExportMeta = {
-      societyName: society.name,
-      societyAddress: [society.address, society.city, society.state, society.pincode]
-        .filter(Boolean)
-        .join(", "),
-      registrationNo: society.registrationNo,
-      title: "GENERAL LEDGER — SELECTED ACCOUNTS",
-      subtitle: `For the period ${formatDate(from)} to ${formatDate(to)} · ${selectedAccounts.size} accounts`,
-      signatures,
-    };
-    const order = sortedAccounts.filter((a) => selectedAccounts.has(a._id));
-    const tables: TableSpec[] = order.map((acc) => {
-      const entry = bulk.find((b) => b.accountId === acc._id);
-      const rows = entry?.rows ?? [];
-      const body: (string | number)[][] = [];
-      if (acc.openingBalance !== 0) {
-        body.push([
-          "", "",
-          acc.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
-          acc.openingBalance > 0 ? acc.openingBalance : "",
-          acc.openingBalance < 0 ? -acc.openingBalance : "",
-          "",
-        ]);
-      }
-      let totDr = 0;
-      let totCr = 0;
-      for (const r of rows) {
-        totDr += r.debit;
-        totCr += r.credit;
-        body.push([
-          formatDate(r.date),
-          r.voucherNo,
-          `${r.debit > 0 ? "To " : "By "}${r.particulars}${r.note ? `\n${r.note}` : ""}`,
-          r.debit || "",
-          r.credit || "",
-          drCr(r.balance),
-        ]);
-      }
-      const closing = rows.length > 0 ? rows[rows.length - 1].balance : acc.openingBalance;
-      return {
-        sectionTitle: `${acc.code}  ${acc.name}`.toUpperCase(),
-        head: ["Date", "Voucher No", "Narration", "Debit", "Credit", "Balance"],
-        body: body.length > 0 ? body : [["", "", "No transactions in this period", "", "", ""]],
-        foot: [
-          ["", "", closing >= 0 ? "To Closing balance cd" : "By Closing balance cd", closing < 0 ? -closing : "", closing >= 0 ? closing : "", ""],
-          ["", "", "", totDr, totCr, ""],
-        ],
-        columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
-      };
-    });
-    if (kind === "pdf") exportPDF(m, tables, `general-ledgers-selected.pdf`);
-    else if (kind === "word") exportWord(m, tables, `general-ledgers-selected.doc`);
-    else printTables(m, tables);
+  const doExportTrial = (kind: "pdf" | "word" | "print") => {
+    if (!tbMeta) return;
+    const table = buildTrialTable();
+    if (kind === "pdf") exportPDF(tbMeta, [table], "trial-balance.pdf");
+    else if (kind === "word") exportWord(tbMeta, [table], "trial-balance.doc");
+    else printTables(tbMeta, [table]);
   };
 
   return (
     <div>
       <PageHeader
         title="General Ledger"
-        description="Account-wise debit/credit statement with running balance, plus a full trial balance across all ledgers."
+        description="Account ledger in the classic format — tick ledgers, set the period and options, preview, then print or download."
       />
 
       <Tabs defaultValue="ledger">
@@ -288,152 +295,214 @@ export default function GeneralLedger() {
         </TabsList>
 
         <TabsContent value="ledger" className="mt-6">
-          <div className="mb-6 grid gap-4 rounded-lg border p-5 sm:grid-cols-5">
-            <div className="space-y-2 sm:col-span-2">
-              <Label>Account</Label>
-              <Select value={accountId || undefined} onValueChange={setAccountId}>
-                <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
-                <SelectContent>
-                  {(accounts ?? [])
-                    .slice()
-                    .sort((a, b) => a.code.localeCompare(b.code))
-                    .map((a) => (
-                      <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+          {/* ---- Ledger selection panel (legacy layout) ---- */}
+          <div className="rounded-lg border">
+            <div className="border-b bg-muted/50 px-4 py-2 text-sm font-medium">Ledger</div>
+            <div className="grid gap-6 p-4 lg:grid-cols-[1fr_320px]">
+              {/* Left: checkbox list */}
+              <div className="overflow-hidden rounded-md border">            <div className="grid grid-cols-[18px_36px_90px_1fr] items-center border-b bg-muted/50 px-2 py-1.5 text-xs font-semibold">
+              <span />
+              <Checkbox
+                checked={allSelected}
+                onCheckedChange={(c) => toggleAll(c === true)}
+                aria-label="Select all ledgers"
+              />
+              <span>Ledger Code</span>
+              <span>Ledger Name</span>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="gl-from">From</Label>
-              <Input id="gl-from" type="date" value={from} onChange={(e) => { setFrom(e.target.value); setMonth(""); }} />
+            <div className="max-h-56 overflow-y-auto">
+              {sortedAccounts.map((a, idx) => (
+                <div
+                  key={a._id}
+                  onClick={() => setCursor(idx)}
+                  className={`grid cursor-default grid-cols-[18px_36px_90px_1fr] items-center border-b px-2 py-1.5 text-sm last:border-b-0 ${
+                    cursor === idx ? "bg-accent/60" : "hover:bg-accent/30"
+                  }`
+                  }
+                >
+                  <span className="text-[10px] leading-none text-foreground">{cursor === idx ? "▶" : ""}</span>
+                  <Checkbox
+                    checked={selected.has(a._id)}
+                    onCheckedChange={(c) => toggleAccount(a._id, c === true)}
+                    aria-label={`Select ${a.name}`}
+                  />
+                  <span className="font-mono text-xs">{a.code}</span>
+                  <span className="truncate uppercase">{a.name}</span>
+                </div>
+              ))}
+                  {sortedAccounts.length === 0 && (
+                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      No ledgers yet — add accounts under Chart of Accounts.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Right: date range + report options */}
+              <div className="space-y-3">
+                <div className="grid grid-cols-[84px_1fr] items-center gap-2">
+                  <Label htmlFor="gl-from" className="text-sm">From Date</Label>
+                  <Input
+                    id="gl-from"
+                    type="date"
+                    value={from}
+                    onChange={(e) => { setFrom(e.target.value); setMonth(""); }}
+                  />
+                </div>
+                <div className="grid grid-cols-[84px_1fr] items-center gap-2">
+                  <Label htmlFor="gl-to" className="text-sm">To Date</Label>
+                  <Input
+                    id="gl-to"
+                    type="date"
+                    value={to}
+                    onChange={(e) => { setTo(e.target.value); setMonth(""); }}
+                  />
+                </div>
+                <div className="grid grid-cols-[84px_1fr] items-center gap-2">
+                  <Label htmlFor="gl-month" className="text-sm text-muted-foreground">Month</Label>
+                  <Input id="gl-month" type="month" value={month} onChange={(e) => applyMonth(e.target.value)} />
+                </div>
+                <div className="space-y-2 pt-1">
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={skipPage} onCheckedChange={(c) => setSkipPage(c === true)} />
+                    Skip Page After Ledger
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={printNarration} onCheckedChange={(c) => setPrintNarration(c === true)} />
+                    Print Narration
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={detailed} onCheckedChange={(c) => setDetailed(c === true)} />
+                    Show Detailed Entries
+                  </label>
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="gl-to">To</Label>
-              <Input id="gl-to" type="date" value={to} onChange={(e) => { setTo(e.target.value); setMonth(""); }} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="gl-month">Month</Label>
-              <Input id="gl-month" type="month" value={month} onChange={(e) => applyMonth(e.target.value)} />
+            {/* Action bar */}
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3">
+              <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+                Print
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+                PDF
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+                Word
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelected(new Set());
+                  setMonth("");
+                  const p = effectiveFyPeriod(society);
+                  setFrom(p.from);
+                  setTo(p.to);
+                }}
+              >
+                Exit
+              </Button>
             </div>
           </div>
 
-          {/* Selection-wise printing: tick accounts and export their ledgers together */}
-          <details className="mb-6 rounded-lg border p-4">
-            <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium">
-              <ListChecks className="size-4 text-primary" />
-              Print / download multiple accounts (selection-wise)
-              {selectedAccounts.size > 0 && (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                  {selectedAccounts.size} selected
-                </span>
-              )}
-            </summary>
-            <div className="mt-4 space-y-3">
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={allAccountsSelected}
-                  onCheckedChange={(c) => toggleAllAccounts(c === true)}
-                />
-                Select all accounts
-              </label>
-              <div className="grid max-h-48 gap-1 overflow-y-auto rounded-md border p-3 sm:grid-cols-3">
-                {sortedAccounts.map((a) => (
-                  <label key={a._id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={selectedAccounts.has(a._id)}
-                      onCheckedChange={(c) => toggleAccount(a._id, c === true)}
-                    />
-                    <span className="font-mono text-xs text-muted-foreground">{a.code}</span>
-                    <span className="truncate">{a.name}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled={selectedAccounts.size === 0}
-                  onClick={() => doExportSelected("pdf")}>
-                  <Download className="size-4" /> PDF selected ({selectedAccounts.size})
-                </Button>
-                <Button variant="outline" size="sm" disabled={selectedAccounts.size === 0}
-                  onClick={() => doExportSelected("word")}>
-                  <FileText className="size-4" /> Word selected
-                </Button>
-                <Button variant="outline" size="sm" disabled={selectedAccounts.size === 0}
-                  onClick={() => doExportSelected("print")}>
-                  <Printer className="size-4" /> Print selected
-                </Button>
-              </div>
-            </div>
-          </details>
-
-          {!accountId ? (
-            <EmptyHint>Select an account to view its ledger.</EmptyHint>
-          ) : (
-            <>
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">
-                  Closing: <span className="font-medium text-foreground tabular-nums">{formatINR(closing)}</span>
-                </p>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => meta && doExport("pdf", buildLedgerTable(), meta, `ledger-${account?.code}.pdf`)}>
-                    <Download className="size-4" /> PDF
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => meta && doExport("word", buildLedgerTable(), meta, `ledger-${account?.code}.doc`)}>
-                    <FileText className="size-4" /> Word
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => meta && doExport("print", buildLedgerTable(), meta, "")}>
-                    <Printer className="size-4" /> Print
-                  </Button>
+          {/* ---- Live report preview (mirrors the printed output) ---- */}
+          <div className="mt-6">
+            {!society || selected.size === 0 ? (
+              <EmptyHint>Tick one or more ledgers above to build the Account Ledger report.</EmptyHint>
+            ) : !bulk ? (
+              <EmptyHint>Loading ledgers…</EmptyHint>
+            ) : (
+              <ReportPreview title="Main Report" onPrint={() => doExport("print")}>
+                <div className="text-center">
+                  <p className="text-base font-bold tracking-tight">{society.name.toUpperCase()}</p>
+                  {([society.address, society.city, society.state, society.pincode].filter(Boolean).join(", ") || null) && (
+                    <p className="text-[11px] text-slate-600">
+                      {[society.address, society.city, society.state, society.pincode].filter(Boolean).join(", ")}
+                    </p>
+                  )}
+                  <p className="mt-3 text-sm font-bold underline underline-offset-4">ACCOUNT LEDGER</p>
+                  <p className="text-[11px] text-slate-600">For the period {formatDate(from)} to {formatDate(to)}</p>
                 </div>
-              </div>
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Date</TableHead>
-                      <TableHead>Voucher</TableHead>
-                      <TableHead>Particulars</TableHead>
-                      <TableHead className="text-right">Debit</TableHead>
-                      <TableHead className="text-right">Credit</TableHead>
-                      <TableHead className="text-right">Balance</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {account && account.openingBalance !== 0 && (
-                      <TableRow className="bg-accent/30">
-                        <TableCell colSpan={2} />
-                        <TableCell className="font-medium">
-                          {account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old"}
-                        </TableCell>
-                        <TableCell className="text-right"><RightMoney value={account.openingBalance} /></TableCell>
-                        <TableCell className="text-right">—</TableCell>
-                        <TableCell className="text-right"><RightMoney value={account.openingBalance} /></TableCell>
-                      </TableRow>
-                    )}
-                    {(ledger?.rows ?? []).map((r, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="whitespace-nowrap">{formatDate(r.date)}</TableCell>
-                        <TableCell className="font-mono text-xs">{r.voucherNo}</TableCell>
-                        <TableCell>
-                          {r.particulars}
-                          {r.note && <span className="block text-xs text-muted-foreground">{r.note}</span>}
-                        </TableCell>
-                        <TableCell className="text-right">{r.debit ? <RightMoney value={r.debit} /> : "—"}</TableCell>
-                        <TableCell className="text-right">{r.credit ? <RightMoney value={r.credit} /> : "—"}</TableCell>
-                        <TableCell className="text-right"><RightMoney value={r.balance} /></TableCell>
-                      </TableRow>
-                    ))}
-                    <TableRow className="border-t-2 hover:bg-transparent">
-                      <TableCell colSpan={3} className="font-semibold">
-                        {closing >= 0 ? "To Closing balance cd" : "By Closing balance cd"}
-                      </TableCell>
-                      <TableCell colSpan={2} />
-                      <TableCell className="text-right font-semibold"><RightMoney value={closing} /></TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            </>
-          )}
+
+                <div className="mt-6 space-y-8">
+                  {sections.map((s, si) => (
+                    <div key={s.account._id} className={si > 0 && skipPage ? "border-t border-dashed pt-8" : ""}>
+                      <p className="text-[13px] font-bold">{s.title}</p>
+                      <table className="mt-2 w-full border-collapse text-[12px]">
+                        <thead>
+                          <tr className="border-y border-slate-800 text-left">
+                            <th className="w-20 py-1.5 pr-2 font-bold">Date</th>
+                            <th className="w-24 py-1.5 pr-2 font-bold">Voucher No</th>
+                            <th className="py-1.5 pr-2 font-bold">Narration</th>
+                            <th className="w-24 py-1.5 text-right font-bold">Debit</th>
+                            <th className="w-24 py-1.5 text-right font-bold">Credit</th>
+                            <th className="w-28 py-1.5 text-right font-bold">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {s.account.openingBalance !== 0 && (
+                            <tr>
+                              <td colSpan={3} className="py-1 pr-2">
+                                {s.account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old"}
+                              </td>
+                              <td className="py-1 text-right tabular-nums">
+                                {s.account.openingBalance > 0 ? formatMoney(s.account.openingBalance) : ""}
+                              </td>
+                              <td className="py-1 text-right tabular-nums">
+                                {s.account.openingBalance < 0 ? formatMoney(-s.account.openingBalance) : ""}
+                              </td>
+                              <td />
+                            </tr>
+                          )}
+                          {s.items.map((r, i) => (
+                            <tr key={i} className="align-top">
+                              <td className="whitespace-nowrap py-1 pr-2">{formatDate(r.date)}</td>
+                              <td className="py-1 pr-2 font-mono text-[11px]">{r.voucherNo}</td>
+                              <td className="py-1 pr-2">
+                                {r.narration.map((line, j) => (
+                                  <span key={j} className={j > 0 ? "block text-[11px] text-slate-600" : "block"}>
+                                    {line}
+                                  </span>
+                                ))}
+                              </td>
+                              <td className="py-1 text-right tabular-nums">{r.debit ? formatMoney(r.debit) : ""}</td>
+                              <td className="py-1 text-right tabular-nums">{r.credit ? formatMoney(r.credit) : ""}</td>
+                              <td className="py-1 text-right tabular-nums">{drCr(r.balance)}</td>
+                            </tr>
+                          ))}
+                          {s.items.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="py-2 text-center text-slate-500">
+                                No transactions in this period
+                              </td>
+                            </tr>
+                          )}
+                          <tr className="border-t border-slate-800">
+                            <td colSpan={3} className="py-1 pr-2 font-semibold">
+                              {s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd"}
+                            </td>
+                            <td className="py-1 text-right font-semibold tabular-nums">
+                              {s.closing < 0 ? formatMoney(-s.closing) : ""}
+                            </td>
+                            <td className="py-1 text-right font-semibold tabular-nums">
+                              {s.closing >= 0 ? formatMoney(s.closing) : ""}
+                            </td>
+                            <td />
+                          </tr>
+                          <tr className="border-t border-slate-300">
+                            <td colSpan={3} className="py-1 pr-2 font-semibold">Total</td>
+                            <td className="py-1 text-right font-semibold tabular-nums">{formatMoney(s.totDr)}</td>
+                            <td className="py-1 text-right font-semibold tabular-nums">{formatMoney(s.totCr)}</td>
+                            <td />
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              </ReportPreview>
+            )}
+          </div>
         </TabsContent>
 
         <TabsContent value="trial" className="mt-6">
@@ -442,14 +511,14 @@ export default function GeneralLedger() {
               {(trialBalance ?? []).length} ledger accounts with activity
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => tbMeta && doExport("pdf", buildTrialTable(), tbMeta, "trial-balance.pdf")}>
-                <Download className="size-4" /> PDF
+              <Button variant="outline" size="sm" onClick={() => doExportTrial("pdf")}>
+                PDF
               </Button>
-              <Button variant="outline" size="sm" onClick={() => tbMeta && doExport("word", buildTrialTable(), tbMeta, "trial-balance.doc")}>
-                <FileText className="size-4" /> Word
+              <Button variant="outline" size="sm" onClick={() => doExportTrial("word")}>
+                Word
               </Button>
-              <Button variant="outline" size="sm" onClick={() => tbMeta && doExport("print", buildTrialTable(), tbMeta, "")}>
-                <Printer className="size-4" /> Print
+              <Button variant="outline" size="sm" onClick={() => doExportTrial("print")}>
+                Print
               </Button>
             </div>
           </div>
@@ -493,4 +562,3 @@ export default function GeneralLedger() {
     </div>
   );
 }
-
