@@ -123,6 +123,36 @@ export const TEMPLATES = {
       Narration: "MSEB April",
     },
   ],
+  transactions: [
+    {
+      "Voucher No.": "860",
+      Date: "25/08/2026",
+      Vouchers: "Receipts",
+      "Ledger Code": "B703",
+      "Ledger Name": "Ramesh Kumar",
+      Amount: 1257,
+      "Cash/Bank": "THE MAHALAXMI CO-OP BANK LTD",
+      Narration: "OF AUG-2026",
+      "Cheque No.": "RTGS",
+      "Chq. Date": "25/08/2026",
+      "Bank Name": "",
+      ChqClearDate: "25/08/2026",
+    },
+    {
+      "Voucher No.": "861",
+      Date: "26/08/2026",
+      Vouchers: "Payments",
+      "Ledger Code": "4000",
+      "Ledger Name": "Electricity Charges",
+      Amount: 18500,
+      "Cash/Bank": "Bank Account",
+      Narration: "MSEB August",
+      "Cheque No.": "100100",
+      "Chq. Date": "26/08/2026",
+      "Bank Name": "Bank Account",
+      ChqClearDate: "26/08/2026",
+    },
+  ],
 };
 
 export function downloadMemberTariffTemplate(
@@ -162,6 +192,13 @@ export function downloadTemplate(kind: keyof typeof TEMPLATES) {
   if (kind === "receipts") {
     downloadWorkbook(
       [{ name: "Receipts", rows: rows as Record<string, unknown>[] }],
+      filename,
+    );
+    return;
+  }
+  if (kind === "transactions") {
+    downloadWorkbook(
+      [{ name: "Transactions", rows: rows as Record<string, unknown>[] }],
       filename,
     );
     return;

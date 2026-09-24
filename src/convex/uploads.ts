@@ -563,3 +563,275 @@ export const uploadPayments = mutation({
     return result;
   },
 });
+
+/**
+ * Legacy "TransactionImport" register format — one row per voucher with
+ * Voucher No., Date, Voucher type (Receipts/Payments/Journal), Ledger
+ * Code/Name, Amount, Cash/Bank, Narration, Cheque No., Chq. Date, Bank Name
+ * and ChqClearDate columns. The ledger resolves to a member (by code, name or
+ * flat) for member receipts/refunds, otherwise to an account. Voucher numbers
+ * are always generated fresh — the sheet's numbers are not reused.
+ */
+export const uploadTransactions = mutation({
+  args: {
+    societyId: v.id("societies"),
+    rows: v.array(v.record(v.string(), v.any())),
+    defaultType: v.union(
+      v.literal("receipt"),
+      v.literal("payment"),
+      v.literal("journal"),
+    ),
+    defaultBankCashAccountId: v.id("accounts"),
+  },
+  handler: async (
+    ctx,
+    { societyId, rows, defaultType, defaultBankCashAccountId },
+  ): Promise<Result> => {
+    const society = await requireSociety(ctx, societyId);
+    const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+    const accounts = await ctx.db
+      .query("accounts")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const bills = await ctx.db
+      .query("bills")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const receivableId =
+      society.receivableAccountId ?? accounts.find((a) => a.kind === "receivable")?._id;
+    if (!receivableId)
+      throw new Error(
+        "No Members Receivable account found — add one in Chart of Accounts first.",
+      );
+    const fy = societyFyPeriod(society);
+    const defaultBank =
+      accounts.find((a) => a._id === defaultBankCashAccountId) ??
+      accounts.find((a) => a.kind === "bank_cash");
+
+    const findAccountBy = (
+      code?: string,
+      name?: string,
+    ): Doc<"accounts"> | undefined => {
+      if (code) {
+        const c = code.toLowerCase().trim();
+        const a = accounts.find((a) => a.code.toLowerCase() === c);
+        if (a) return a;
+      }
+      if (name) {
+        const n = name.toLowerCase().trim();
+        return accounts.find((a) => a.name.toLowerCase() === n);
+      }
+      return undefined;
+    };
+    const findMemberBy = (
+      code?: string,
+      name?: string,
+    ): Doc<"members"> | undefined => {
+      if (code) {
+        const c = code.toLowerCase().trim();
+        const m = members.find((m) => m.code.toLowerCase() === c);
+        if (m) return m;
+      }
+      if (name) {
+        const n = name.toLowerCase().trim();
+        return members.find(
+          (m) => m.name.toLowerCase() === n || m.flatNo?.toLowerCase() === n,
+        );
+      }
+      return undefined;
+    };
+    const findBankBy = (text?: string): Doc<"accounts"> | undefined => {
+      if (!text) return undefined;
+      const t = text.toLowerCase().trim();
+      return accounts.find(
+        (a) =>
+          a.kind === "bank_cash" &&
+          (a.name.toLowerCase().includes(t) || t.includes(a.name.toLowerCase())),
+      );
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (Object.values(row).every((v) => v === undefined || v === null || String(v).trim() === ""))
+        continue;
+      const typeRaw = (
+        str(row, ["vouchertype", "vouchers", "voucher", "type", "vchtype"]) ?? ""
+      ).toLowerCase();
+      if (typeRaw.startsWith("contra")) {
+        result.errors.push(
+          `Row ${i + 2}: contra entries are not supported — record them as Journal.`,
+        );
+        continue;
+      }
+      const kind: "receipt" | "payment" | "journal" = typeRaw.startsWith("receipt")
+        ? "receipt"
+        : typeRaw.startsWith("payment") || typeRaw.startsWith("pay")
+          ? "payment"
+          : typeRaw.startsWith("journal") || typeRaw.startsWith("jv")
+            ? "journal"
+            : defaultType;
+      const ledgerCode = str(row, ["ledgercode", "code", "acctcode", "accountcode"]);
+      const ledgerName = str(row, [
+        "ledgername",
+        "ledger",
+        "name",
+        "account",
+        "particulars",
+        "party",
+      ]);
+      const amount = num(row, ["amount", "amt", "value"]);
+      if ((!ledgerCode && !ledgerName) || amount === undefined || amount <= 0) {
+        result.errors.push(
+          `Row ${i + 2}: needs a ledger (code or name) and a positive amount.`,
+        );
+        continue;
+      }
+      const date = normalizeDate(str(row, ["date", "voucherdate"]));
+      if (!date) {
+        result.errors.push(`Row ${i + 2}: date missing or unreadable (use DD/MM/YYYY).`);
+        continue;
+      }
+      if (date < fy.from || date > fy.to) {
+        result.errors.push(
+          `Row ${i + 2}: date ${date} is outside the financial year (${fy.from} to ${fy.to}) — skipped.`,
+        );
+        continue;
+      }
+      const cashBank = str(row, ["cashbank", "bankcash", "mode", "paidfrom", "receivedin"]);
+      const bankName = str(row, ["bankname", "bank"]);
+      const chequeNo = str(row, ["chequeno", "chqno", "reference", "ref"]);
+      const narration = str(row, ["narration", "remarks", "note"]);
+      const bank = findBankBy(cashBank) ?? findBankBy(bankName) ?? defaultBank;
+      if (!bank) {
+        result.errors.push(`Row ${i + 2}: no bank/cash account available.`);
+        continue;
+      }
+      const narrationFull =
+        [narration, bankName ? `Bank: ${bankName}` : undefined]
+          .filter(Boolean)
+          .join(" — ") || undefined;
+
+      const member = findMemberBy(ledgerCode, ledgerName);
+      const account = member ? undefined : findAccountBy(ledgerCode, ledgerName);
+      let type: "member_receipt" | "other_receipt" | "payment" | "journal";
+      let memberId: Id<"members"> | undefined;
+      let lines: { accountId: Id<"accounts">; debit: number; credit: number; note?: string }[];
+      if (kind === "receipt") {
+        if (member) {
+          type = "member_receipt";
+          memberId = member._id;
+          lines = [
+            { accountId: bank._id, debit: amount, credit: 0 },
+            { accountId: receivableId, debit: 0, credit: amount, note: cashBank },
+          ];
+        } else if (account) {
+          type = "other_receipt";
+          lines = [
+            { accountId: bank._id, debit: amount, credit: 0 },
+            { accountId: account._id, debit: 0, credit: amount, note: cashBank },
+          ];
+        } else {
+          result.errors.push(
+            `Row ${i + 2}: no member or ledger matches "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}".`,
+          );
+          continue;
+        }
+      } else if (kind === "payment") {
+        type = "payment";
+        if (member) {
+          // Payment to a member = refund against their receivable.
+          memberId = member._id;
+          lines = [
+            { accountId: receivableId, debit: amount, credit: 0 },
+            { accountId: bank._id, debit: 0, credit: amount },
+          ];
+        } else if (account) {
+          lines = [
+            { accountId: account._id, debit: amount, credit: 0 },
+            { accountId: bank._id, debit: 0, credit: amount },
+          ];
+        } else {
+          result.errors.push(
+            `Row ${i + 2}: no ledger matches "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}".`,
+          );
+          continue;
+        }
+      } else {
+        // Journal: Dr ledger, Cr contra from the Cash/Bank or Bank Name column.
+        type = "journal";
+        const contra =
+          findBankBy(cashBank) ??
+          findBankBy(bankName) ??
+          findAccountBy(undefined, cashBank) ??
+          findAccountBy(undefined, bankName);
+        if (!contra) {
+          result.errors.push(
+            `Row ${i + 2}: journal needs a contra ledger in the Cash/Bank or Bank Name column.`,
+          );
+          continue;
+        }
+        if (member) {
+          memberId = member._id;
+          lines = [
+            { accountId: receivableId, debit: amount, credit: 0 },
+            { accountId: contra._id, debit: 0, credit: amount },
+          ];
+        } else if (account) {
+          lines = [
+            { accountId: account._id, debit: amount, credit: 0 },
+            { accountId: contra._id, debit: 0, credit: amount },
+          ];
+        } else {
+          result.errors.push(
+            `Row ${i + 2}: no ledger matches "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}".`,
+          );
+          continue;
+        }
+      }
+
+      const n = await nextNumber(ctx, `${societyId}:voucher:${type}`);
+      // FIFO settlement against unpaid bills for member receipts.
+      let allocations: { billId: Id<"bills">; amount: number }[] | undefined;
+      if (type === "member_receipt" && member) {
+        const memberBills = bills
+          .filter((b) => b.memberId === member._id && b.paidAmount < b.total)
+          .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
+        let remaining = amount;
+        const allocs: { billId: Id<"bills">; amount: number }[] = [];
+        for (const b of memberBills) {
+          if (remaining <= 0) break;
+          const take = Math.min(b.total - b.paidAmount, remaining);
+          allocs.push({ billId: b._id, amount: take });
+          remaining -= take;
+        }
+        if (allocs.length > 0) allocations = allocs;
+      }
+      await ctx.db.insert("vouchers", {
+        societyId,
+        type,
+        voucherNo: `${VOUCHER_PREFIX[type]}-${pad(n)}`,
+        date,
+        memberId,
+        mode: cashBank ?? (chequeNo ? "Cheque" : undefined),
+        bankCashAccountId: bank._id,
+        reference: chequeNo,
+        narration: narrationFull,
+        total: amount,
+        lines,
+        allocations,
+      });
+      if (allocations) {
+        for (const a of allocations) {
+          const bill = bills.find((b) => b._id === a.billId)!;
+          await applyAllocationToBill(ctx, bill, a.amount);
+        }
+      }
+      result.inserted++;
+    }
+    return result;
+  },
+});

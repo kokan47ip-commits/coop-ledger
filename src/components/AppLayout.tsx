@@ -18,6 +18,7 @@ import {
   BookOpen,
   Building2,
   ChevronDown,
+  FileInput,
   FileSpreadsheet,
   FileText,
   FolderOpen,
@@ -95,6 +96,7 @@ const NAV: NavGroup[] = [
   {
     title: "Data",
     items: [
+      { to: "/app/transaction-import", label: "Transaction Import", icon: <FileInput className="size-4" /> },
       { to: "/app/uploads", label: "Excel Uploads", icon: <FileSpreadsheet className="size-4" /> },
     ],
   },
@@ -118,6 +120,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/balance-sheet": "Balance Sheet",
   "/app/receipt-payment": "Receipt & Payment",
   "/app/uploads": "Excel Uploads",
+  "/app/transaction-import": "Transaction Import",
 };
 
 function navGroupHasActive(group: NavGroup, pathname: string) {
