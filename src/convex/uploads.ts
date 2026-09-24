@@ -578,6 +578,8 @@ export const uploadPayments = mutation({
  *  • Payments  — Ledger Code is a ledger CODE from Chart of Accounts; a
  *    member flat/code as a last resort books a refund to that member.
  *  • Journal   — member flat/code first (receivable contra), else account.
+ *  • Cash/Bank — the bank/cash ACCOUNT CODE; the account's real name comes
+ *    from the system. The sheet's Bank Name text is display-only.
  *
  * Voucher numbers are always generated fresh — the sheet's numbers are not
  * reused.
@@ -676,6 +678,13 @@ export const uploadTransactions = mutation({
           (a.name.toLowerCase().includes(t) || t.includes(a.name.toLowerCase())),
       );
     };
+    /** Cash/Bank column carries a bank/cash ACCOUNT CODE — the system
+     *  supplies the account name. */
+    const findBankByCode = (code?: string): Doc<"accounts"> | undefined => {
+      if (!code) return undefined;
+      const c = code.toLowerCase().trim();
+      return accounts.find((a) => a.kind === "bank_cash" && a.code.toLowerCase() === c);
+    };
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -728,15 +737,21 @@ export const uploadTransactions = mutation({
       const bankName = str(row, ["bankname", "bank"]);
       const chequeNo = str(row, ["chequeno", "chqno", "reference", "ref"]);
       const narration = str(row, ["narration", "remarks", "note"]);
-      const bank = findBankBy(cashBank) ?? findBankBy(bankName) ?? defaultBank;
+      // Cash/Bank is the bank/cash ACCOUNT CODE; name-text sheets still work
+      // through the fuzzy-name fallback. A present-but-unmatched code declines
+      // the row — the sheet's Bank Name text is display-only and never trusted.
+      const bank =
+        findBankByCode(cashBank) ??
+        findBankBy(cashBank) ??
+        findBankBy(bankName) ??
+        (cashBank ? undefined : defaultBank);
       if (!bank) {
-        result.errors.push(`Row ${i + 2}: no bank/cash account available.`);
+        result.errors.push(
+          `Row ${i + 2}: no bank/cash account matches "${cashBank}" — check the code in Chart of Accounts.`,
+        );
         continue;
       }
-      const narrationFull =
-        [narration, bankName ? `Bank: ${bankName}` : undefined]
-          .filter(Boolean)
-          .join(" — ") || undefined;
+      const narrationFull = narration || undefined;
 
       // Resolution by book type (see handler doc): receipts treat the code
       // column as the member's flat no; payments treat it as a ledger code;
@@ -799,8 +814,10 @@ export const uploadTransactions = mutation({
         // Journal: Dr ledger, Cr contra from the Cash/Bank or Bank Name column.
         type = "journal";
         const contra =
+          findBankByCode(cashBank) ??
           findBankBy(cashBank) ??
           findBankBy(bankName) ??
+          findAccountBy(cashBank, undefined) ??
           findAccountBy(undefined, cashBank) ??
           findAccountBy(undefined, bankName);
         if (!contra) {
@@ -851,7 +868,7 @@ export const uploadTransactions = mutation({
         voucherNo: `${VOUCHER_PREFIX[type]}-${pad(n)}`,
         date,
         memberId,
-        mode: cashBank ?? (chequeNo ? "Cheque" : undefined),
+        mode: bank.name,
         bankCashAccountId: bank._id,
         reference: chequeNo,
         narration: narrationFull,

@@ -27,6 +27,32 @@ const rowKind = (typeText: string, fallback: "receipt" | "payment" | "journal") 
 };
 
 /**
+ * Auto-fetches the bank/cash account from the Cash/Bank column, which carries
+ * the ACCOUNT CODE. The system supplies the account's real name; the sheet's
+ * Bank Name text is display-only. Returns the account, or undefined when the
+ * code is present but doesn't match any bank/cash account (bad code).
+ */
+const resolveBank = (
+  code: string,
+  accounts: Doc<"accounts">[] | undefined,
+): Doc<"accounts"> | undefined | "none" => {
+  if (!code) return "none"; // no code in the sheet → handled at save time
+  if (!accounts) return undefined; // masters not loaded yet
+  const byCode = accounts.find(
+    (a) => a.kind === "bank_cash" && a.code.toLowerCase() === code.toLowerCase(),
+  );
+  if (byCode) return byCode;
+  // Legacy name-text tolerance: accept a full account name too.
+  const byName = accounts.find(
+    (a) =>
+      a.kind === "bank_cash" &&
+      (a.name.toLowerCase().includes(code.toLowerCase()) ||
+        code.toLowerCase().includes(a.name.toLowerCase())),
+  );
+  return byName;
+};
+
+/**
  * Auto-fetches the ledger name from the system for a row. Receipts: Ledger
  * Code is the member's FLAT NO (wing+flat, member code or name). Payments:
  * Ledger Code is a ledger CODE from Chart of Accounts (member flat as refund
@@ -98,13 +124,18 @@ const buildRowsOut = (
       if (s === "") return "";
       return c.label === "Amount" ? displayAmount(s) : displayDate(s);
     });
-    // Replace the sheet's Ledger Name with the system-fetched name —
-    // receipts resolve via the flat no, payments via the ledger code.
+    // Replace the sheet's Ledger Name with the system-fetched name and the
+    // Cash/Bank column with the account's system name: both columns carry
+    // CODES (member flat no / ledger code, bank-cash code) and the names come
+    // from the system. The sheet's Bank Name text is display-only.
     const resolution = resolveLedger(cells[2], cells[3], cells[4], accounts, members, defaultType);
     if (resolution.kind !== "none") cells[4] = resolution.name;
+    const bank = resolveBank(cells[6], accounts);
+    if (bank && bank !== "none") cells[10] = bank.name;
     const problems: string[] = [];
     if (resolution.kind === "none")
       problems.push(rowKind(cells[2], defaultType) === "payment" ? "Ledger" : "Member");
+    if (cells[6] && (bank === undefined || bank === "none")) problems.push("Bank");
     if (toNum(resolved["Amount"] ? row[resolved["Amount"]] : undefined) === undefined)
       problems.push("Amount");
     if (!cells[1]) problems.push("Date");
@@ -430,9 +461,10 @@ export default function TransactionImport() {
         Name, Amount, Cash/Bank, Narration, Cheque No., Chq. Date, Bank Name, ChqClearDate. For
         <strong> Receipts</strong> the Ledger Code is the member's <strong>flat no</strong>; for
         <strong> Payments</strong> and <strong>Other Receipts</strong> it is the <strong>ledger code</strong>
-        from Chart of Accounts — the Ledger Name column is filled automatically from the system and the
-        sheet's name text is ignored. Dates accept DD/MM/YYYY; amounts may include ₹ and commas. Entries
-        dated outside the financial year are declined row-wise.
+        from Chart of Accounts. <strong>Cash/Bank</strong> carries the bank/cash <strong>account code</strong>.
+        The Ledger Name and Bank Name are fetched automatically from the system; the sheet's name text is
+        ignored. Dates accept DD/MM/YYYY; amounts may include ₹ and commas. Entries dated outside the
+        financial year are declined row-wise.
       </p>
     </div>
   );
