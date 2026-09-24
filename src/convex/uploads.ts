@@ -568,9 +568,19 @@ export const uploadPayments = mutation({
  * Legacy "TransactionImport" register format — one row per voucher with
  * Voucher No., Date, Voucher type (Receipts/Payments/Journal), Ledger
  * Code/Name, Amount, Cash/Bank, Narration, Cheque No., Chq. Date, Bank Name
- * and ChqClearDate columns. The ledger resolves to a member (by code, name or
- * flat) for member receipts/refunds, otherwise to an account. Voucher numbers
- * are always generated fresh — the sheet's numbers are not reused.
+ * and ChqClearDate columns.
+ *
+ * Ledger resolution follows the legacy rules and the sheet's Ledger Name is
+ * display-only — the system always supplies the real name:
+ *  • Receipts  — Ledger Code is the member's FLAT NO (wing + flat, e.g.
+ *    "B703" / "B-104-A"); the member is fetched from the register. Falls back
+ *    to member code/name, then to an account (non-member income).
+ *  • Payments  — Ledger Code is a ledger CODE from Chart of Accounts; a
+ *    member flat/code as a last resort books a refund to that member.
+ *  • Journal   — member flat/code first (receivable contra), else account.
+ *
+ * Voucher numbers are always generated fresh — the sheet's numbers are not
+ * reused.
  */
 export const uploadTransactions = mutation({
   args: {
@@ -644,6 +654,19 @@ export const uploadTransactions = mutation({
       }
       return undefined;
     };
+    /** Matches a sheet flat code like "B703", "B-104-A" or "SHOP05" against
+     *  the member's wing + flatNo regardless of separators/case. */
+    const normFlat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const findMemberByFlat = (flat?: string): Doc<"members"> | undefined => {
+      if (!flat) return undefined;
+      const f = normFlat(flat);
+      return members.find((m) => {
+        if (!m.flatNo) return false;
+        return (
+          normFlat(m.flatNo) === f || normFlat(`${m.wing ?? ""}${m.flatNo}`) === f
+        );
+      });
+    };
     const findBankBy = (text?: string): Doc<"accounts"> | undefined => {
       if (!text) return undefined;
       const t = text.toLowerCase().trim();
@@ -715,8 +738,20 @@ export const uploadTransactions = mutation({
           .filter(Boolean)
           .join(" — ") || undefined;
 
-      const member = findMemberBy(ledgerCode, ledgerName);
-      const account = member ? undefined : findAccountBy(ledgerCode, ledgerName);
+      // Resolution by book type (see handler doc): receipts treat the code
+      // column as the member's flat no; payments treat it as a ledger code;
+      // journal tries member first, then account.
+      let member: Doc<"members"> | undefined;
+      let account: Doc<"accounts"> | undefined;
+      if (kind === "payment") {
+        account = findAccountBy(ledgerCode, ledgerName);
+        member = account
+          ? undefined
+          : (findMemberByFlat(ledgerCode) ?? findMemberBy(ledgerCode, ledgerName));
+      } else {
+        member = findMemberByFlat(ledgerCode) ?? findMemberBy(ledgerCode, ledgerName);
+        account = member ? undefined : findAccountBy(ledgerCode, ledgerName);
+      }
       let type: "member_receipt" | "other_receipt" | "payment" | "journal";
       let memberId: Id<"members"> | undefined;
       let lines: { accountId: Id<"accounts">; debit: number; credit: number; note?: string }[];
@@ -736,7 +771,7 @@ export const uploadTransactions = mutation({
           ];
         } else {
           result.errors.push(
-            `Row ${i + 2}: no member or ledger matches "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}".`,
+            `Row ${i + 2}: no member matches flat no/code "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}" — add the member or correct the flat no.`,
           );
           continue;
         }
@@ -756,7 +791,7 @@ export const uploadTransactions = mutation({
           ];
         } else {
           result.errors.push(
-            `Row ${i + 2}: no ledger matches "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}".`,
+            `Row ${i + 2}: no ledger matches code/name "${[ledgerCode, ledgerName].filter(Boolean).join(" ")}" — add it in Chart of Accounts first.`,
           );
           continue;
         }

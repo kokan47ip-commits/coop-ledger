@@ -8,10 +8,123 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
+
+/** Normalises a flat code ("B-104-A", "B703", "SHOP 05") for matching. */
+const normFlat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** How the row's ledger resolves, mirroring the backend rules. */
+type LedgerResolution =
+  | { kind: "member"; name: string }
+  | { kind: "account"; name: string }
+  | { kind: "none" };
+
+const rowKind = (typeText: string, fallback: "receipt" | "payment" | "journal") => {
+  const t = (typeText ?? "").toLowerCase();
+  if (t.startsWith("receipt")) return "receipt" as const;
+  if (t.startsWith("payment") || t.startsWith("pay")) return "payment" as const;
+  if (t.startsWith("journal") || t.startsWith("jv")) return "journal" as const;
+  return fallback;
+};
+
+/**
+ * Auto-fetches the ledger name from the system for a row. Receipts: Ledger
+ * Code is the member's FLAT NO (wing+flat, member code or name). Payments:
+ * Ledger Code is a ledger CODE from Chart of Accounts (member flat as refund
+ * fallback). Journal: member first. The sheet's own name text is display-only.
+ */
+const resolveLedger = (
+  typeText: string,
+  code: string,
+  name: string,
+  accounts: Doc<"accounts">[] | undefined,
+  members: Doc<"members">[] | undefined,
+  defaultType: "receipt" | "payment" | "journal",
+): LedgerResolution => {
+  const kind = rowKind(typeText, defaultType);
+  const findMember = (): Doc<"members"> | undefined => {
+    if (!members) return undefined;
+    if (code) {
+      const f = normFlat(code);
+      const byFlat = members.find(
+        (m) =>
+          m.flatNo &&
+          (normFlat(m.flatNo) === f || normFlat(`${m.wing ?? ""}${m.flatNo}`) === f),
+      );
+      if (byFlat) return byFlat;
+      const byCode = members.find((m) => m.code.toLowerCase() === code.toLowerCase());
+      if (byCode) return byCode;
+    }
+    if (name) return members.find((m) => m.name.toLowerCase() === name.toLowerCase());
+    return undefined;
+  };
+  const findAccount = (): Doc<"accounts"> | undefined => {
+    if (!accounts) return undefined;
+    if (code) {
+      const byCode = accounts.find((a) => a.code.toLowerCase() === code.toLowerCase());
+      if (byCode) return byCode;
+    }
+    if (name) return accounts.find((a) => a.name.toLowerCase() === name.toLowerCase());
+    return undefined;
+  };
+  if (kind === "payment") {
+    const acct = findAccount();
+    if (acct) return { kind: "account", name: acct.name };
+    const mem = findMember();
+    if (mem) return { kind: "member", name: `${mem.name} (refund)` };
+    return { kind: "none" };
+  }
+  const mem = findMember();
+  if (mem) return { kind: "member", name: mem.name };
+  const acct = findAccount();
+  if (acct) return { kind: "account", name: acct.name };
+  return { kind: "none" };
+};
+
+/** Builds the preview grid rows, substituting the system-fetched ledger name. */
+const buildRowsOut = (
+  rows: Row[],
+  resolved: Record<string, string | undefined>,
+  accounts: Doc<"accounts">[] | undefined,
+  members: Doc<"members">[] | undefined,
+  defaultType: "receipt" | "payment" | "journal",
+): PreviewRow[] =>
+  rows.map((row, i) => {
+    const cells = COLS.map((c) => {
+      const key = resolved[c.label];
+      if (!key) return "";
+      const raw = row[key];
+      if (raw === undefined || raw === null) return "";
+      const s = String(raw).trim();
+      if (s === "") return "";
+      return c.label === "Amount" ? displayAmount(s) : displayDate(s);
+    });
+    // Replace the sheet's Ledger Name with the system-fetched name —
+    // receipts resolve via the flat no, payments via the ledger code.
+    const resolution = resolveLedger(cells[2], cells[3], cells[4], accounts, members, defaultType);
+    if (resolution.kind !== "none") cells[4] = resolution.name;
+    const problems: string[] = [];
+    if (resolution.kind === "none")
+      problems.push(rowKind(cells[2], defaultType) === "payment" ? "Ledger" : "Member");
+    if (toNum(resolved["Amount"] ? row[resolved["Amount"]] : undefined) === undefined)
+      problems.push("Amount");
+    if (!cells[1]) problems.push("Date");
+    const typeRaw = (cells[2] ?? "").toLowerCase();
+    if (
+      cells[2] &&
+      !typeRaw.startsWith("receipt") &&
+      !typeRaw.startsWith("payment") &&
+      !typeRaw.startsWith("pay") &&
+      !typeRaw.startsWith("journal") &&
+      !typeRaw.startsWith("jv") &&
+      !typeRaw.startsWith("contra")
+    )
+      problems.push("Type");
+    return { index: i + 2, cells, problems };
+  });
 import { useSociety } from "@/components/SocietyContext";
 import { downloadTemplate, parseExcelFile } from "@/lib/excel";
 import { CheckCircle2, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -92,6 +205,10 @@ export default function TransactionImport() {
     api.accounts.list,
     societyId ? { societyId } : "skip",
   ) as Doc<"accounts">[] | undefined;
+  const members = useQuery(
+    api.members.list,
+    societyId ? { societyId } : "skip",
+  ) as Doc<"members">[] | undefined;
   const doImport = useMutation(api.uploads.uploadTransactions);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -101,12 +218,25 @@ export default function TransactionImport() {
   const [selected, setSelected] = useState(0);
   const [preview, setPreview] = useState<{
     rows: Row[];
+    resolved: Record<string, string | undefined>;
     rowsOut: PreviewRow[];
     missing: string[];
   } | null>(null);
   const [done, setDone] = useState<Result | null>(null);
 
   const okCount = preview ? preview.rowsOut.filter((r) => r.problems.length === 0).length : 0;
+
+  // Masters (members/accounts) can arrive after the file is parsed — re-resolve
+  // the ledger names once they load. The fallback-type dropdown re-resolves too.
+  useEffect(() => {
+    if (!preview) return;
+    setPreview((p) =>
+      p
+        ? { ...p, rowsOut: buildRowsOut(p.rows, p.resolved, accounts, members, defaultType) }
+        : p,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, members, defaultType]);
 
   const status = busy
     ? "Importing…"
@@ -135,35 +265,8 @@ export default function TransactionImport() {
       const missing = COLS.filter(
         (c) => !c.keys.some((k) => have.has(k)) && REQUIRED_LABELS.includes(c.label),
       ).map((c) => c.label);
-      const rowsOut: PreviewRow[] = rows.map((row, i) => {
-        const cells = COLS.map((c) => {
-          const key = resolved[c.label];
-          if (!key) return "";
-          const raw = row[key];
-          if (raw === undefined || raw === null) return "";
-          const s = String(raw).trim();
-          if (s === "") return "";
-          return c.label === "Amount" ? displayAmount(s) : displayDate(s);
-        });
-        const problems: string[] = [];
-        if (!cells[3] && !cells[4]) problems.push("Ledger");
-        if (toNum(resolved["Amount"] ? row[resolved["Amount"]] : undefined) === undefined)
-          problems.push("Amount");
-        if (!cells[1]) problems.push("Date");
-        const typeRaw = (cells[2] ?? "").toLowerCase();
-        if (
-          cells[2] &&
-          !typeRaw.startsWith("receipt") &&
-          !typeRaw.startsWith("payment") &&
-          !typeRaw.startsWith("pay") &&
-          !typeRaw.startsWith("journal") &&
-          !typeRaw.startsWith("jv") &&
-          !typeRaw.startsWith("contra")
-        )
-          problems.push("Type");
-        return { index: i + 2, cells, problems };
-      });
-      setPreview({ rows, rowsOut, missing });
+      const rowsOut = buildRowsOut(rows, resolved, accounts, members, defaultType);
+      setPreview({ rows, resolved, rowsOut, missing });
       setSelected(0);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not read the file.");
@@ -324,10 +427,12 @@ export default function TransactionImport() {
 
       <p className="mt-4 text-xs leading-5 text-muted-foreground">
         Expected columns: Voucher No., Date, Vouchers (Receipts / Payments / Journal), Ledger Code, Ledger
-        Name, Amount, Cash/Bank, Narration, Cheque No., Chq. Date, Bank Name, ChqClearDate. Ledger Name
-        matching a member (code, name or flat) books a member receipt/refund against Members Receivable; any
-        other ledger books an other receipt or payment. Dates accept DD/MM/YYYY; amounts may include ₹ and
-        commas. Entries dated outside the financial year are declined row-wise.
+        Name, Amount, Cash/Bank, Narration, Cheque No., Chq. Date, Bank Name, ChqClearDate. For
+        <strong> Receipts</strong> the Ledger Code is the member's <strong>flat no</strong>; for
+        <strong> Payments</strong> and <strong>Other Receipts</strong> it is the <strong>ledger code</strong>
+        from Chart of Accounts — the Ledger Name column is filled automatically from the system and the
+        sheet's name text is ignored. Dates accept DD/MM/YYYY; amounts may include ₹ and commas. Entries
+        dated outside the financial year are declined row-wise.
       </p>
     </div>
   );
