@@ -33,9 +33,15 @@ function str(row: Record<string, unknown>, keys: string[]): string | undefined {
 }
 
 function num(row: Record<string, unknown>, keys: string[]): number | undefined {
+  // Resolve keys against the row's ACTUAL headers, normalised the same way as
+  // str(): a sheet header like "Opening Balance" must match the alias
+  // "openingbalance". (Direct row[k] lookups silently miss spaced headers.)
+  const headerMap = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(row)) headerMap.set(normHeader(k), v);
   for (const k of keys) {
-    const raw = row[k];
-    if (raw === undefined || raw === null || raw === "") continue;
+    const raw = headerMap.get(k);
+    if (raw === undefined || raw === null) continue;
+    if (String(raw).trim() === "") continue;
     const s = String(raw).replace(/[₹,\s]/g, "");
     const n = Number(s);
     if (!Number.isNaN(n)) return n;
