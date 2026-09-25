@@ -346,8 +346,9 @@ export default function UsersRights() {
                     placeholder="member@example.com"
                   />
                   <p className="text-xs leading-5 text-muted-foreground">
-                    The member signs in with this email. If it differs from the
-                    one on their profile, the profile is updated automatically.
+                    The member signs in with this email — via a password or an
+                    emailed one-time code. If it differs from the one on their
+                    profile, the profile is updated automatically.
                   </p>
                 </div>
               </>
