@@ -24,14 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
-import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
-import { Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Pencil, Plus, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
+import { api } from "@/convex/_generated/api";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { useSociety } from "@/components/SocietyContext";
 
 type Grant = {
   _id: Id<"membersAccess">;
@@ -41,6 +41,20 @@ type Grant = {
   joined: boolean;
   name: string | null;
 };
+
+type MemberRow = Doc<"members">;
+
+function useUsersRightsData(societyId: Id<"societies"> | null, isOwner: boolean) {
+  const grants = useQuery(
+    api.access.listForSociety,
+    societyId && isOwner ? { societyId } : "skip",
+  ) as Grant[] | undefined;
+  const members = useQuery(
+    api.members.list,
+    societyId && isOwner ? { societyId } : "skip",
+  ) as MemberRow[] | undefined;
+  return { grants, members };
+}
 
 const ROLE_HELP: Record<"editor" | "viewer", string> = {
   editor:
@@ -52,20 +66,35 @@ const ROLE_HELP: Record<"editor" | "viewer", string> = {
 export default function UsersRights() {
   const { societyId, role } = useSociety();
   const isOwner = role === "owner";
-  const grants = useQuery(
-    api.access.listForSociety,
-    societyId && isOwner ? { societyId } : "skip",
-  ) as Grant[] | undefined;
+  const { grants, members } = useUsersRightsData(societyId, isOwner);
 
   const grantAccess = useMutation(api.access.grant);
+  const grantFromMember = useMutation(api.access.grantFromMember);
   const setRole = useMutation(api.access.setRole);
   const revokeAccess = useMutation(api.access.revoke);
 
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"member" | "email">("member");
+  const [memberId, setMemberId] = useState("");
+  const [memberEmail, setMemberEmail] = useState("");
   const [email, setEmail] = useState("");
   const [formRole, setFormRole] = useState<"editor" | "viewer">("editor");
   const [editing, setEditing] = useState<Grant | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const memberOptions = useMemo(() => {
+    return [...(members ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  }, [members]);
+
+  const openInvite = () => {
+    setEditing(null);
+    setMode("member");
+    setMemberId("");
+    setMemberEmail("");
+    setEmail("");
+    setFormRole("editor");
+    setOpen(true);
+  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +104,23 @@ export default function UsersRights() {
       if (editing) {
         await setRole({ societyId, id: editing._id, role: formRole });
         toast.success(`${editing.email} is now ${formRole}`);
+      } else if (mode === "member") {
+        if (!memberId) throw new Error("Pick a member from the list.");
+        const member = memberOptions.find((m) => m._id === memberId);
+        const loginEmail = (memberEmail || member?.email || "").trim();
+        if (!loginEmail)
+          throw new Error(
+            "Enter the email this member will sign in with.",
+          );
+        await grantFromMember({
+          societyId,
+          memberId: memberId as Id<"members">,
+          email: loginEmail,
+          role: formRole,
+        });
+        toast.success(
+          `${member?.name ?? "Member"} can now sign in with ${loginEmail} as ${formRole}.`,
+        );
       } else {
         await grantAccess({ societyId, email, role: formRole });
         toast.success(
@@ -83,7 +129,6 @@ export default function UsersRights() {
       }
       setOpen(false);
       setEditing(null);
-      setEmail("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -109,16 +154,8 @@ export default function UsersRights() {
         description="Invite colleagues by email and control what they can do in this society's books. The society owner always keeps full control."
         actions={
           isOwner ? (
-            <Button
-              className="rounded-lg"
-              onClick={() => {
-              setEditing(null);
-              setEmail("");
-              setFormRole("editor");
-              setOpen(true);
-              }}
-            >
-              <Plus className="size-4" /> Invite user
+            <Button className="rounded-lg" onClick={openInvite}>
+              <Plus className="size-4" /> Add user
             </Button>
           ) : undefined
         }
@@ -157,8 +194,9 @@ export default function UsersRights() {
 
       {!grants ? null : grants.length === 0 ? (
         <EmptyHint>
-          No extra users yet. Invite your accountant or secretary by email —
-          they get access the moment they sign in with that email address.
+          No extra users yet. Add one of your society's members or invite your
+          accountant by email — they get access the moment they sign in with
+          the assigned email address.
         </EmptyHint>
       ) : (
         <div className="rounded-lg border">
@@ -236,26 +274,117 @@ export default function UsersRights() {
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? "Change role" : "Invite user"}</DialogTitle>
+            <DialogTitle>{editing ? "Change role" : "Add user"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="u-email">Email *</Label>
-              <Input
-                id="u-email"
-                type="email"
-                required
-                value={email}
-                disabled={!!editing}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="accountant@example.com"
-              />
-              {editing && (
+            {!editing && (
+              <div className="grid grid-cols-2 gap-2 rounded-lg border p-1">
+                <button
+                  type="button"
+                  onClick={() => setMode("member")}
+                  className={`flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+                    mode === "member"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <Users className="size-4" /> Existing member
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("email")}
+                  className={`flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+                    mode === "email"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <UserPlus className="size-4" /> Other email
+                </button>
+              </div>
+            )}
+            {!editing && mode === "member" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Member *</Label>
+                  <Select
+                    value={memberId || undefined}
+                    onValueChange={(v) => {
+                      setMemberId(v);
+                      const m = memberOptions.find((x) => x._id === v);
+                      setMemberEmail(m?.email ?? "");
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Pick a member from the register" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {memberOptions.map((m) => (
+                        <SelectItem key={m._id} value={m._id}>
+                          {m.flatNo ? `${m.flatNo} — ` : ""}
+                          {m.name}
+                          {m.code ? ` (${m.code})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {memberOptions.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      No members in the register yet — add members first, or use
+                      “Other email” to invite by email.
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="u-member-email">Login email *</Label>
+                  <Input
+                    id="u-member-email"
+                    type="email"
+                    required
+                    value={memberEmail}
+                    onChange={(e) => setMemberEmail(e.target.value)}
+                    placeholder="member@example.com"
+                  />
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    The member signs in with this email. If it differs from the
+                    one on their profile, the profile is updated automatically.
+                  </p>
+                </div>
+              </>
+            )}
+            {!editing && mode === "email" && (
+              <div className="space-y-2">
+                <Label htmlFor="u-email">Email *</Label>
+                <Input
+                  id="u-email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="accountant@example.com"
+                />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  For staff who are not society members — they get access when
+                  they sign in with this email.
+                </p>
+              </div>
+            )}
+            {editing && (
+              <div className="space-y-2">
+                <Label htmlFor="u-email-edit">Email</Label>
+                <Input
+                  id="u-email-edit"
+                  type="email"
+                  required
+                  value={email}
+                  disabled
+                  readOnly
+                />
                 <p className="text-xs text-muted-foreground">
                   Email is fixed — remove and re-invite to change it.
                 </p>
-              )}
-            </div>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Role</Label>
               <Select
@@ -283,7 +412,7 @@ export default function UsersRights() {
                 Cancel
               </Button>
               <Button type="submit" disabled={busy}>
-                {editing ? "Save role" : "Send invite"}
+                {editing ? "Save role" : mode === "member" ? "Grant access" : "Send invite"}
               </Button>
             </DialogFooter>
           </form>

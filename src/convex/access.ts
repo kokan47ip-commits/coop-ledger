@@ -117,6 +117,73 @@ export const grant = mutation({
   },
 });
 
+/**
+ * Grant access to one of the society's registered members. The admin picks a
+ * member from the register and the email they will sign in with; the email is
+ * saved onto the member's profile when they don't have one yet, then the
+ * grant is created exactly like an email invite.
+ */
+export const grantFromMember = mutation({
+  args: {
+    societyId: v.id("societies"),
+    memberId: v.id("members"),
+    email: emailField,
+    role: v.union(v.literal("editor"), v.literal("viewer")),
+  },
+  handler: async (ctx, { societyId, memberId, email, role }) => {
+    const society = await requireSociety(ctx, societyId);
+    const callerId = await requireUserId(ctx);
+    if (society.createdBy !== callerId) {
+      throw new Error("Only the society owner can manage user rights.");
+    }
+    const member = await ctx.db.get(memberId);
+    if (!member || member.societyId !== societyId) {
+      throw new Error("Member not found in this society.");
+    }
+    const normalized = email.toLowerCase().trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
+      throw new Error("Enter a valid email address for the member's login.");
+    }
+    const owner = society.createdBy ? await ctx.db.get(society.createdBy) : null;
+    if (owner?.email?.toLowerCase() === normalized) {
+      throw new Error(
+        "This email already owns the society — no access grant needed.",
+      );
+    }
+
+    // Keep the member's contact details in sync so the register shows the
+    // login email that was assigned here.
+    if (member.email?.toLowerCase().trim() !== normalized) {
+      await ctx.db.patch(member._id, { email: normalized });
+    }
+
+    const grants = await ctx.db
+      .query("membersAccess")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const existing = grants.find((g) => g.email === normalized);
+    if (existing) {
+      await ctx.db.patch(existing._id, { role });
+      return { id: existing._id, updated: true };
+    }
+
+    const targetUser = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", normalized))
+      .unique();
+
+    const id = await ctx.db.insert("membersAccess", {
+      societyId,
+      email: normalized,
+      role,
+      userId: targetUser?._id,
+      grantedBy: callerId,
+      createdAt: Date.now(),
+    });
+    return { id, updated: false };
+  },
+});
+
 /** Change an existing grant's role (owner-only). */
 export const setRole = mutation({
   args: {
