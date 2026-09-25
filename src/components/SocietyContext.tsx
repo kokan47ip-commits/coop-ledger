@@ -47,6 +47,10 @@ type SocietyContextValue = {
   role: SocietyRole;
   /** False for viewers — hide/disable entry & edit actions in the UI. */
   canEdit: boolean;
+  /** True for software-level admins (cross-society control). */
+  isAdmin: boolean;
+  /** Menu keys the user may open; null = everything allowed. */
+  allowedMenus: string[] | null;
 };
 
 const SocietyContext = createContext<SocietyContextValue | null>(null);
@@ -105,12 +109,23 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     api.access.myAccess,
     activeId && !isGuest ? { societyId: activeId } : "skip",
   );
+  const menusResult = useQuery(
+    api.access.myMenus,
+    activeId && !isGuest ? { societyId: activeId } : "skip",
+  );
+  const isAdmin = menusResult?.admin === true;
   const role: SocietyRole = isGuest
     ? "owner" // guests act on their own device-scope societies
     : societies.some((s) => s._id === activeId && s.createdBy === user?._id)
       ? "owner"
-      : ((accessResult as SocietyRole | undefined) ?? "none");
+      : isAdmin
+        ? "editor" // admins act as editors everywhere
+        : ((accessResult as SocietyRole | undefined) ?? "none");
   const canEdit = role === "owner" || role === "editor";
+  // Guests and admins are never menu-restricted; admins can always open Users & Rights.
+  const allowedMenus: string[] | null = isGuest || isAdmin
+    ? null
+    : ((menusResult?.menus as string[] | null | undefined) ?? null);
 
   // When a guest signs in with email afterwards, any societies they created as
   // a guest on this device are adopted into the email account automatically —
@@ -164,6 +179,8 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     isGuest,
     role,
     canEdit,
+    isAdmin,
+    allowedMenus,
   };
 
   return <SocietyContext.Provider value={value}>{children}</SocietyContext.Provider>;

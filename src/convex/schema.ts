@@ -28,6 +28,8 @@ const schema = defineSchema(
       emailVerificationTime: v.optional(v.number()),
       isAnonymous: v.optional(v.boolean()),
       role: v.optional(roleValidator),
+      /** Software-level admin: manages user rights across all societies. */
+      softwareAdmin: v.optional(v.boolean()),
     }).index("email", ["email"]),
 
     // ---- Housing society accounting ----
@@ -208,6 +210,8 @@ const schema = defineSchema(
       userId: v.optional(v.id("users")), // set once the invited user signs up
       email: v.string(), // lower-cased; the invite target's sign-in email
       role: v.union(v.literal("editor"), v.literal("viewer")),
+      /** Menu keys the user may open; empty/missing = all non-admin menus. */
+      menus: v.optional(v.array(v.string())),
       grantedBy: v.id("users"),
       createdAt: v.number(),
     })

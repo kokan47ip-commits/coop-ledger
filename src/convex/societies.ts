@@ -2,11 +2,17 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
-import { DEFAULT_ACCOUNTS, requireUserId, societyAccess } from "./lib";
+import {
+  DEFAULT_ACCOUNTS,
+  isSoftwareAdmin,
+  requireUserId,
+  societyAccess,
+} from "./lib";
 
 /**
- * Societies the caller can open: ones they created plus ones they were
- * invited to (editor/viewer rights). Powers the sidebar society switcher.
+ * Societies the caller can open: ones they created, ones they were invited
+ * to (editor/viewer rights), and — for software admins — every society in
+ * the system. Powers the sidebar society switcher.
  */
 export const listMine = query({
   args: {},
@@ -16,6 +22,12 @@ export const listMine = query({
       .query("societies")
       .withIndex("by_creator", (q) => q.eq("createdBy", userId))
       .collect();
+
+    if (await isSoftwareAdmin(ctx, userId)) {
+      const all = await ctx.db.query("societies").collect();
+      const seen = new Set(created.map((s) => s._id));
+      return [...created, ...all.filter((s) => !seen.has(s._id))];
+    }
 
     const user = await ctx.db.get(userId);
     const email = user?.email?.toLowerCase().trim() ?? null;

@@ -25,18 +25,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
-import { Pencil, Plus, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { MENU_REGISTRY } from "@/lib/menus";
+import { Pencil, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Grant = {
   _id: Id<"membersAccess">;
   email: string;
   role: "editor" | "viewer";
+  menus: string[] | null;
   createdAt: number;
   joined: boolean;
   name: string | null;
@@ -44,14 +47,14 @@ type Grant = {
 
 type MemberRow = Doc<"members">;
 
-function useUsersRightsData(societyId: Id<"societies"> | null, isOwner: boolean) {
+function useUsersRightsData(societyId: Id<"societies"> | null, canManage: boolean) {
   const grants = useQuery(
     api.access.listForSociety,
-    societyId && isOwner ? { societyId } : "skip",
+    societyId && canManage ? { societyId } : "skip",
   ) as Grant[] | undefined;
   const members = useQuery(
     api.members.list,
-    societyId && isOwner ? { societyId } : "skip",
+    societyId && canManage ? { societyId } : "skip",
   ) as MemberRow[] | undefined;
   return { grants, members };
 }
@@ -64,13 +67,14 @@ const ROLE_HELP: Record<"editor" | "viewer", string> = {
 };
 
 export default function UsersRights() {
-  const { societyId, role } = useSociety();
-  const isOwner = role === "owner";
-  const { grants, members } = useUsersRightsData(societyId, isOwner);
+  const { societyId, role, isAdmin } = useSociety();
+  const canManage = role === "owner" || isAdmin;
+  const { grants, members } = useUsersRightsData(societyId, canManage);
 
   const grantAccess = useMutation(api.access.grant);
   const grantFromMember = useMutation(api.access.grantFromMember);
   const setRole = useMutation(api.access.setRole);
+  const setMenus = useMutation(api.access.setMenus);
   const revokeAccess = useMutation(api.access.revoke);
 
   const [open, setOpen] = useState(false);
@@ -79,8 +83,11 @@ export default function UsersRights() {
   const [memberEmail, setMemberEmail] = useState("");
   const [email, setEmail] = useState("");
   const [formRole, setFormRole] = useState<"editor" | "viewer">("editor");
+  const [formMenus, setFormMenus] = useState<string[]>([]); // empty = all menus
   const [editing, setEditing] = useState<Grant | null>(null);
   const [busy, setBusy] = useState(false);
+  const [menuTarget, setMenuTarget] = useState<Grant | null>(null);
+  const [menuPicks, setMenuPicks] = useState<string[]>([]);
 
   const memberOptions = useMemo(() => {
     return [...(members ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -93,7 +100,31 @@ export default function UsersRights() {
     setMemberEmail("");
     setEmail("");
     setFormRole("editor");
+    setFormMenus([]);
     setOpen(true);
+  };
+
+  const openMenus = (g: Grant) => {
+    setMenuTarget(g);
+    setMenuPicks(g.menus ?? []);
+  };
+
+  const saveMenus = async () => {
+    if (!societyId || !menuTarget) return;
+    setBusy(true);
+    try {
+      await setMenus({ societyId, id: menuTarget._id, menus: menuPicks });
+      toast.success(
+        menuPicks.length === 0
+          ? `${menuTarget.email} now sees all menus`
+          : `${menuTarget.email} menu access updated`,
+      );
+      setMenuTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const save = async (e: React.FormEvent) => {
@@ -117,12 +148,18 @@ export default function UsersRights() {
           memberId: memberId as Id<"members">,
           email: loginEmail,
           role: formRole,
+          menus: formMenus.length > 0 ? formMenus : undefined,
         });
         toast.success(
           `${member?.name ?? "Member"} can now sign in with ${loginEmail} as ${formRole}.`,
         );
       } else {
-        await grantAccess({ societyId, email, role: formRole });
+        await grantAccess({
+          societyId,
+          email,
+          role: formRole,
+          menus: formMenus.length > 0 ? formMenus : undefined,
+        });
         toast.success(
           `Invitation saved — ${email} gets ${formRole} access on sign-in with this email.`,
         );
@@ -151,9 +188,9 @@ export default function UsersRights() {
     <div>
       <PageHeader
         title="Users & Rights"
-        description="Invite colleagues by email and control what they can do in this society's books. The society owner always keeps full control."
+        description="Add users, set their role and choose exactly which menus they can open. The society owner and software admins keep full control."
         actions={
-          isOwner ? (
+          canManage ? (
             <Button className="rounded-lg" onClick={openInvite}>
               <Plus className="size-4" /> Add user
             </Button>
@@ -161,9 +198,9 @@ export default function UsersRights() {
         }
       />
 
-      {!isOwner ? (
+      {!canManage ? (
         <EmptyHint>
-          Only the society owner can manage user rights.
+          Only the society owner or a software admin can manage user rights.
         </EmptyHint>
       ) : (
       <>
@@ -206,8 +243,9 @@ export default function UsersRights() {
                 <TableHead>User</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Menus</TableHead>
                 <TableHead>Granted</TableHead>
-                <TableHead className="w-24 text-right">Actions</TableHead>
+                <TableHead className="w-28 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -232,6 +270,18 @@ export default function UsersRights() {
                     </Badge>
                   </TableCell>
                   <TableCell className="capitalize">{g.role}</TableCell>
+                  <TableCell>
+                    <button
+                      type="button"
+                      onClick={() => openMenus(g)}
+                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      title="Choose which menus this user can open"
+                    >
+                      {g.menus && g.menus.length > 0
+                        ? `${g.menus.length} menu${g.menus.length > 1 ? "s" : ""}`
+                        : "All menus"}
+                    </button>
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(g.createdAt).toLocaleDateString("en-IN", {
                       day: "2-digit",
@@ -241,6 +291,15 @@ export default function UsersRights() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        title="Menu access"
+                        onClick={() => openMenus(g)}
+                      >
+                        <SlidersHorizontal className="size-3.5" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -404,6 +463,40 @@ export default function UsersRights() {
                 {ROLE_HELP[formRole]}
               </p>
             </div>
+            {!editing && (
+              <div className="space-y-2 rounded-lg border border-dashed p-3">
+                <p className="text-xs font-medium">Menu access</p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {formMenus.length === 0
+                    ? "All menus will be visible. Use the sliders button on the user's row after saving to restrict which menus they can open."
+                    : `${formMenus.length} menu(s) selected — they will see only those.`}
+                </p>
+                <div className="max-h-36 space-y-1 overflow-y-auto">
+                  {MENU_REGISTRY.filter((m) => m.key !== "users").map((m) => {
+                    const checked = formMenus.includes(m.key);
+                    return (
+                      <label
+                        key={m.key}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted/60"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) =>
+                            setFormMenus((prev) =>
+                              v === true
+                                ? [...prev, m.key]
+                                : prev.filter((k) => k !== m.key),
+                            )
+                          }
+                        />
+                        <m.icon className="size-3.5 text-muted-foreground" />
+                        {m.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <DialogFooter>
               <Button
                 type="button"
@@ -419,8 +512,178 @@ export default function UsersRights() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Menu-permission dialog */}
+      <Dialog open={!!menuTarget} onOpenChange={(o) => !o && setMenuTarget(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Menu access — {menuTarget?.email}</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Tick the menus this user may open. Leave everything unticked to allow
+            all menus (except administration). Changes apply the next time they
+            load a page.
+          </p>
+          <div className="max-h-[50vh] space-y-4 overflow-y-auto rounded-lg border p-4">
+            {(Object.keys(MENU_SECTIONS) as MenuSectionKey[]).map((section) => (
+              <div key={section}>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {section}
+                </p>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {MENU_REGISTRY.filter((m) => m.section === section && m.key !== "users").map((m) => {
+                    const checked = menuPicks.includes(m.key);
+                    return (
+                      <label
+                        key={m.key}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) =>
+                            setMenuPicks((prev) =>
+                              v === true
+                                ? [...prev, m.key]
+                                : prev.filter((k) => k !== m.key),
+                            )
+                          }
+                        />
+                        <m.icon className="size-3.5 text-muted-foreground" />
+                        {m.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto p-0 text-muted-foreground"
+              onClick={() => setMenuPicks(MENU_REGISTRY.map((m) => m.key).filter((k) => k !== "users"))}
+            >
+              Select all
+            </Button>
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto p-0 text-muted-foreground"
+              onClick={() => setMenuPicks([])}
+            >
+              Clear (allow all)
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setMenuTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={saveMenus} disabled={busy}>
+              Save menu access
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </>
       )}
+
+      {/* Software administrators — visible only to software admins. */}
+      {isAdmin && <SoftwareAdminsSection />}
     </div>
+  );
+}
+
+const MENU_SECTIONS = {
+  Overview: null,
+  Masters: null,
+  Transactions: null,
+  Reports: null,
+  Data: null,
+} as const;
+type MenuSectionKey = keyof typeof MENU_SECTIONS;
+
+function SoftwareAdminsSection() {
+  const admins = useQuery(api.access.listSoftwareAdmins) as
+    | { _id: Id<"users">; email: string; name: string | null }[]
+    | undefined;
+  const setSoftwareAdmin = useMutation(api.access.setSoftwareAdmin);
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const promote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await setSoftwareAdmin({ email, admin: true });
+      toast.success(`${email} is now a software admin`);
+      setEmail("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const demote = async (a: { email: string; _id: Id<"users"> }) => {
+    if (!confirm(`Remove software admin rights from ${a.email}?`)) return;
+    try {
+      await setSoftwareAdmin({ email: a.email, admin: false });
+      toast.success("Admin rights removed");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    }
+  };
+
+  return (
+    <section className="mt-10 border-t pt-8">
+      <div className="mb-4 flex flex-col gap-1">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <ShieldCheck className="size-4 text-amber-600" /> Software administrators
+        </h3>
+        <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+          Software admins can open every society in the system, manage each
+          society's user rights and decide which menus every user can see.
+          Promote an account that already exists (they must have signed in once).
+        </p>
+      </div>
+      <form onSubmit={promote} className="mb-4 flex max-w-md gap-2">
+        <Input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="existing-user@example.com"
+        />
+        <Button type="submit" disabled={busy} className="shrink-0">
+          <Plus className="size-4" /> Make admin
+        </Button>
+      </form>
+      {!admins ? null : admins.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No other software admins.</p>
+      ) : (
+        <div className="max-w-md space-y-1">
+          {admins.map((a) => (
+            <div
+              key={a._id}
+              className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
+            >
+              <div>
+                <p className="font-medium">{a.name ?? a.email}</p>
+                {a.name && <p className="text-xs text-muted-foreground">{a.email}</p>}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => demote(a)}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

@@ -15,10 +15,19 @@ export async function requireUserId(ctx: QueryCtx) {
   return userId;
 }
 
+/** True when the signed-in user is a software-level administrator. */
+export async function isSoftwareAdmin(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const user = await ctx.db.get(userId);
+  return user?.softwareAdmin === true;
+}
+
 /**
- * Resolve the caller's access level over a society. Non-owners get access
- * through an explicit grant row (by user id, falling back to their verified
- * email). Guest users never inherit email-based grants.
+ * Resolve the caller's access level over a society. Software admins bypass
+ * grant checks. Non-owners get access through an explicit grant row (by user
+ * id, falling back to their verified email). Guests never inherit grants.
  */
 export async function societyAccess(
   ctx: QueryCtx,
@@ -26,6 +35,7 @@ export async function societyAccess(
   userId: Id<"users">,
 ): Promise<SocietyAccess> {
   if (society.createdBy === userId) return "owner";
+  if (await isSoftwareAdmin(ctx, userId)) return "editor";
   const user = await ctx.db.get(userId);
   const email = user?.email?.toLowerCase().trim() ?? null;
   if (!email) return "none";
@@ -38,6 +48,8 @@ export async function societyAccess(
   );
   return grant?.role ?? "none";
 }
+
+/** True when the signed-in user is a software-level administrator. */
 
 /**
  * Read access: owner, an invited user, or (legacy) any user able to pass the

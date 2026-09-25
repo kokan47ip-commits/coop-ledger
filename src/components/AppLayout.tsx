@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { MENU_REGISTRY, PATH_TO_MENU, type MenuKey } from "@/lib/menus";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +37,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Link,
+  Navigate,
   NavLink,
   Outlet,
   useLocation,
@@ -189,7 +191,8 @@ function SocietySwitcher() {
 }
 
 export function AppLayout() {
-  const { societyId, society, isLoading, isGuest, role, canEdit } = useSociety();
+  const { societyId, society, isLoading, isGuest, role, canEdit, isAdmin, allowedMenus } =
+    useSociety();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -236,6 +239,27 @@ export function AppLayout() {
   };
 
   const isSetupRoute = location.pathname === "/app/society";
+
+  // Menu-rights route guard: users without access to this screen's menu are
+  // bounced to the first menu they can open (dashboard as fallback).
+  const pathMenuKey = PATH_TO_MENU[location.pathname];
+  const billDetail: MenuKey | null = location.pathname.startsWith("/app/bills/")
+    ? "bills"
+    : null;
+  const requiredMenu = billDetail ?? pathMenuKey ?? null;
+  const menuAllowed =
+    !requiredMenu ||
+    (requiredMenu === "users" && (role === "owner" || isAdmin)) ||
+    allowedMenus === null ||
+    allowedMenus.includes(requiredMenu);
+  // First menu the user may open — the fallback when a screen is blocked.
+  const fallbackPath =
+    !allowedMenus || allowedMenus.length === 0 || allowedMenus.includes("dashboard")
+      ? "/dashboard"
+      : (MENU_REGISTRY.find((m) => allowedMenus.includes(m.key))?.path ?? "/dashboard");
+  if (!isLoading && !menuAllowed && location.pathname !== fallbackPath) {
+    return <Navigate to={fallbackPath} replace />;
+  }
 
   const initials = (user?.name ?? user?.email ?? "IA")
     .split(/[\s@.]+/)
@@ -292,11 +316,14 @@ export function AppLayout() {
         </div>
         <nav className="relative flex-1 space-y-1.5 overflow-y-auto px-3 py-4">
           {NAV.map((group) => {
-            // Users & Rights is an owner-only screen.
-            const items =
-              role === "owner"
-                ? group.items
-                : group.items.filter((i) => i.to !== "/app/users");
+            // Users & Rights: owners and software admins only. All other menus
+            // honour the per-user menu rights set by the admin.
+            const items = group.items.filter((i) => {
+              const key = PATH_TO_MENU[i.to];
+              if (key === "users") return role === "owner" || isAdmin;
+              if (!allowedMenus) return true;
+              return allowedMenus.includes(key as MenuKey);
+            });
             if (items.length === 0) return null;
             if (!group.collapsible) {
               return (
@@ -414,6 +441,11 @@ export function AppLayout() {
             <span className="brand-gradient size-2 rounded-full shadow-[0_0_10px] shadow-primary/60" />
             <h1 className="text-[15px] font-semibold tracking-tight">{title}</h1>
           </div>
+          {isAdmin && (
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
+              Admin
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-3">
             {society?.registrationNo && (
               <span className="hidden rounded-full border border-primary/20 bg-primary/[0.06] px-2.5 py-1 text-[11px] font-medium text-primary sm:inline">
