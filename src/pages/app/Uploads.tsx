@@ -164,7 +164,7 @@ function UploadCard({
   columns: string;
   onDone: (r: Result) => void;
 }) {
-  const { societyId } = useSociety();
+  const { societyId, canEdit } = useSociety();
   const accounts = useQuery(
     api.accounts.list,
     societyId ? { societyId } : "skip",
@@ -294,7 +294,7 @@ function UploadCard({
             e.target.value = "";
           }}
         />
-        <Button disabled={busy || checking} onClick={openPicker} className="rounded-lg">
+        <Button disabled={!canEdit || busy || checking} onClick={openPicker} className="rounded-lg">
           <Upload className="size-4" />
           {checking ? "Reading file…" : busy ? "Uploading…" : "Upload Excel"}
         </Button>
@@ -383,7 +383,7 @@ function UploadCard({
                   <Button variant="outline" onClick={() => setPreview(null)} disabled={busy}>
                     Cancel
                   </Button>
-                  <Button onClick={confirmUpload} disabled={busy || okCount === 0}>
+                  <Button onClick={confirmUpload} disabled={!canEdit || busy || okCount === 0}>
                     <FileCheck2 className="size-4" />
                     {busy ? "Uploading…" : `Upload ${okCount} row${okCount === 1 ? "" : "s"}`}
                   </Button>

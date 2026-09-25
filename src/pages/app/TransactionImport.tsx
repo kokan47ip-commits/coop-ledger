@@ -230,7 +230,7 @@ type PreviewRow = { index: number; cells: string[]; problems: string[] };
 const REQUIRED_LABELS = ["Date", "Ledger Code", "Ledger Name", "Amount"];
 
 export default function TransactionImport() {
-  const { societyId } = useSociety();
+  const { societyId, canEdit } = useSociety();
   const navigate = useNavigate();
   const accounts = useQuery(
     api.accounts.list,
@@ -365,7 +365,7 @@ export default function TransactionImport() {
           <Button variant="outline" size="sm" className="h-8 w-10 px-2" onClick={() => inputRef.current?.click()}>
             …
           </Button>
-          <Button size="sm" className="h-8" disabled={!preview || busy || okCount === 0} onClick={importNow}>
+          <Button size="sm" className="h-8" disabled={!canEdit || !preview || busy || okCount === 0} onClick={importNow}>
             Import
           </Button>
           <Button variant="outline" size="sm" className="h-8" onClick={() => downloadTemplate("transactions")}>

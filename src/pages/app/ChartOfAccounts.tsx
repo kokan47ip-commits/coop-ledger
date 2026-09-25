@@ -67,7 +67,7 @@ const EMPTY_GROUP_FORM = {
 };
 
 export default function ChartOfAccounts() {
-  const { societyId } = useSociety();
+  const { societyId, canEdit } = useSociety();
   const accounts = useQuery(
     api.accounts.list,
     societyId ? { societyId } : "skip",
@@ -186,6 +186,7 @@ export default function ChartOfAccounts() {
         actions={
           <Button
             className="rounded-lg"
+            disabled={!canEdit}
             onClick={() => {
               setForm({ id: "", code: "", name: "", type: "expense", kind: "none", openingBalance: "0", groupId: "" });
               setOpen(true);
@@ -242,6 +243,7 @@ export default function ChartOfAccounts() {
                               <TableCell className="text-right"><RightMoney value={a.openingBalance} /></TableCell>
                               <TableCell className="text-right">
                                 <div className="flex justify-end gap-1">
+                                  {canEdit && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -261,9 +263,12 @@ export default function ChartOfAccounts() {
                                   >
                                     <Pencil className="size-3.5" />
                                   </Button>
+                                  )}
+                                  {canEdit && (
                                   <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(a)}>
                                     <Trash2 className="size-3.5" />
                                   </Button>
+                                  )}
                                 </div>
                               </TableCell>
                             </TableRow>
@@ -289,6 +294,7 @@ export default function ChartOfAccounts() {
             <Button
               variant="outline"
               size="sm"
+              disabled={!canEdit}
               onClick={() => {
                 setGroupForm(EMPTY_GROUP_FORM);
                 setGroupOpen(true);
@@ -357,6 +363,7 @@ export default function ChartOfAccounts() {
                                   )}
                                 </TableCell>
                                 <TableCell className="text-right">
+                                  {canEdit && (
                                   <div className="flex justify-end gap-1">
                                     <Button
                                       variant="ghost"
@@ -378,6 +385,7 @@ export default function ChartOfAccounts() {
                                       <Trash2 className="size-3.5" />
                                     </Button>
                                   </div>
+                                  )}
                                 </TableCell>
                               </TableRow>
                             );

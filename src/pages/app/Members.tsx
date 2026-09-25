@@ -27,7 +27,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { EmptyHint, PageHeader, RightMoney, ViewerBlock } from "@/components/PageParts";
+import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR, formatPeriod, fyStartISO, todayISO } from "@/lib/format";

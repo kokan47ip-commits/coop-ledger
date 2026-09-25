@@ -46,7 +46,7 @@ const ROLES = [
 ] as const;
 
 export default function SocietyProfile() {
-  const { society, setActiveId } = useSociety();
+  const { society, setActiveId, role } = useSociety();
   const accounts = useQuery(
     api.accounts.list,
     society ? { societyId: society._id } : "skip",
@@ -573,6 +573,7 @@ export default function SocietyProfile() {
               <Button
                 type="button"
                 variant="outline"
+                disabled={role !== "owner"}
                 className="shrink-0 rounded-lg border-destructive/50 text-destructive hover:bg-destructive/10"
                 onClick={() => {
                   setDeleteConfirmText("");
@@ -589,7 +590,7 @@ export default function SocietyProfile() {
           <p className="mr-auto hidden text-xs text-muted-foreground sm:block">
             {todayISO() && <span>Changes apply to this society's books immediately.</span>}
           </p>
-          <Button type="submit" disabled={saving} className="rounded-lg px-8">
+          <Button type="submit" disabled={saving || (!isNew && role !== "owner")} className="rounded-lg px-8">
             <Save className="size-4" />
             {saving ? "Saving…" : isNew ? "Onboard society" : "Save changes"}
           </Button>

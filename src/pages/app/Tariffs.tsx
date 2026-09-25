@@ -75,7 +75,7 @@ type OverrideRow = {
 type UploadResult = { inserted: number; updated: number; skipped: number; errors: string[] };
 
 export default function Tariffs() {
-  const { societyId } = useSociety();
+  const { societyId, canEdit } = useSociety();
   const tariffs = useQuery(
     api.tariffs.list,
     societyId ? { societyId } : "skip",
@@ -237,7 +237,7 @@ export default function Tariffs() {
         actions={
           <Button
             className="rounded-lg"
-            disabled={incomeAccounts.length === 0}
+            disabled={!canEdit || incomeAccounts.length === 0}
             onClick={() => {
               setForm({ id: "", name: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true });
               setOpen(true);
@@ -460,7 +460,7 @@ export default function Tariffs() {
                                   <X className="size-3.5" />
                                 </Button>
                               </>
-                            ) : (
+                            ) : canEdit ? (
                               <>
                                 <Button
                                   variant="ghost"
@@ -475,7 +475,7 @@ export default function Tariffs() {
                                   <Trash2 className="size-3.5" />
                                 </Button>
                               </>
-                            )}
+                            ) : null}
                           </div>
                         </TableCell>
                       </TableRow>

@@ -703,11 +703,13 @@ export default function BillRegister() {
                 return (
                   <TableRow key={b._id}>
                     <TableCell>
-                      <Checkbox
-                        checked={selected.has(b._id)}
-                        onCheckedChange={(v) => toggleRow(b._id, v === true)}
-                        aria-label={`Select bill ${b.billNo}`}
-                      />
+                      {canEdit && (
+                        <Checkbox
+                          checked={selected.has(b._id)}
+                          onCheckedChange={(v) => toggleRow(b._id, v === true)}
+                          aria-label={`Select bill ${b.billNo}`}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="sticky left-0 bg-background font-medium">{unitNo(m)}</TableCell>
                     <TableCell>
@@ -722,24 +724,24 @@ export default function BillRegister() {
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
                     <TableCell className={`bg-emerald-500/10 font-medium ${rightAlign}`}>
                       {formatMoney(rowTotal(b, principal))}
-                    </TableCell>
-                    {tariffColumns.map((t) => {
-                      const e = edits[b._id]?.[t._id] ?? "";
-                      return (
-                        <TableCell key={t._id} className="p-0 text-right">
-                          <Input
-                            type="number"
-                            step="0.01"
-                            className="h-8 w-24 rounded-none border-0 border-l border-dashed bg-transparent px-2 text-right tabular-nums focus-visible:ring-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                            value={e === "" ? String(lineAmount(b, t._id)) : e}
-                            onChange={(ev) => setCellEdit(b._id, t._id, ev.target.value)}
-                          />
+                    </TableCell>                        {tariffColumns.map((t) => {
+                          const e = edits[b._id]?.[t._id] ?? "";
+                          return (
+                            <TableCell key={t._id} className="p-0 text-right">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                disabled={!canEdit}
+                                className="h-8 w-24 rounded-none border-0 border-l border-dashed bg-transparent px-2 text-right tabular-nums focus-visible:ring-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                                value={e === "" ? String(lineAmount(b, t._id)) : e}
+                                onChange={(ev) => setCellEdit(b._id, t._id, ev.target.value)}
+                              />
                         </TableCell>
                       );
                     })}
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        {b.status !== "paid" && (
+                        {canEdit && b.status !== "paid" && (
                           <Button variant="ghost" size="icon" className="size-8" title="Record payment" onClick={() => openPay(b)}>
                             <HandCoins className="size-3.5" />
                           </Button>
