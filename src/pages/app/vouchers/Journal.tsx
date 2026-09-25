@@ -19,7 +19,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { PageHeader } from "@/components/PageParts";
+import { PageHeader, ViewerBlock } from "@/components/PageParts";
 import { formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { NumInput } from "./LedgerVoucherForm";
 import { Plus, Trash2 } from "lucide-react";
@@ -54,7 +54,7 @@ function TotalBox({ value }: { value: string }) {
  * bottom. Also serves as the edit screen when opened with ?edit=<voucherId>.
  */
 export default function Journal() {
-  const { society, societyId } = useSociety();
+  const { society, societyId, canEdit } = useSociety();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = searchParams.get("edit");
@@ -250,6 +250,9 @@ export default function Journal() {
         description="Adjustments, fund transfers and year-end entries. Post each Dr/Cr pair below — debits must equal credits before saving."
       />
 
+      {!canEdit ? (
+        <ViewerBlock what="journal entries" />
+      ) : (
       <form onSubmit={submit} className="mb-10 rounded-lg border">
         {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
         <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
@@ -421,6 +424,7 @@ export default function Journal() {
           </Button>
         </div>
       </form>
+      )}
 
       <h3 className="mb-4 text-sm font-medium">Recorded journals</h3>
       <VoucherList title="Journal Vouchers" description="Journal vouchers" fixedType="journal" />

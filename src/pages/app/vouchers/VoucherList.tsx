@@ -107,7 +107,7 @@ export function VoucherList({
   /** Label for the selection-wise buttons, e.g. "Receipts". */
   receiptNoun?: string;
 }) {
-  const { societyId, society } = useSociety();
+  const { societyId, society, canEdit } = useSociety();
   const navigate = useNavigate();
   const vouchers = useQuery(
     api.vouchers.list,
@@ -510,14 +510,18 @@ export function VoucherList({
                             </Button>
                           </>
                         )}
-                        <Button variant="ghost" size="icon" className="size-7"
-                          title="Edit" onClick={() => editVoucher(v)}>
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="size-7 text-destructive"
-                          title="Delete" onClick={() => del(v)}>
-                          <Trash2 className="size-3.5" />
-                        </Button>
+                        {canEdit && (
+                          <Button variant="ghost" size="icon" className="size-7"
+                            title="Edit" onClick={() => editVoucher(v)}>
+                            <Pencil className="size-3.5" />
+                          </Button>
+                        )}
+                        {canEdit && (
+                          <Button variant="ghost" size="icon" className="size-7 text-destructive"
+                            title="Delete" onClick={() => del(v)}>
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

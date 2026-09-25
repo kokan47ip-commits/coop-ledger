@@ -6,7 +6,7 @@ import {
   nextNumber,
   pad,
   recomputeBillStatus,
-  requireSociety,
+  requireSocietyWrite,
   societyFyPeriod,
   VOUCHER_PREFIX,
 } from "./lib";
@@ -70,7 +70,7 @@ export const uploadMembers = mutation({
     defaultOpeningDate: v.string(),
   },
   handler: async (ctx, { societyId, rows, defaultOpeningDate }): Promise<Result> => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
     const existing = await ctx.db
       .query("members")
@@ -160,7 +160,7 @@ export const uploadTariffs = mutation({
     rows: v.array(v.record(v.string(), v.any())),
   },
   handler: async (ctx, { societyId, rows }): Promise<Result> => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
     const accounts = await ctx.db
       .query("accounts")
@@ -226,7 +226,7 @@ export const uploadMemberTariffs = mutation({
     rows: v.array(v.record(v.string(), v.any())),
   },
   handler: async (ctx, { societyId, rows }): Promise<Result> => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
 
     const members = await ctx.db
@@ -374,7 +374,7 @@ export const uploadReceipts = mutation({
     defaultAccountId: v.id("accounts"),
   },
   handler: async (ctx, { societyId, rows, defaultAccountId }): Promise<Result> => {
-    const society = await requireSociety(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
     const allAccounts = await ctx.db
       .query("accounts")
@@ -488,7 +488,7 @@ export const uploadPayments = mutation({
     defaultBankCashAccountId: v.id("accounts"),
   },
   handler: async (ctx, { societyId, rows, defaultBankCashAccountId }): Promise<Result> => {
-    const society = await requireSociety(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
     const accounts = await ctx.db
       .query("accounts")
@@ -599,7 +599,7 @@ export const uploadTransactions = mutation({
     ctx,
     { societyId, rows, defaultType, defaultBankCashAccountId },
   ): Promise<Result> => {
-    const society = await requireSociety(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     const result: Result = { inserted: 0, updated: 0, skipped: 0, errors: [] };
     const accounts = await ctx.db
       .query("accounts")

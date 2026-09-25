@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { DEFAULT_GROUPS, requireSociety } from "./lib";
+import { DEFAULT_GROUPS, requireSociety, requireSocietyWrite } from "./lib";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -32,7 +32,7 @@ export const upsert = mutation({
     sequence: v.optional(v.number()),
   },
   handler: async (ctx, { societyId, id, sequence, ...data }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     if (id) {
       await ctx.db.patch(id, { ...data, sequence: sequence ?? 99 });
       return id;
@@ -48,7 +48,7 @@ export const upsert = mutation({
 export const remove = mutation({
   args: { societyId: v.id("societies"), id: v.id("accountGroups") },
   handler: async (ctx, { societyId, id }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const accounts = await ctx.db
       .query("accounts")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -62,7 +62,7 @@ export const remove = mutation({
 export const seedDefaults = mutation({
   args: { societyId: v.id("societies") },
   handler: async (ctx, { societyId }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     await seedDefaultGroups(ctx, societyId);
   },
 });

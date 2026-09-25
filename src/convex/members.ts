@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireSociety } from "./lib";
+import { requireSociety, requireSocietyWrite } from "./lib";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -43,7 +43,7 @@ export const upsert = mutation({
     isActive: v.boolean(),
   },
   handler: async (ctx, { societyId, id, ...data }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     if (id) {
       await ctx.db.patch(id, data);
       return id;
@@ -55,7 +55,7 @@ export const upsert = mutation({
 export const remove = mutation({
   args: { societyId: v.id("societies"), id: v.id("members") },
   handler: async (ctx, { societyId, id }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const bills = await ctx.db
       .query("bills")
       .withIndex("by_society_member", (q) =>

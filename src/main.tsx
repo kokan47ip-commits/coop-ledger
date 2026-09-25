@@ -34,6 +34,7 @@ const BalanceSheet = lazy(() => import("./pages/app/reports/BalanceSheet.tsx"));
 const ReceiptPayment = lazy(() => import("./pages/app/reports/ReceiptPayment.tsx"));
 const Uploads = lazy(() => import("./pages/app/Uploads.tsx"));
 const TransactionImport = lazy(() => import("./pages/app/TransactionImport.tsx"));
+const UsersRights = lazy(() => import("./pages/app/UsersRights.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -185,6 +186,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="receipt-payment" element={<ReceiptPayment />} />
                 <Route path="uploads" element={<Uploads />} />
                 <Route path="transaction-import" element={<TransactionImport />} />
+                <Route path="users" element={<UsersRights />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

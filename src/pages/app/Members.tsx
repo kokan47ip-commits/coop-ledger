@@ -27,7 +27,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
+import { EmptyHint, PageHeader, RightMoney, ViewerBlock } from "@/components/PageParts";
 import { exportPDF, exportWord, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR, formatPeriod, fyStartISO, todayISO } from "@/lib/format";
@@ -90,7 +90,7 @@ const emptyForm = {
 };
 
 export default function Members() {
-  const { societyId, society } = useSociety();
+  const { societyId, society, canEdit } = useSociety();
   const members = useQuery(
     api.members.list,
     societyId ? { societyId } : "skip",
@@ -336,9 +336,11 @@ export default function Members() {
         title="Members"
         description="Member register with opening receivable balances. Opening balances flow into member ledgers and the balance sheet."
         actions={
-          <Button onClick={openNew} className="rounded-lg">
-            <Plus className="size-4" /> Add member
-          </Button>
+          canEdit ? (
+            <Button onClick={openNew} className="rounded-lg">
+              <Plus className="size-4" /> Add member
+            </Button>
+          ) : undefined
         }
       />
 
@@ -425,9 +427,11 @@ export default function Members() {
                       >
                         <BookText className="size-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(m)}>
-                        <Pencil className="size-3.5" />
-                      </Button>
+                      {canEdit && (
+                        <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(m)}>
+                          <Pencil className="size-3.5" />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(m)}>
                         <Trash2 className="size-3.5" />
                       </Button>

@@ -19,7 +19,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { PageHeader } from "@/components/PageParts";
+import { PageHeader, ViewerBlock } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
 import { formatDate, formatPeriod, formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { NumInput } from "./LedgerVoucherForm";
@@ -55,7 +55,7 @@ function TotalBox({ value }: { value: string }) {
  */
 export default function MemberReceipt() {
   const societyCtx = useSociety();
-  const { society, societyId } = societyCtx;
+  const { society, societyId, canEdit } = societyCtx;
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = searchParams.get("edit");
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
@@ -319,6 +319,9 @@ export default function MemberReceipt() {
         }
       />
 
+      {!canEdit ? (
+        <ViewerBlock what="receipt entries" />
+      ) : (
       <form onSubmit={editId ? submitEdit : submit} className="mb-10 rounded-lg border">
         {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
         <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
@@ -558,6 +561,7 @@ export default function MemberReceipt() {
           </Button>
         </div>
       </form>
+      )}
 
       {/* Settlement preview */}
       {!editId && selectedMember && outstandingBills.length > 0 && (

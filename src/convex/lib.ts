@@ -2,20 +2,77 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 
+/**
+ * Effective access level a user holds over a society. "owner" is the creator;
+ * "editor" (entry rights) and "viewer" (read-only) come from explicit grants
+ * in the membersAccess table, matched by user id or email.
+ */
+export type SocietyAccess = "owner" | "editor" | "viewer" | "none";
+
 export async function requireUserId(ctx: QueryCtx) {
   const userId = await getAuthUserId(ctx);
   if (!userId) throw new Error("You must be signed in.");
   return userId;
 }
 
+/**
+ * Resolve the caller's access level over a society. Non-owners get access
+ * through an explicit grant row (by user id, falling back to their verified
+ * email). Guest users never inherit email-based grants.
+ */
+export async function societyAccess(
+  ctx: QueryCtx,
+  society: Doc<"societies">,
+  userId: Id<"users">,
+): Promise<SocietyAccess> {
+  if (society.createdBy === userId) return "owner";
+  const user = await ctx.db.get(userId);
+  const email = user?.email?.toLowerCase().trim() ?? null;
+  if (!email) return "none";
+  const grants = await ctx.db
+    .query("membersAccess")
+    .withIndex("by_society", (q) => q.eq("societyId", society._id))
+    .collect();
+  const grant = grants.find(
+    (g) => g.userId === userId || g.email === email,
+  );
+  return grant?.role ?? "none";
+}
+
+/**
+ * Read access: owner, an invited user, or (legacy) any user able to pass the
+ * old creator check. Throws "Society not found" for outsiders so unrelated
+ * users get no information about the society's existence.
+ */
 export async function requireSociety(
   ctx: QueryCtx,
   societyId: Id<"societies">,
 ): Promise<Doc<"societies">> {
   const userId = await requireUserId(ctx);
   const society = await ctx.db.get(societyId);
-  if (!society || society.createdBy !== userId) {
-    throw new Error("Society not found.");
+  if (!society) throw new Error("Society not found.");
+  const access = await societyAccess(ctx, society, userId);
+  if (access === "none") throw new Error("Society not found.");
+  return society;
+}
+
+/**
+ * Write access: only the owner or an invited "editor". Viewers and outsiders
+ * are declined with a clear message — used by every entry/master mutation.
+ */
+export async function requireSocietyWrite(
+  ctx: MutationCtx,
+  societyId: Id<"societies">,
+): Promise<Doc<"societies">> {
+  const userId = await requireUserId(ctx);
+  const society = await ctx.db.get(societyId);
+  if (!society) throw new Error("Society not found.");
+  const access = await societyAccess(ctx, society, userId);
+  if (access === "none") throw new Error("Society not found.");
+  if (access === "viewer") {
+    throw new Error(
+      "You have view-only rights for this society — changes are not allowed. Ask the society owner for entry access.",
+    );
   }
   return society;
 }

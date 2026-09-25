@@ -56,7 +56,7 @@ function periodLong(period: string): string {
 }
 
 export default function BillRegister() {
-  const { societyId, society } = useSociety();
+  const { societyId, society, canEdit } = useSociety();
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
   const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip") as Tariff[] | undefined;
@@ -605,6 +605,7 @@ export default function BillRegister() {
       </div>
 
       {/* Generate box */}
+      {canEdit ? (
       <div className="mb-8 rounded-lg border p-5">
         <div className="mb-4 flex items-center gap-2">
           <Plus className="size-4 text-muted-foreground" />
@@ -643,6 +644,7 @@ export default function BillRegister() {
           </div>
         </div>
       </div>
+      ) : null}
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">

@@ -13,6 +13,8 @@ import {
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
+export type SocietyRole = "owner" | "editor" | "viewer" | "none";
+
 type Society = {
   _id: Id<"societies">;
   name: string;
@@ -41,6 +43,10 @@ type SocietyContextValue = {
   isLoading: boolean;
   /** True while signed in as a guest (anonymous) user — data is device-tied until email sign-in. */
   isGuest: boolean;
+  /** Caller's effective rights over the active society. */
+  role: SocietyRole;
+  /** False for viewers — hide/disable entry & edit actions in the UI. */
+  canEdit: boolean;
 };
 
 const SocietyContext = createContext<SocietyContextValue | null>(null);
@@ -78,7 +84,7 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
   const societies = useQuery(api.societies.listMine) ?? [];
   const isLoading = societies === undefined;
   const adopt = useMutation(api.societies.adoptByClaimCode);
-
+  const bindGrants = useMutation(api.access.bindPendingGrants);
   const stored = useMemo(() => {
     try {
       return localStorage.getItem(STORAGE_KEY);
@@ -88,12 +94,36 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const [selectedId, setSelectedId] = useState<string | null>(stored);
   const adoptingRef = useRef(false);
+  const bindRef = useRef(false);
+
+  const activeId =
+    societies.find((s) => s._id === selectedId)?._id ?? societies[0]?._id ?? null;
+
+  // Resolve the caller's effective role over the active society. Owners are
+  // detected from society.createdBy; invited users through access.myAccess.
+  const accessResult = useQuery(
+    api.access.myAccess,
+    activeId && !isGuest ? { societyId: activeId } : "skip",
+  );
+  const role: SocietyRole = isGuest
+    ? "owner" // guests act on their own device-scope societies
+    : societies.some((s) => s._id === activeId && s.createdBy === user?._id)
+      ? "owner"
+      : ((accessResult as SocietyRole | undefined) ?? "none");
+  const canEdit = role === "owner" || role === "editor";
 
   // When a guest signs in with email afterwards, any societies they created as
   // a guest on this device are adopted into the email account automatically —
-  // so nothing entered in guest mode is ever "lost on login".
+  // so nothing entered in guest mode is ever "lost on login". Email invites
+  // issued before sign-up are bound to the account on first sign-in here too.
   useEffect(() => {
     if (isLoading || isGuest || !isAuthenticated || adoptingRef.current) return;
+    if (!bindRef.current) {
+      bindRef.current = true;
+      void bindGrants().catch(() => {
+        bindRef.current = false;
+      });
+    }
     const codes = loadClaimCodes();
     const pending = Object.entries(codes);
     if (pending.length === 0) return;
@@ -114,10 +144,7 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
         }
       }
     })();
-  }, [isLoading, isGuest, isAuthenticated, adopt]);
-
-  const activeId =
-    societies.find((s) => s._id === selectedId)?._id ?? societies[0]?._id ?? null;
+  }, [isLoading, isGuest, isAuthenticated, adopt, bindGrants]);
 
   const setActiveId = useCallback((id: Id<"societies">) => {
     setSelectedId(id);
@@ -135,6 +162,8 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     setActiveId,
     isLoading,
     isGuest,
+    role,
+    canEdit,
   };
 
   return <SocietyContext.Provider value={value}>{children}</SocietyContext.Provider>;

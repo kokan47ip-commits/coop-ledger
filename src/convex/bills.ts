@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { assertInFy, nextNumber, pad, requireSociety } from "./lib";
+import { assertInFy, nextNumber, pad, requireSociety, requireSocietyWrite } from "./lib";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -50,7 +50,7 @@ export const generate = mutation({
     memberIds: v.array(v.id("members")),
   },
   handler: async (ctx, { societyId, period, issueDate, dueDate, arrearsDate, memberIds }) => {
-    const society = await requireSociety(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     // Bills post income to the books — decline bills issued outside the year.
     assertInFy(society, issueDate, "Bill");
     const receivableId =
@@ -167,7 +167,7 @@ export const updateLines = mutation({
     ),
   },
   handler: async (ctx, { societyId, id, lines }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const bill = await ctx.db.get(id);
     if (!bill || bill.societyId !== societyId)
       throw new Error("Bill not found.");
@@ -192,7 +192,7 @@ export const updateLines = mutation({
 export const remove = mutation({
   args: { societyId: v.id("societies"), id: v.id("bills") },
   handler: async (ctx, { societyId, id }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const bill = await ctx.db.get(id);
     if (!bill || bill.societyId !== societyId)
       throw new Error("Bill not found.");

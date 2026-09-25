@@ -28,6 +28,7 @@ import {
   Plus,
   Receipt,
   Repeat,
+  ShieldCheck,
   TrendingUp,
   Users,
   Wallet,
@@ -98,6 +99,7 @@ const NAV: NavGroup[] = [
     items: [
       { to: "/app/transaction-import", label: "Transaction Import", icon: <FileInput className="size-4" /> },
       { to: "/app/uploads", label: "Excel Uploads", icon: <FileSpreadsheet className="size-4" /> },
+      { to: "/app/users", label: "Users & Rights", icon: <ShieldCheck className="size-4" /> },
     ],
   },
 ];
@@ -121,6 +123,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/receipt-payment": "Receipt & Payment",
   "/app/uploads": "Excel Uploads",
   "/app/transaction-import": "Transaction Import",
+  "/app/users": "Users & Rights",
 };
 
 function navGroupHasActive(group: NavGroup, pathname: string) {
@@ -186,7 +189,7 @@ function SocietySwitcher() {
 }
 
 export function AppLayout() {
-  const { societyId, society, isLoading, isGuest } = useSociety();
+  const { societyId, society, isLoading, isGuest, role, canEdit } = useSociety();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -241,6 +244,15 @@ export function AppLayout() {
     .map((p) => p[0]?.toUpperCase())
     .join("");
 
+  const roleLabel =
+    role === "owner"
+      ? "Owner"
+      : role === "editor"
+        ? "Editor"
+        : role === "viewer"
+          ? "Viewer (read-only)"
+          : null;
+
   if (!isLoading && !societyId && !isSetupRoute) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-8 px-6 text-center">
@@ -280,10 +292,16 @@ export function AppLayout() {
         </div>
         <nav className="relative flex-1 space-y-1.5 overflow-y-auto px-3 py-4">
           {NAV.map((group) => {
+            // Users & Rights is an owner-only screen.
+            const items =
+              role === "owner"
+                ? group.items
+                : group.items.filter((i) => i.to !== "/app/users");
+            if (items.length === 0) return null;
             if (!group.collapsible) {
               return (
                 <div key={group.title} className="space-y-0.5 pb-1">
-                  {group.items.map((item) => (
+                  {items.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
@@ -332,7 +350,7 @@ export function AppLayout() {
                 </button>
                 {open && (
                   <div className="ml-5 mt-0.5 space-y-0.5 border-l border-white/10 pl-2">
-                    {group.items.map((item) => (
+                    {items.map((item) => (
                       <NavLink
                         key={item.to}
                         to={item.to}
@@ -358,7 +376,7 @@ export function AppLayout() {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{user?.name ?? user?.email ?? "Signed in"}</p>
                 <p className="truncate text-xs text-sidebar-foreground/55">
-                  {user?.email ?? "Account"}
+                  {roleLabel ? `${user?.email ?? "Account"} · ${roleLabel}` : user?.email ?? "Account"}
                 </p>
               </div>
             </div>
@@ -408,6 +426,15 @@ export function AppLayout() {
           </div>
         </header>
         <main className="flex-1 px-4 py-8 lg:px-10">
+          {role === "viewer" && (
+            <div className="mb-6 flex flex-col gap-2 rounded-xl border border-sky-500/40 bg-gradient-to-r from-sky-50 to-indigo-50 px-4 py-3 text-sm text-sky-900 shadow-sm dark:border-sky-500/30 dark:from-sky-950/50 dark:to-indigo-950/30 dark:text-sky-200">
+              <p>
+                You have <strong>view-only</strong> rights for this society.
+                Entry forms and edits are disabled — ask the society owner for
+                editor access to record transactions.
+              </p>
+            </div>
+          )}
           {isGuest && (
             <div className="mb-6 flex flex-col gap-2 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm sm:flex-row sm:items-center sm:justify-between dark:border-amber-500/30 dark:from-amber-950/50 dark:to-orange-950/30 dark:text-amber-200">
               <p>

@@ -66,6 +66,20 @@ export function EmptyHint({ children }: { children: ReactNode }) {
   );
 }
 
+/** Shown in place of entry forms for view-only users. */
+export function ViewerBlock({ what = "entries" }: { what?: string }) {
+  return (
+    <div className="mb-10 rounded-lg border border-sky-500/40 bg-sky-50/60 p-8 text-center dark:border-sky-500/30 dark:bg-sky-950/30">
+      <p className="text-sm font-medium text-sky-900 dark:text-sky-200">
+        View-only access — {what} are disabled for your account.
+      </p>
+      <p className="mt-1 text-xs text-sky-800/80 dark:text-sky-300/80">
+        Ask the society owner to grant you editor rights to make changes.
+      </p>
+    </div>
+  );
+}
+
 export function RightMoney({ value }: { value: number }) {
   return (
     <span className="tabular-nums">

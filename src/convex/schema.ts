@@ -199,6 +199,21 @@ const schema = defineSchema(
       "by_key",
       ["key"],
     ),
+
+    // Per-society user rights. The society creator is the implicit "owner";
+    // rows here grant "editor" (entry rights) or "viewer" (read-only) access
+    // to other signed-in users, matched by Convex user id or by email.
+    membersAccess: defineTable({
+      societyId: v.id("societies"),
+      userId: v.optional(v.id("users")), // set once the invited user signs up
+      email: v.string(), // lower-cased; the invite target's sign-in email
+      role: v.union(v.literal("editor"), v.literal("viewer")),
+      grantedBy: v.id("users"),
+      createdAt: v.number(),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_user", ["userId"])
+      .index("by_email", ["email"]),
   },
   {
     schemaValidation: false,

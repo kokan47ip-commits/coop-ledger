@@ -2,16 +2,36 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
-import { DEFAULT_ACCOUNTS, requireUserId } from "./lib";
+import { DEFAULT_ACCOUNTS, requireUserId, societyAccess } from "./lib";
 
+/**
+ * Societies the caller can open: ones they created plus ones they were
+ * invited to (editor/viewer rights). Powers the sidebar society switcher.
+ */
 export const listMine = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    return await ctx.db
+    const created = await ctx.db
       .query("societies")
       .withIndex("by_creator", (q) => q.eq("createdBy", userId))
       .collect();
+
+    const user = await ctx.db.get(userId);
+    const email = user?.email?.toLowerCase().trim() ?? null;
+    // Guest identities have no email — email-based invites cannot apply.
+    const grants = email
+      ? await ctx.db
+          .query("membersAccess")
+          .withIndex("by_email", (q) => q.eq("email", email))
+          .collect()
+      : [];
+    const shared: typeof created = [];
+    for (const g of grants) {
+      const s = await ctx.db.get(g.societyId);
+      if (s && !created.some((c) => c._id === s._id)) shared.push(s);
+    }
+    return [...created, ...shared];
   },
 });
 
@@ -20,7 +40,9 @@ export const get = query({
   handler: async (ctx, { id }) => {
     const userId = await requireUserId(ctx);
     const s = await ctx.db.get(id);
-    if (!s || s.createdBy !== userId) return null;
+    if (!s) return null;
+    const access = await societyAccess(ctx, s, userId);
+    if (access === "none") return null;
     return s;
   },
 });
@@ -127,6 +149,10 @@ export const myClaimCodes = query({
   },
 });
 
+/**
+ * Society-profile edits are owner-only (they change the books' identity),
+ * so unlike data mutations this keeps the creator check.
+ */
 export const update = mutation({
   args: {
     id: v.id("societies"),
@@ -155,6 +181,7 @@ export const update = mutation({
   },
 });
 
+/** Deleting a whole society is owner-only. */
 export const remove = mutation({
   args: { id: v.id("societies") },
   handler: async (ctx, { id }) => {

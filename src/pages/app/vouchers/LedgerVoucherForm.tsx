@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { ViewerBlock } from "@/components/PageParts";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -104,7 +105,7 @@ export function LedgerVoucherForm({
   onEditDone?: () => void;
 }) {
   const isPayment = kind === "payment";
-  const { society, societyId } = useSociety();
+  const { society, societyId, canEdit } = useSociety();
   const accounts = useQuery(api.accounts.list, societyId ? { societyId } : "skip") as Account[] | undefined;
   const createVoucher = useMutation(api.vouchers.create);
   const updateVoucher = useMutation(api.vouchers.update);
@@ -344,7 +345,9 @@ export function LedgerVoucherForm({
     </TableRow>
   );
 
-  return (
+  return !canEdit ? (
+    <ViewerBlock what="voucher entries" />
+  ) : (
     <form onSubmit={submit} className="mb-10 rounded-lg border">
       {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
       <div className="grid gap-4 border-b p-4 sm:grid-cols-4">

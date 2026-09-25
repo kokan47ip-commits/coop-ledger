@@ -7,6 +7,7 @@ import {
   nextNumber,
   pad,
   requireSociety,
+  requireSocietyWrite,
   VOUCHER_PREFIX,
 } from "./lib";
 
@@ -181,7 +182,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const { societyId, type, lines, allocations } = args;
-    const society = await requireSociety(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     // Decline transactions dated outside the current accounting year.
     assertInFy(society, args.date, "Voucher");
 
@@ -276,7 +277,7 @@ export const update = mutation({
     ),
   },
   handler: async (ctx, { societyId, id, date, narration, mode, bankCashAccountId, reference, lines }) => {
-    const society = await requireSociety(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     // Decline edits that would move a voucher outside the current year.
     assertInFy(society, date, "Voucher");
     const voucher = await ctx.db.get(id);
@@ -334,7 +335,7 @@ export const update = mutation({
 export const remove = mutation({
   args: { societyId: v.id("societies"), id: v.id("vouchers") },
   handler: async (ctx, { societyId, id }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const voucher = await ctx.db.get(id);
     if (!voucher || voucher.societyId !== societyId)
       throw new Error("Voucher not found.");

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireSociety } from "./lib";
+import { requireSociety, requireSocietyWrite } from "./lib";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -24,7 +24,7 @@ export const upsert = mutation({
     isActive: v.boolean(),
   },
   handler: async (ctx, { societyId, id, ...data }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     if (id) {
       await ctx.db.patch(id, data);
       return id;
@@ -36,7 +36,7 @@ export const upsert = mutation({
 export const remove = mutation({
   args: { societyId: v.id("societies"), id: v.id("tariffs") },
   handler: async (ctx, { societyId, id }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const bills = await ctx.db
       .query("bills")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -80,7 +80,7 @@ export const setMemberOverride = mutation({
     amount: v.optional(v.number()), // undefined = clear override
   },
   handler: async (ctx, { societyId, memberId, tariffId, amount }) => {
-    await requireSociety(ctx, societyId);
+    await requireSocietyWrite(ctx, societyId);
     const existing = await ctx.db
       .query("memberTariffs")
       .withIndex("by_society_member", (q) =>
