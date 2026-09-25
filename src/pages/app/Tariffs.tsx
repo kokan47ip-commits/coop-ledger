@@ -278,65 +278,6 @@ export default function Tariffs() {
 
         <TabsContent value="schedule-heads">
 
-      {/* Per-member custom tariff upload */}
-      <Card className="mb-8 p-5 shadow-none">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1">
-            <h3 className="text-sm font-medium">Per-member custom tariffs</h3>
-            <p className="text-sm text-muted-foreground">
-              Upload a sheet with Flat No., Name of Member and one amount column per tariff. Each column header
-              becomes a tariff head (created automatically if new); rows match members by flat number or name.
-              Enter 0 to exempt a member from a charge; leave blank to skip that head.
-            </p>
-            <p className="pt-1 font-mono text-[11px] text-muted-foreground">
-              Flat No · Name of Member · Custom Tariff 1 · Custom Tariff 2 · Custom Tariff 3 …
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              downloadMemberTariffTemplate(
-                (tariffs ?? []).map((t) => t.name),
-                (members ?? []).slice(0, 5).map((m) => ({ flatNo: m.flatNo, name: m.name })),
-              )
-            }
-          >
-            <Download className="size-4" /> Template
-          </Button>
-        </div>
-        <div className="mt-4 flex items-center gap-3">
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) runUpload(f);
-              e.target.value = "";
-            }}
-          />
-          <Button disabled={uploadBusy} onClick={() => inputRef.current?.click()} className="rounded-lg">
-            <Upload className="size-4" /> {uploadBusy ? "Uploading…" : "Upload Excel"}
-          </Button>
-          {lastUpload && (
-            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <CheckCircle2 className="size-4 text-foreground" />
-              {lastUpload.inserted} added · {lastUpload.updated} updated
-              {lastUpload.errors.length > 0 && ` · ${lastUpload.errors.length} row errors`}
-            </span>
-          )}
-        </div>
-        {lastUpload && lastUpload.errors.length > 0 && (
-          <div className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-md bg-accent/50 p-3 text-xs text-muted-foreground">
-            {lastUpload.errors.slice(0, 20).map((e, i) => (
-              <p key={i}>{e}</p>
-            ))}
-          </div>
-        )}
-      </Card>
-
       {!tariffs ? null : tariffs.length === 0 ? (
         <EmptyHint>
           No tariffs yet. Add charge heads (e.g. Maintenance ₹2,500 per flat) to enable bill generation.
@@ -583,6 +524,64 @@ export default function Tariffs() {
         </TabsContent>
 
         <TabsContent value="matrix">
+          {/* Per-member tariff amount upload — fills the schedule below */}
+          <Card className="mb-8 p-5 shadow-none">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-medium">Upload member schedule</h3>
+                <p className="text-sm text-muted-foreground">
+                  Upload a sheet with Flat No., Name of Member and one amount column per tariff to fill the schedule
+                  below. Column headers match tariff heads (created automatically if new); rows match members by flat
+                  number or name. Enter 0 to exempt a member from a charge; leave blank to skip that head.
+                </p>
+                <p className="pt-1 font-mono text-[11px] text-muted-foreground">
+                  Flat No · Name of Member · Custom Tariff 1 · Custom Tariff 2 · Custom Tariff 3 …
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  downloadMemberTariffTemplate(
+                    (tariffs ?? []).map((t) => t.name),
+                    (members ?? []).slice(0, 5).map((m) => ({ flatNo: m.flatNo, name: m.name })),
+                  )
+                }
+              >
+                <Download className="size-4" /> Template
+              </Button>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) runUpload(f);
+                  e.target.value = "";
+                }}
+              />
+              <Button disabled={!canEdit || uploadBusy} onClick={() => inputRef.current?.click()} className="rounded-lg">
+                <Upload className="size-4" /> {uploadBusy ? "Uploading…" : "Upload Excel"}
+              </Button>
+              {lastUpload && (
+                <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <CheckCircle2 className="size-4 text-foreground" />
+                  {lastUpload.inserted} added · {lastUpload.updated} updated
+                  {lastUpload.errors.length > 0 && ` · ${lastUpload.errors.length} row errors`}
+                </span>
+              )}
+            </div>
+            {lastUpload && lastUpload.errors.length > 0 && (
+              <div className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-md bg-accent/50 p-3 text-xs text-muted-foreground">
+                {lastUpload.errors.slice(0, 20).map((e, i) => (
+                  <p key={i}>{e}</p>
+                ))}
+              </div>
+            )}
+          </Card>
           <MemberTariffMatrix
             societyId={societyId}
             tariffs={(tariffs ?? [])
@@ -745,7 +744,8 @@ function MemberTariffMatrix(props: {
   if (tariffs.length === 0) {
     return (
       <EmptyHint>
-        Add tariff heads on the Tariff Heads tab first — then each member's amounts can be set here.
+        Add tariff heads on the Tariff Heads tab — or upload a member schedule above (missing heads are created
+        automatically) — then each member's amounts appear here.
       </EmptyHint>
     );
   }
