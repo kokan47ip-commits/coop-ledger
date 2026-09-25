@@ -35,6 +35,12 @@ const ReceiptPayment = lazy(() => import("./pages/app/reports/ReceiptPayment.tsx
 const Uploads = lazy(() => import("./pages/app/Uploads.tsx"));
 const TransactionImport = lazy(() => import("./pages/app/TransactionImport.tsx"));
 const UsersRights = lazy(() => import("./pages/app/UsersRights.tsx"));
+const PortalHome = lazy(() => import("./pages/portal/PortalHome.tsx"));
+const PortalLedger = lazy(() => import("./pages/portal/PortalLedger.tsx"));
+const PortalBills = lazy(() => import("./pages/portal/PortalBills.tsx"));
+const PortalReceipts = lazy(() => import("./pages/portal/PortalReceipts.tsx"));
+const PortalPay = lazy(() => import("./pages/portal/PortalPay.tsx"));
+const PortalProfile = lazy(() => import("./pages/portal/PortalProfile.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -187,6 +193,24 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="uploads" element={<Uploads />} />
                 <Route path="transaction-import" element={<TransactionImport />} />
                 <Route path="users" element={<UsersRights />} />
+              </Route>
+              {/* Member self-service portal (flat-bound logins) */}
+              <Route
+                path="/portal"
+                element={
+                  <RequireAuth>
+                    <SocietyProvider>
+                      <AppLayout />
+                    </SocietyProvider>
+                  </RequireAuth>
+                }
+              >
+                <Route index element={<PortalHome />} />
+                <Route path="ledger" element={<PortalLedger />} />
+                <Route path="bills" element={<PortalBills />} />
+                <Route path="receipts" element={<PortalReceipts />} />
+                <Route path="pay" element={<PortalPay />} />
+                <Route path="profile" element={<PortalProfile />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

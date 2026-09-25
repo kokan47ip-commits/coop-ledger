@@ -203,13 +203,22 @@ const schema = defineSchema(
     ),
 
     // Per-society user rights. The society creator is the implicit "owner";
-    // rows here grant "editor" (entry rights) or "viewer" (read-only) access
-    // to other signed-in users, matched by Convex user id or by email.
+    // rows here grant "editor" (entry rights), "viewer" (read-only) or
+    // "member" (flat-bound portal) access to other signed-in users, matched
+    // by Convex user id or by email.
     membersAccess: defineTable({
       societyId: v.id("societies"),
       userId: v.optional(v.id("users")), // set once the invited user signs up
       email: v.string(), // lower-cased; the invite target's sign-in email
-      role: v.union(v.literal("editor"), v.literal("viewer")),
+      role: v.union(
+        v.literal("editor"),
+        v.literal("viewer"),
+        // Flat-bound portal login: the member sees only their own flat —
+        // ledger, bills, receipts, payment entry and their profile.
+        v.literal("member"),
+      ),
+      /** When role is "member": the flat this login is bound to. */
+      memberId: v.optional(v.id("members")),
       /** Menu keys the user may open; empty/missing = all non-admin menus. */
       menus: v.optional(v.array(v.string())),
       grantedBy: v.id("users"),

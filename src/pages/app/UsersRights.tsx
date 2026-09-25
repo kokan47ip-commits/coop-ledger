@@ -38,11 +38,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 type Grant = {
   _id: Id<"membersAccess">;
   email: string;
-  role: "editor" | "viewer";
+  role: "editor" | "viewer" | "member";
   menus: string[] | null;
   createdAt: number;
   joined: boolean;
   name: string | null;
+  memberId: Id<"members"> | null;
+  memberName: string | null;
+  memberFlat: string | null;
 };
 
 type MemberRow = Doc<"members">;
@@ -59,11 +62,13 @@ function useUsersRightsData(societyId: Id<"societies"> | null, canManage: boolea
   return { grants, members };
 }
 
-const ROLE_HELP: Record<"editor" | "viewer", string> = {
+const ROLE_HELP: Record<"editor" | "viewer" | "member", string> = {
   editor:
     "Can enter vouchers, bills, masters and upload Excel data — everything except society-level settings and user rights.",
   viewer:
     "Read-only: can open every register and report but cannot save or change any entry.",
+  member:
+    "Flat-bound portal login: sees only their own ledger, bills and receipts, can make payments and manage their profile. No access to the society's books.",
 };
 
 export default function UsersRights() {
@@ -82,7 +87,7 @@ export default function UsersRights() {
   const [memberId, setMemberId] = useState("");
   const [memberEmail, setMemberEmail] = useState("");
   const [email, setEmail] = useState("");
-  const [formRole, setFormRole] = useState<"editor" | "viewer">("editor");
+  const [formRole, setFormRole] = useState<"editor" | "viewer" | "member">("editor");
   const [formMenus, setFormMenus] = useState<string[]>([]); // empty = all menus
   const [editing, setEditing] = useState<Grant | null>(null);
   const [busy, setBusy] = useState(false);
@@ -151,7 +156,9 @@ export default function UsersRights() {
           menus: formMenus.length > 0 ? formMenus : undefined,
         });
         toast.success(
-          `${member?.name ?? "Member"} can now sign in with ${loginEmail} as ${formRole}.`,
+          formRole === "member"
+            ? `${member?.name ?? "Member"} gets a portal login with ${loginEmail} — they will see only their own flat.`
+            : `${member?.name ?? "Member"} can now sign in with ${loginEmail} as ${formRole}.`,
         );
       } else {
         await grantAccess({
@@ -204,7 +211,7 @@ export default function UsersRights() {
         </EmptyHint>
       ) : (
       <>
-      <div className="mb-6 grid gap-4 md:grid-cols-3">
+      <div className="mb-6 grid gap-4 md:grid-cols-4">
         <div className="rounded-lg border border-border/80 bg-card p-5 shadow-md shadow-slate-950/[0.05]">
           <div className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-primary" />
@@ -225,6 +232,12 @@ export default function UsersRights() {
           <p className="text-sm font-semibold">Viewer</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {ROLE_HELP.viewer}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border/80 bg-card p-5 shadow-md shadow-slate-950/[0.05]">
+          <p className="text-sm font-semibold">Member portal</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {ROLE_HELP.member}
           </p>
         </div>
       </div>
@@ -269,18 +282,36 @@ export default function UsersRights() {
                       {g.joined ? "Active" : "Invited"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="capitalize">{g.role}</TableCell>
+                  <TableCell className="capitalize">
+                    {g.role === "member" ? (
+                      <span title="Flat-bound portal login">
+                        Member portal
+                        {g.memberFlat ? ` — ${g.memberFlat}` : ""}
+                      </span>
+                    ) : (
+                      g.role
+                    )}
+                  </TableCell>
                   <TableCell>
-                    <button
-                      type="button"
-                      onClick={() => openMenus(g)}
-                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      title="Choose which menus this user can open"
-                    >
-                      {g.menus && g.menus.length > 0
-                        ? `${g.menus.length} menu${g.menus.length > 1 ? "s" : ""}`
-                        : "All menus"}
-                    </button>
+                    {g.role === "member" ? (
+                      <span
+                        className="cursor-default text-xs text-muted-foreground"
+                        title="Portal members always see their own flat only"
+                      >
+                        My flat only
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openMenus(g)}
+                        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        title="Choose which menus this user can open"
+                      >
+                        {g.menus && g.menus.length > 0
+                          ? `${g.menus.length} menu${g.menus.length > 1 ? "s" : ""}`
+                          : "All menus"}
+                      </button>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(g.createdAt).toLocaleDateString("en-IN", {
@@ -297,6 +328,7 @@ export default function UsersRights() {
                         className="size-8"
                         title="Menu access"
                         onClick={() => openMenus(g)}
+                        disabled={g.role === "member"}
                       >
                         <SlidersHorizontal className="size-3.5" />
                       </Button>
@@ -449,7 +481,7 @@ export default function UsersRights() {
               <Label>Role</Label>
               <Select
                 value={formRole}
-                onValueChange={(v) => setFormRole(v as "editor" | "viewer")}
+                onValueChange={(v) => setFormRole(v as "editor" | "viewer" | "member")}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -457,13 +489,14 @@ export default function UsersRights() {
                 <SelectContent>
                   <SelectItem value="editor">Editor — enter & edit data</SelectItem>
                   <SelectItem value="viewer">Viewer — read-only</SelectItem>
+                  <SelectItem value="member">Member portal — only their flat</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs leading-5 text-muted-foreground">
                 {ROLE_HELP[formRole]}
               </p>
             </div>
-            {!editing && (
+            {!editing && formRole !== "member" && (
               <div className="space-y-2 rounded-lg border border-dashed p-3">
                 <p className="text-xs font-medium">Menu access</p>
                 <p className="text-xs leading-5 text-muted-foreground">

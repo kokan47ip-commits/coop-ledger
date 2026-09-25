@@ -5,9 +5,11 @@ import { MutationCtx, QueryCtx } from "./_generated/server";
 /**
  * Effective access level a user holds over a society. "owner" is the creator;
  * "editor" (entry rights) and "viewer" (read-only) come from explicit grants
- * in the membersAccess table, matched by user id or email.
+ * in the membersAccess table, matched by user id or email. "member" is a
+ * flat-bound portal login — it does not open the society's books, only the
+ * member self-service portal.
  */
-export type SocietyAccess = "owner" | "editor" | "viewer" | "none";
+export type SocietyAccess = "owner" | "editor" | "viewer" | "member" | "none";
 
 export async function requireUserId(ctx: QueryCtx) {
   const userId = await getAuthUserId(ctx);
@@ -49,6 +51,31 @@ export async function societyAccess(
   return grant?.role ?? "none";
 }
 
+/**
+ * The flat a "member"-role grant binds this user to in a society, if any.
+ * Resolved from the same grant row used by societyAccess.
+ */
+export async function societyMemberBinding(
+  ctx: QueryCtx,
+  society: Doc<"societies">,
+  userId: Id<"users">,
+): Promise<Id<"members"> | null> {
+  const user = await ctx.db.get(userId);
+  const email = user?.email?.toLowerCase().trim() ?? null;
+  if (!email) return null;
+  const grants = await ctx.db
+    .query("membersAccess")
+    .withIndex("by_society", (q) => q.eq("societyId", society._id))
+    .collect();
+  const grant = grants.find(
+    (g) =>
+      (g.userId === userId || g.email === email) &&
+      g.role === "member" &&
+      g.memberId !== undefined,
+  );
+  return grant?.memberId ?? null;
+}
+
 /** True when the signed-in user is a software-level administrator. */
 
 /**
@@ -64,7 +91,10 @@ export async function requireSociety(
   const society = await ctx.db.get(societyId);
   if (!society) throw new Error("Society not found.");
   const access = await societyAccess(ctx, society, userId);
-  if (access === "none") throw new Error("Society not found.");
+  // "member" logins have no book access — every societies query/mutation is
+  // out of bounds; they use the dedicated portal functions instead.
+  if (access === "none" || access === "member")
+    throw new Error("Society not found.");
   return society;
 }
 
@@ -80,7 +110,8 @@ export async function requireSocietyWrite(
   const society = await ctx.db.get(societyId);
   if (!society) throw new Error("Society not found.");
   const access = await societyAccess(ctx, society, userId);
-  if (access === "none") throw new Error("Society not found.");
+  if (access === "none" || access === "member")
+    throw new Error("Society not found.");
   if (access === "viewer") {
     throw new Error(
       "You have view-only rights for this society — changes are not allowed. Ask the society owner for entry access.",

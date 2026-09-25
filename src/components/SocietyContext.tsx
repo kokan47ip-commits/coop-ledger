@@ -13,7 +13,7 @@ import {
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
-export type SocietyRole = "owner" | "editor" | "viewer" | "none";
+export type SocietyRole = "owner" | "editor" | "viewer" | "member" | "none";
 
 type Society = {
   _id: Id<"societies">;
@@ -51,6 +51,14 @@ type SocietyContextValue = {
   isAdmin: boolean;
   /** Menu keys the user may open; null = everything allowed. */
   allowedMenus: string[] | null;
+  /** For flat-bound member logins: the flat they can see. */
+  memberBinding: {
+    memberId: Id<"members">;
+    name: string;
+    flatNo?: string;
+    wing?: string;
+    code: string;
+  } | null;
 };
 
 const SocietyContext = createContext<SocietyContextValue | null>(null);
@@ -111,6 +119,11 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
   );
   const menusResult = useQuery(
     api.access.myMenus,
+    activeId && !isGuest ? { societyId: activeId } : "skip",
+  );
+  // Flat-bound member logins: which flat is this user linked to, if any.
+  const bindingResult = useQuery(
+    api.access.myMemberBinding,
     activeId && !isGuest ? { societyId: activeId } : "skip",
   );
   const isAdmin = menusResult?.admin === true;
@@ -181,6 +194,7 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     canEdit,
     isAdmin,
     allowedMenus,
+    memberBinding: bindingResult ?? null,
   };
 
   return <SocietyContext.Provider value={value}>{children}</SocietyContext.Provider>;

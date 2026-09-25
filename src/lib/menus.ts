@@ -8,11 +8,13 @@ import {
   FileInput,
   FileSpreadsheet,
   FileText,
+  Home,
   Landmark,
   LayoutDashboard,
   Receipt,
   ShieldCheck,
   TrendingUp,
+  UserCircle,
   Users,
   Wallet,
 } from "lucide-react";
@@ -40,14 +42,22 @@ export type MenuKey =
   | "receipt-payment"
   | "transaction-import"
   | "uploads"
-  | "users";
+  | "users"
+  | // Member self-service portal (flat-bound logins only)
+  "portal-home"
+  | "portal-ledger"
+  | "portal-bills"
+  | "portal-receipts"
+  | "portal-pay"
+  | "portal-profile";
 
 export type MenuSection =
   | "Overview"
   | "Masters"
   | "Transactions"
   | "Reports"
-  | "Data";
+  | "Data"
+  | "My Flat";
 
 export type MenuItem = {
   key: MenuKey;
@@ -95,3 +105,22 @@ export const PATH_TO_MENU: Record<string, MenuKey> = Object.fromEntries(
 export const DEFAULT_GRANT_MENUS: MenuKey[] = MENU_REGISTRY.filter(
   (m) => m.key !== "users",
 ).map((m) => m.key);
+
+/**
+ * Portal nav for flat-bound member logins — a distinct sidebar experience.
+ * Not part of MENU_REGISTRY: society book menus and portal menus never mix.
+ */
+export const PORTAL_MENUS: MenuItem[] = [
+  { key: "portal-home", label: "My Flat", section: "My Flat", path: "/portal", icon: Home },
+  { key: "portal-ledger", label: "My Ledger", section: "My Flat", path: "/portal/ledger", icon: BookOpen },
+  { key: "portal-bills", label: "My Bills", section: "My Flat", path: "/portal/bills", icon: FileSpreadsheet },
+  { key: "portal-receipts", label: "My Receipts", section: "My Flat", path: "/portal/receipts", icon: Receipt },
+  { key: "portal-pay", label: "Make Payment", section: "My Flat", path: "/portal/pay", icon: Wallet },
+  { key: "portal-profile", label: "My Profile", section: "My Flat", path: "/portal/profile", icon: UserCircle },
+];
+
+export const PORTAL_PATHS = new Set(PORTAL_MENUS.map((m) => m.path));
+
+export function portalMenuItem(key: MenuKey): MenuItem | undefined {
+  return PORTAL_MENUS.find((m) => m.key === key);
+}

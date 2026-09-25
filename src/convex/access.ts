@@ -46,10 +46,11 @@ export const listForSociety = query({
       .query("membersAccess")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    // Attach display names for users who have already signed up.
+    // Attach display names (and the bound flat for member-portal grants).
     const withNames = await Promise.all(
       grants.map(async (g) => {
         const user = g.userId ? await ctx.db.get(g.userId) : null;
+        const member = g.memberId ? await ctx.db.get(g.memberId) : null;
         return {
           _id: g._id,
           email: g.email,
@@ -58,6 +59,11 @@ export const listForSociety = query({
           createdAt: g.createdAt,
           joined: !!g.userId,
           name: user?.name ?? null,
+          memberId: g.memberId ?? null,
+          memberName: member?.name ?? null,
+          memberFlat: member
+            ? [member.wing, member.flatNo].filter(Boolean).join("-") || member.code
+            : null,
         };
       }),
     );
@@ -74,6 +80,41 @@ export const myAccess = query({
     const society = await ctx.db.get(societyId);
     if (!society) return "none" as SocietyAccess;
     return await societyAccess(ctx, society, userId);
+  },
+});
+
+/**
+ * When the caller holds a "member" (flat-bound portal) grant, return the
+ * bound flat so portal pages can confirm access without book queries.
+ */
+export const myMemberBinding = query({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const society = await ctx.db.get(societyId);
+    if (!society) return null;
+    const user = await ctx.db.get(userId);
+    const email = user?.email?.toLowerCase().trim() ?? null;
+    if (!email) return null;
+    const grants = await ctx.db
+      .query("membersAccess")
+      .withIndex("by_society", (q) => q.eq("societyId", society._id))
+      .collect();
+    const grant = grants.find(
+      (g) =>
+        (g.userId === userId || g.email === email) && g.role === "member",
+    );
+    if (!grant?.memberId) return null;
+    const member = await ctx.db.get(grant.memberId);
+    if (!member) return null;
+    return {
+      memberId: grant.memberId,
+      name: member.name,
+      flatNo: member.flatNo,
+      wing: member.wing,
+      code: member.code,
+    };
   },
 });
 
@@ -108,6 +149,8 @@ async function allowedMenusHelper(
     .collect();
   const grant = grants.find((g) => g.userId === userId || g.email === email);
   if (!grant) return [];
+  // "member" logins are portal-bound, not book users — no book menus.
+  if (grant.role === "member") return ["portal"];
   return grant.menus && grant.menus.length > 0 ? grant.menus : null;
 }
 
@@ -116,10 +159,26 @@ export const grant = mutation({
   args: {
     societyId: v.id("societies"),
     email: emailField,
-    role: v.union(v.literal("editor"), v.literal("viewer")),
+    role: v.union(v.literal("editor"), v.literal("viewer"), v.literal("member")),
     menus: menuKeysField,
+    /** Required when role is "member": the flat the login is bound to. */
+    memberId: v.optional(v.id("members")),
   },
-  handler: async (ctx, { societyId, email, role, menus }) => {
+  handler: async (
+    ctx,
+    { societyId, email, role, menus, memberId },
+  ) => {
+    if (role === "member" && !memberId) {
+      throw new Error(
+        "A member portal login must be linked to a flat — pick the member to bind.",
+      );
+    }
+    if (memberId) {
+      const boundMember = await ctx.db.get(memberId);
+      if (!boundMember || boundMember.societyId !== societyId) {
+        throw new Error("Member not found in this society.");
+      }
+    }
     const society = await requireSociety(ctx, societyId);
     const callerId = await requireRightsManager(ctx, society);
     const normalized = email.toLowerCase().trim();
@@ -141,7 +200,12 @@ export const grant = mutation({
       .collect();
     const existing = grants.find((g) => g.email === normalized);
     if (existing) {
-      await ctx.db.patch(existing._id, { role, menus });
+      await ctx.db.patch(existing._id, {
+        role,
+        menus,
+        // Rebinding to a different flat on update; cleared for non-member roles.
+        memberId: role === "member" ? memberId : undefined,
+      });
       return { id: existing._id, updated: true };
     }
 
@@ -155,6 +219,7 @@ export const grant = mutation({
       email: normalized,
       role,
       menus,
+      memberId: role === "member" ? memberId : undefined,
       userId: targetUser?._id,
       grantedBy: callerId,
       createdAt: Date.now(),
@@ -169,7 +234,7 @@ export const grantFromMember = mutation({
     societyId: v.id("societies"),
     memberId: v.id("members"),
     email: emailField,
-    role: v.union(v.literal("editor"), v.literal("viewer")),
+    role: v.union(v.literal("editor"), v.literal("viewer"), v.literal("member")),
     menus: menuKeysField,
   },
   handler: async (ctx, { societyId, memberId, email, role, menus }) => {
@@ -202,7 +267,12 @@ export const grantFromMember = mutation({
       .collect();
     const existing = grants.find((g) => g.email === normalized);
     if (existing) {
-      await ctx.db.patch(existing._id, { role, menus });
+      await ctx.db.patch(existing._id, {
+        role,
+        menus,
+        // Rebinds to a different flat on update; cleared for non-member roles.
+        memberId: role === "member" ? memberId : undefined,
+      });
       return { id: existing._id, updated: true };
     }
 
@@ -216,6 +286,7 @@ export const grantFromMember = mutation({
       email: normalized,
       role,
       menus,
+      memberId: role === "member" ? memberId : undefined,
       userId: targetUser?._id,
       grantedBy: callerId,
       createdAt: Date.now(),
@@ -224,21 +295,37 @@ export const grantFromMember = mutation({
   },
 });
 
-/** Change an existing grant's role. */
+/** Change an existing grant's role (and flat binding for member role). */
 export const setRole = mutation({
   args: {
     societyId: v.id("societies"),
     id: v.id("membersAccess"),
-    role: v.union(v.literal("editor"), v.literal("viewer")),
+    role: v.union(v.literal("editor"), v.literal("viewer"), v.literal("member")),
+    /** Required when role is "member": the flat to bind. */
+    memberId: v.optional(v.id("members")),
   },
-  handler: async (ctx, { societyId, id, role }) => {
+  handler: async (ctx, { societyId, id, role, memberId }) => {
     const society = await requireSociety(ctx, societyId);
     await requireRightsManager(ctx, society);
     const grantRow = await ctx.db.get(id);
     if (!grantRow || grantRow.societyId !== societyId) {
       throw new Error("Grant not found.");
     }
-    await ctx.db.patch(id, { role });
+    if (role === "member") {
+      const bound = memberId ?? grantRow.memberId;
+      if (!bound) {
+        throw new Error(
+          "A member portal login must be linked to a flat — pick the member to bind.",
+        );
+      }
+      const m = await ctx.db.get(bound);
+      if (!m || m.societyId !== societyId) {
+        throw new Error("Member not found in this society.");
+      }
+      await ctx.db.patch(id, { role, memberId: bound });
+    } else {
+      await ctx.db.patch(id, { role, memberId: undefined });
+    }
   },
 });
 

@@ -41,7 +41,11 @@ export const listMine = query({
     const shared: typeof created = [];
     for (const g of grants) {
       const s = await ctx.db.get(g.societyId);
-      if (s && !created.some((c) => c._id === s._id)) shared.push(s);
+      if (s && !created.some((c) => c._id === s._id)) {
+        // Never expose another society's guest claim code to a granted user —
+        // it is an ownership-takeover secret.
+        shared.push(s.claimCode ? { ...s, claimCode: undefined } : s);
+      }
     }
     return [...created, ...shared];
   },
@@ -54,7 +58,12 @@ export const get = query({
     const s = await ctx.db.get(id);
     if (!s) return null;
     const access = await societyAccess(ctx, s, userId);
+    // "member" logins may read the society header (for the portal) but never
+    // receive the guest claim code — that would let them take ownership.
     if (access === "none") return null;
+    if (s.claimCode && s.createdBy !== userId && !(await isSoftwareAdmin(ctx, userId))) {
+      return { ...s, claimCode: undefined };
+    }
     return s;
   },
 });

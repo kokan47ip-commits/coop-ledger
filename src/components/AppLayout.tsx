@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { MENU_REGISTRY, PATH_TO_MENU, type MenuKey } from "@/lib/menus";
+import { MENU_REGISTRY, PATH_TO_MENU, PORTAL_MENUS, PORTAL_PATHS, type MenuKey } from "@/lib/menus";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -143,7 +143,8 @@ const navLinkCls = ({ isActive }: { isActive: boolean }) =>
   );
 
 function SocietySwitcher() {
-  const { societies, society, setActiveId } = useSociety();
+  const { societies, society, setActiveId, role } = useSociety();
+  const isPortalMember = role === "member";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -179,20 +180,33 @@ function SocietySwitcher() {
             <span className="truncate">{s.name}</span>
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link to="/app/society?new=1" className="cursor-pointer">
-            <Plus className="mr-2 size-4" /> Onboard a new society
-          </Link>
-        </DropdownMenuItem>
+        {!isPortalMember && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link to="/app/society?new=1" className="cursor-pointer">
+                <Plus className="mr-2 size-4" /> Onboard a new society
+              </Link>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
 export function AppLayout() {
-  const { societyId, society, isLoading, isGuest, role, canEdit, isAdmin, allowedMenus } =
-    useSociety();
+  const {
+    societyId,
+    society,
+    isLoading,
+    isGuest,
+    role,
+    canEdit,
+    isAdmin,
+    allowedMenus,
+    memberBinding,
+  } = useSociety();
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -231,7 +245,11 @@ export function AppLayout() {
       ? "Bill View"
       : location.pathname.startsWith("/app/vouchers/")
         ? "Voucher View"
-        : "Accounting");
+        : location.pathname.startsWith("/portal/")
+          ? "My Flat"
+          : location.pathname === "/portal"
+            ? "My Flat"
+            : "Accounting");
 
   const handleSignOut = async () => {
     await signOut();
@@ -240,9 +258,14 @@ export function AppLayout() {
 
   const isSetupRoute = location.pathname === "/app/society";
 
-  // Menu-rights route guard: users without access to this screen's menu are
-  // bounced to the first menu they can open (dashboard as fallback).
-  const pathMenuKey = PATH_TO_MENU[location.pathname];
+  // ---- Member portal mode -------------------------------------------------
+  // Flat-bound member logins get their own sidebar experience; they never
+  // see society book menus (their access level is "member" on the server).
+  const isMemberPortal = role === "member" && !!memberBinding;
+
+  const pathMenuKey = PORTAL_PATHS.has(location.pathname)
+    ? (location.pathname.replace("/portal/", "portal-").replace("/portal", "portal-home") as MenuKey)
+    : PATH_TO_MENU[location.pathname];
   const billDetail: MenuKey | null = location.pathname.startsWith("/app/bills/")
     ? "bills"
     : null;
@@ -250,15 +273,49 @@ export function AppLayout() {
   const menuAllowed =
     !requiredMenu ||
     (requiredMenu === "users" && (role === "owner" || isAdmin)) ||
+    (requiredMenu === "portal-home" && (role === "member" || allowedMenus === null)) ||
+    (requiredMenu.startsWith("portal-") && allowedMenus?.includes("portal") === true) ||
     allowedMenus === null ||
     allowedMenus.includes(requiredMenu);
   // First menu the user may open — the fallback when a screen is blocked.
+  // Member-portal logins fall back to /portal (their menus are portal keys,
+  // which MENU_REGISTRY does not know about).
   const fallbackPath =
-    !allowedMenus || allowedMenus.length === 0 || allowedMenus.includes("dashboard")
-      ? "/dashboard"
-      : (MENU_REGISTRY.find((m) => allowedMenus.includes(m.key))?.path ?? "/dashboard");
-  if (!isLoading && !menuAllowed && location.pathname !== fallbackPath) {
-    return <Navigate to={fallbackPath} replace />;
+    role === "member"
+      ? "/portal"
+      : !allowedMenus || allowedMenus.length === 0 || allowedMenus.includes("dashboard")
+        ? "/dashboard"
+        : (MENU_REGISTRY.find((m) => allowedMenus.includes(m.key))?.path ?? "/dashboard");
+
+  // Route guard. Portal members may only open /portal/*; book users may
+  // never open /portal/*. Everyone else honours menu rights.
+  if (!isLoading) {
+    if (isMemberPortal && location.pathname.startsWith("/app")) {
+      return <Navigate to="/portal" replace />;
+    }
+    if (
+      role === "member" &&
+      !memberBinding &&
+      !location.pathname.startsWith("/portal")
+    ) {
+      return <Navigate to="/portal" replace />;
+    }
+    if (
+      isMemberPortal &&
+      requiredMenu &&
+      !PORTAL_MENUS.some((m) => m.key === requiredMenu)
+    ) {
+      return <Navigate to="/portal" replace />;
+    }
+    if (
+      role !== "member" &&
+      location.pathname.startsWith("/portal")
+    ) {
+      return <Navigate to={fallbackPath} replace />;
+    }
+    if (!menuAllowed && location.pathname !== fallbackPath) {
+      return <Navigate to={fallbackPath} replace />;
+    }
   }
 
   const initials = (user?.name ?? user?.email ?? "IA")
@@ -275,7 +332,11 @@ export function AppLayout() {
         ? "Editor"
         : role === "viewer"
           ? "Viewer (read-only)"
-          : null;
+          : role === "member"
+            ? memberBinding
+              ? `Member — ${[memberBinding.wing, memberBinding.flatNo].filter(Boolean).join("-") || memberBinding.code}`
+              : "Member"
+            : null;
 
   if (!isLoading && !societyId && !isSetupRoute) {
     return (
@@ -315,7 +376,20 @@ export function AppLayout() {
           <SocietySwitcher />
         </div>
         <nav className="relative flex-1 space-y-1.5 overflow-y-auto px-3 py-4">
-          {NAV.map((group) => {
+          {isMemberPortal
+            ? PORTAL_MENUS.map((item) => (
+                <div key={item.key} className="space-y-0.5 pb-1">
+                  <NavLink
+                    to={item.path}
+                    onClick={() => setMobileOpen(false)}
+                    className={navLinkCls}
+                  >
+                    <item.icon className="size-4" />
+                    {item.label}
+                  </NavLink>
+                </div>
+              ))
+            : NAV.map((group) => {
             // Users & Rights: owners and software admins only. All other menus
             // honour the per-user menu rights set by the admin.
             const items = group.items.filter((i) => {
@@ -458,6 +532,18 @@ export function AppLayout() {
           </div>
         </header>
         <main className="flex-1 px-4 py-8 lg:px-10">
+          {role === "member" && (
+            <div className="mb-6 flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-gradient-to-r from-emerald-50 to-teal-50 px-4 py-3 text-sm text-emerald-900 shadow-sm dark:border-emerald-500/30 dark:from-emerald-950/50 dark:to-teal-950/30 dark:text-emerald-200">
+              <p>
+                Welcome! You are signed in as a <strong>member</strong>
+                {memberBinding
+                  ? ` of flat ${[memberBinding.wing, memberBinding.flatNo].filter(Boolean).join("-") || memberBinding.code}`
+                  : ""}
+                . You can view your own ledger, bills and receipts, make
+                payments, and manage your profile — nothing else.
+              </p>
+            </div>
+          )}
           {role === "viewer" && (
             <div className="mb-6 flex flex-col gap-2 rounded-xl border border-sky-500/40 bg-gradient-to-r from-sky-50 to-indigo-50 px-4 py-3 text-sm text-sky-900 shadow-sm dark:border-sky-500/30 dark:from-sky-950/50 dark:to-indigo-950/30 dark:text-sky-200">
               <p>
