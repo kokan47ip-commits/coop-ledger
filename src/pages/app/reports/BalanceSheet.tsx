@@ -11,7 +11,12 @@ import { Download, FileText, Printer } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "convex/react";
 
-type Row = { code: string; name: string; amount: number };
+type Row = { code: string; name: string; amount: number; printNo?: string };
+
+/** Statement serial: the user-defined Print No., else the running position. */
+function serialOf(printNo: string | undefined, position: number): string {
+  return printNo ?? String(position);
+}
 type BSResult = {
   assets: Row[];
   liabilities: Row[];
@@ -49,23 +54,25 @@ export default function BalanceSheet() {
   const buildTable = (): TableSpec => {
     const rows: (string | number)[][] = [];
     const maxLen = Math.max(bs?.assets.length ?? 0, bs?.liabilities.length ?? 0);
-    rows.push(["", "LIABILITIES & FUNDS", "Amount (₹)", "ASSETS", "Amount (₹)"]);
+    rows.push(["", "", "LIABILITIES & FUNDS", "Amount (₹)", "", "ASSETS", "Amount (₹)"]);
     for (let i = 0; i < maxLen; i++) {
       const li = bs?.liabilities[i];
       const a = bs?.assets[i];
       rows.push([
         "",
+        li ? serialOf(li.printNo, i + 1) : "",
         li ? `    ${li.name}` : "",
         li ? li.amount : "",
+        a ? serialOf(a.printNo, i + 1) : "",
         a ? `    ${a.name}` : "",
         a ? a.amount : "",
       ]);
     }
-    rows.push(["", "Total", bs?.totalLiabilities ?? 0, "", bs?.totalAssets ?? 0]);
+    rows.push(["", "", "Total", bs?.totalLiabilities ?? 0, "", "Total", bs?.totalAssets ?? 0]);
     return {
-      head: ["", "Liabilities & Funds", "Amount (₹)", "Assets", "Amount (₹)"],
+      head: ["", "S.No.", "Liabilities & Funds", "Amount (₹)", "S.No.", "Assets", "Amount (₹)"],
       body: rows,
-      columnStyles: { 2: { halign: "right" }, 4: { halign: "right" } },
+      columnStyles: { 3: { halign: "right" }, 6: { halign: "right" } },
     };
   };
 
@@ -108,8 +115,10 @@ export default function BalanceSheet() {
             <thead>
               <tr className="border-b bg-accent/40 text-xs font-semibold uppercase tracking-[0.14em]">
                 <td className="px-5 py-2.5">Liabilities & Funds</td>
+                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
                 <td className="w-48 px-5 py-2.5 text-right">Amount (₹)</td>
                 <td className="border-l px-5 py-2.5">Assets</td>
+                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
                 <td className="w-48 border-l px-5 py-2.5 text-right">Amount (₹)</td>
               </tr>
             </thead>
@@ -122,16 +131,20 @@ export default function BalanceSheet() {
                 return (
                   <tr key={i} className="border-b last:border-0">
                     <td className="px-5 py-2.5">{li?.name ?? ""}</td>
+                    <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{li ? serialOf(li.printNo, i + 1) : ""}</td>
                     <td className="px-5 py-2.5 text-right tabular-nums">{li ? money(li.amount) : ""}</td>
                     <td className="border-l px-5 py-2.5">{a?.name ?? ""}</td>
+                    <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{a ? serialOf(a.printNo, i + 1) : ""}</td>
                     <td className="border-l px-5 py-2.5 text-right tabular-nums">{a ? money(a.amount) : ""}</td>
                   </tr>
                 );
               })}
               <tr className="border-t-2 border-foreground/50 text-base font-semibold">
                 <td className="px-5 py-4">Total</td>
+                <td />
                 <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilities)}</td>
                 <td className="border-l px-5 py-4">Total</td>
+                <td />
                 <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssets)}</td>
               </tr>
             </tbody>

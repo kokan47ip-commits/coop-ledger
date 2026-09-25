@@ -44,6 +44,8 @@ type TariffRow = {
   amount: number;
   unit?: "flat" | "member";
   isActive: boolean;
+  /** User-defined printing serial no. — order of this head on printed bills. */
+  printNo?: string;
 };
 
 type AccountRow = {
@@ -95,6 +97,7 @@ export default function Tariffs() {
     amount: "0",
     unit: "flat",
     isActive: true,
+    printNo: "",
   });
 
   const members = useQuery(
@@ -151,6 +154,7 @@ export default function Tariffs() {
         amount: Number(form.amount) || 0,
         unit: form.unit as "flat" | "member",
         isActive: form.isActive,
+        printNo: form.printNo.trim() || undefined,
       });
       toast.success(form.id ? "Tariff updated" : "Tariff added");
       setOpen(false);
@@ -178,6 +182,7 @@ export default function Tariffs() {
     amount: "0",
     unit: "flat",
     isActive: true,
+    printNo: "",
   });
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -189,6 +194,7 @@ export default function Tariffs() {
       amount: String(t.amount),
       unit: t.unit ?? "flat",
       isActive: t.isActive,
+      printNo: t.printNo ?? "",
     });
   };
 
@@ -215,6 +221,7 @@ export default function Tariffs() {
         amount,
         unit: editForm.unit as "flat" | "member",
         isActive: editForm.isActive,
+        printNo: editForm.printNo.trim() || undefined,
       });
       toast.success("Tariff updated");
       setEditId(null);
@@ -239,7 +246,7 @@ export default function Tariffs() {
             className="rounded-lg"
             disabled={!canEdit || incomeAccounts.length === 0}
             onClick={() => {
-              setForm({ id: "", name: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true });
+              setForm({ id: "", name: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true, printNo: "" });
               setOpen(true);
             }}
           >
@@ -344,6 +351,7 @@ export default function Tariffs() {
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-20">Print No.</TableHead>
                   <TableHead>Tariff</TableHead>
                   <TableHead>Income account</TableHead>
                   <TableHead>Basis</TableHead>
@@ -354,11 +362,28 @@ export default function Tariffs() {
               </TableHeader>
               <TableBody>
                 {[...tariffs]
-                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .sort(
+                    (a, b) =>
+                      (a.printNo ?? "").localeCompare(b.printNo ?? "", undefined, {
+                        numeric: true,
+                      }) || a.name.localeCompare(b.name),
+                  )
                   .map((t) => {
                     const editing = editId === t._id;
                     return (
                       <TableRow key={t._id} className={editing ? "bg-accent/40" : undefined}>
+                        <TableCell>
+                          {editing ? (
+                            <Input
+                              value={editForm.printNo}
+                              onChange={(e) => setEditForm({ ...editForm, printNo: e.target.value })}
+                              className="h-8"
+                              placeholder="—"
+                            />
+                          ) : (
+                            <span className="font-mono text-xs">{t.printNo || "—"}</span>
+                          )}
+                        </TableCell>
                         <TableCell className="font-medium">
                           {editing ? (
                             <Input
@@ -493,11 +518,19 @@ export default function Tariffs() {
             <DialogTitle>{form.id ? "Edit tariff" : "Add tariff"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="t-name">Tariff name *</Label>
-              <Input id="t-name" required value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Maintenance Charges" />
+            <div className="grid gap-4 sm:grid-cols-[1fr_100px]">
+              <div className="space-y-2">
+                <Label htmlFor="t-name">Tariff name *</Label>
+                <Input id="t-name" required value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Maintenance Charges" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="t-print">Print No.</Label>
+                <Input id="t-print" value={form.printNo}
+                  onChange={(e) => setForm({ ...form, printNo: e.target.value })}
+                  placeholder="1" title="Printing serial no. — order of this head on printed bills" />
+              </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -552,7 +585,14 @@ export default function Tariffs() {
         <TabsContent value="matrix">
           <MemberTariffMatrix
             societyId={societyId}
-            tariffs={(tariffs ?? []).filter((t) => t.isActive).sort((a, b) => a.name.localeCompare(b.name))}
+            tariffs={(tariffs ?? [])
+              .filter((t) => t.isActive)
+              .sort(
+                (a, b) =>
+                  (a.printNo ?? "").localeCompare(b.printNo ?? "", undefined, {
+                    numeric: true,
+                  }) || a.name.localeCompare(b.name),
+              )}
             members={(members ?? []).filter((m) => m.isActive).sort((a, b) => (a.flatNo ?? a.code).localeCompare(b.flatNo ?? b.code))}
             overrides={overrides ?? []}
             setOverride={setOverride}

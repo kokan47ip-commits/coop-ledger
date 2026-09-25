@@ -13,12 +13,17 @@ import { useQuery } from "convex/react";
 
 type RPResult = {
   openingCash: number;
-  inflows: { name: string; amount: number }[];
-  outflows: { name: string; amount: number }[];
+  inflows: { name: string; amount: number; printNo?: string }[];
+  outflows: { name: string; amount: number; printNo?: string }[];
   totalIn: number;
   totalOut: number;
   closingCash: number;
 };
+
+/** Statement serial: the user-defined Print No., else the running position. */
+function serialOf(printNo: string | undefined, position: number): string {
+  return printNo ?? String(position);
+}
 
 const money = (n: number) =>
   new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n);
@@ -50,17 +55,21 @@ export default function ReceiptPayment() {
 
   const buildTable = (): TableSpec => {
     const rows: (string | number)[][] = [];
-    rows.push(["", "RECEIPTS", "", "PAYMENTS", ""]);
-    rows.push(["", "Opening cash & bank balance", rp?.openingCash ?? 0, "", ""]);
-    for (const r of rp?.inflows ?? []) rows.push(["", `    ${r.name}`, r.amount, "", ""]);
-    rows.push(["", "Total receipts", rp?.totalIn ?? 0, "", ""]);
-    for (const r of rp?.outflows ?? []) rows.push(["", "", "", `    ${r.name}`, r.amount]);
-    rows.push(["", "", "", "Total payments", rp?.totalOut ?? 0]);
-    rows.push(["", "", "", "Closing cash & bank balance", rp?.closingCash ?? 0]);
+    rows.push(["", "", "RECEIPTS", "", "", "PAYMENTS", ""]);
+    rows.push(["", "", "Opening cash & bank balance", rp?.openingCash ?? 0, "", "", ""]);
+    (rp?.inflows ?? []).forEach((r, i) =>
+      rows.push(["", serialOf(r.printNo, i + 1), `    ${r.name}`, r.amount, "", "", ""]),
+    );
+    rows.push(["", "", "Total receipts", rp?.totalIn ?? 0, "", "", ""]);
+    (rp?.outflows ?? []).forEach((r, i) =>
+      rows.push(["", "", "", "", serialOf(r.printNo, i + 1), `    ${r.name}`, r.amount]),
+    );
+    rows.push(["", "", "", "", "", "Total payments", rp?.totalOut ?? 0]);
+    rows.push(["", "", "", "", "", "Closing cash & bank balance", rp?.closingCash ?? 0]);
     return {
-      head: ["", "Receipts", "Amount (₹)", "Payments", "Amount (₹)"],
+      head: ["", "S.No.", "Receipts", "Amount (₹)", "S.No.", "Payments", "Amount (₹)"],
       body: rows,
-      columnStyles: { 2: { halign: "right" }, 4: { halign: "right" } },
+      columnStyles: { 3: { halign: "right" }, 6: { halign: "right" } },
     };
   };
 
@@ -107,50 +116,64 @@ export default function ReceiptPayment() {
             <thead>
               <tr className="border-b bg-accent/40 text-xs font-semibold uppercase tracking-[0.14em]">
                 <td className="px-5 py-2.5">Receipts</td>
+                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
                 <td className="w-48 px-5 py-2.5 text-right">Amount (₹)</td>
                 <td className="border-l px-5 py-2.5">Payments</td>
+                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
                 <td className="w-48 border-l px-5 py-2.5 text-right">Amount (₹)</td>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b bg-accent/30">
                 <td className="px-5 py-2.5 font-medium">Opening cash & bank balance</td>
+                <td />
                 <td className="px-5 py-2.5 text-right tabular-nums">{money(rp.openingCash)}</td>
                 <td className="border-l" />
+                <td />
                 <td className="border-l" />
               </tr>
-              {rp.inflows.map((r) => (
+              {rp.inflows.map((r, i) => (
                 <tr key={"in" + r.name} className="border-b last:border-0">
                   <td className="px-5 py-2.5 pl-8 text-muted-foreground">{r.name}</td>
+                  <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{serialOf(r.printNo, i + 1)}</td>
                   <td className="px-5 py-2.5 text-right tabular-nums">{money(r.amount)}</td>
                   <td className="border-l" />
+                  <td />
                   <td className="border-l" />
                 </tr>
               ))}
               <tr className="border-b-2 border-foreground/40 font-medium">
                 <td className="px-5 py-2.5">Total receipts</td>
+                <td />
                 <td className="px-5 py-2.5 text-right tabular-nums">{money(rp.totalIn)}</td>
                 <td className="border-l" />
+                <td />
                 <td className="border-l" />
               </tr>
-              {rp.outflows.map((r) => (
+              {rp.outflows.map((r, i) => (
                 <tr key={"out" + r.name} className="border-b last:border-0">
                   <td />
                   <td />
+                  <td />
                   <td className="border-l px-5 py-2.5 pl-8 text-muted-foreground">{r.name}</td>
+                  <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{serialOf(r.printNo, i + 1)}</td>
                   <td className="border-l px-5 py-2.5 text-right tabular-nums">{money(r.amount)}</td>
                 </tr>
               ))}
               <tr className="border-b-2 border-foreground/40 font-medium">
                 <td />
                 <td />
+                <td />
                 <td className="border-l px-5 py-2.5 font-medium">Total payments</td>
+                <td />
                 <td className="border-l px-5 py-2.5 text-right tabular-nums">{money(rp.totalOut)}</td>
               </tr>
               <tr className="border-t bg-accent/30 text-base font-semibold">
                 <td className="px-5 py-4">Closing cash & bank balance</td>
+                <td />
                 <td className="px-5 py-4 text-right tabular-nums">{money(rp.closingCash)}</td>
                 <td className="border-l" />
+                <td />
                 <td className="border-l" />
               </tr>
             </tbody>

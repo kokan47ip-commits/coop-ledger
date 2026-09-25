@@ -42,6 +42,8 @@ type AccountRow = {
   kind?: "bank_cash" | "receivable";
   openingBalance: number;
   groupId?: Id<"accountGroups">;
+  /** User-defined printing serial no. — order on printed statements. */
+  printNo?: string;
 };
 
 type GroupRow = {
@@ -92,6 +94,7 @@ export default function ChartOfAccounts() {
     kind: "none",
     openingBalance: "0",
     groupId: "" as Id<"accountGroups"> | "",
+    printNo: "",
   });
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupForm, setGroupForm] = useState(EMPTY_GROUP_FORM);
@@ -123,6 +126,7 @@ export default function ChartOfAccounts() {
         kind: form.kind === "none" ? undefined : (form.kind as "bank_cash" | "receivable"),
         openingBalance: Number(form.openingBalance) || 0,
         groupId: form.groupId || undefined,
+        printNo: form.printNo.trim() || undefined,
       });
       toast.success(form.id ? "Account updated" : "Account added");
       setOpen(false);
@@ -188,7 +192,7 @@ export default function ChartOfAccounts() {
             className="rounded-lg"
             disabled={!canEdit}
             onClick={() => {
-              setForm({ id: "", code: "", name: "", type: "expense", kind: "none", openingBalance: "0", groupId: "" });
+              setForm({ id: "", code: "", name: "", type: "expense", kind: "none", openingBalance: "0", groupId: "", printNo: "" });
               setOpen(true);
             }}
           >
@@ -225,6 +229,7 @@ export default function ChartOfAccounts() {
                           <TableRow className="hover:bg-transparent">
                             <TableHead className="w-24">Code</TableHead>
                             <TableHead>Account</TableHead>
+                            <TableHead className="w-20">Print No.</TableHead>
                             <TableHead>Group</TableHead>
                             <TableHead>Role</TableHead>
                             <TableHead className="text-right">Opening</TableHead>
@@ -236,6 +241,7 @@ export default function ChartOfAccounts() {
                             <TableRow key={a._id}>
                               <TableCell className="font-mono text-xs">{a.code}</TableCell>
                               <TableCell className="font-medium">{a.name}</TableCell>
+                              <TableCell className="font-mono text-xs">{a.printNo || "—"}</TableCell>
                               <TableCell className="text-muted-foreground">{groupName(a.groupId)}</TableCell>
                               <TableCell className="text-xs text-muted-foreground">
                                 {a.kind === "bank_cash" ? "Bank / Cash" : a.kind === "receivable" ? "Receivable control" : "—"}
@@ -257,6 +263,7 @@ export default function ChartOfAccounts() {
                                         kind: a.kind ?? "none",
                                         openingBalance: String(a.openingBalance),
                                         groupId: a.groupId ?? "",
+                                        printNo: a.printNo ?? "",
                                       });
                                       setOpen(true);
                                     }}
@@ -464,6 +471,12 @@ export default function ChartOfAccounts() {
                 <Label htmlFor="a-open">Opening balance (₹)</Label>
                 <Input id="a-open" type="number" step="0.01" value={form.openingBalance}
                   onChange={(e) => setForm({ ...form, openingBalance: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="a-print">Print No.</Label>
+                <Input id="a-print" value={form.printNo}
+                  onChange={(e) => setForm({ ...form, printNo: e.target.value })}
+                  placeholder="1" title="Printing serial no. — order of this ledger on printed statements (I&E, Balance Sheet, Receipts & Payments)" />
               </div>
             </div>
             {groups?.length === 0 && (

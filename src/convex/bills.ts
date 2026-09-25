@@ -64,7 +64,16 @@ export const generate = mutation({
       .query("tariffs")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    const tariffs = allTariffs.filter((t) => t.isActive);
+    // Print order: heads with a serial no. come first in serial order, then
+    // the rest alphabetically — so generated bills print in the chosen order.
+    const printOrder = (
+      a: { printNo?: string; name: string },
+      b: { printNo?: string; name: string },
+    ) =>
+      (a.printNo ?? "").localeCompare(b.printNo ?? "", undefined, {
+        numeric: true,
+      }) || a.name.localeCompare(b.name);
+    const tariffs = allTariffs.filter((t) => t.isActive).sort(printOrder);
     if (tariffs.length === 0)
       throw new Error("Add active tariffs before generating bills.");
     const overrides = await ctx.db
@@ -91,13 +100,21 @@ export const generate = mutation({
       }
       // Per-member custom amounts from the tariff upload, falling back to the
       // schedule amount. An override of 0 exempts the member from the head.
+      // Each line carries the tariff's printing serial no. so printed bills
+      // keep the head order chosen on the Tariff Schedule.
       const memberOverrides = overrides.filter((o) => o.memberId === memberId);
       const lines = tariffs
         .map((t) => {
           const o = memberOverrides.find((x) => x.tariffId === t._id);
           const base = o ? o.amount : t.amount;
           if (base <= 0) return null;
-          return { tariffId: t._id, accountId: t.accountId, name: t.name, amount: base };
+          return {
+            tariffId: t._id,
+            accountId: t.accountId,
+            name: t.name,
+            amount: base,
+            printNo: t.printNo,
+          };
         })
         .filter((l): l is NonNullable<typeof l> => l !== null);
       if (lines.length === 0) {
@@ -163,6 +180,7 @@ export const updateLines = mutation({
         accountId: v.id("accounts"),
         name: v.string(),
         amount: v.number(),
+        printNo: v.optional(v.string()),
       }),
     ),
   },
@@ -185,7 +203,19 @@ export const updateLines = mutation({
       );
     const status =
       bill.paidAmount <= 0 ? "unpaid" : bill.paidAmount >= total ? "paid" : "partial";
-    await ctx.db.patch(id, { lines: [...arrearsLines, ...chargeLines], total, status });
+    // Re-stamp printing serials from the current tariff schedule so grid edits
+    // never drop the print order chosen on the Tariff Schedule.
+    const allTariffs = await ctx.db
+      .query("tariffs")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const stamped = chargeLines.map((l) => {
+      const t = l.tariffId
+        ? allTariffs.find((x) => x._id === l.tariffId)
+        : undefined;
+      return t ? { ...l, printNo: t.printNo } : l;
+    });
+    await ctx.db.patch(id, { lines: [...arrearsLines, ...stamped], total, status });
   },
 });
 

@@ -22,6 +22,8 @@ export const upsert = mutation({
     amount: v.number(),
     unit: v.optional(v.union(v.literal("flat"), v.literal("member"))),
     isActive: v.boolean(),
+    /** Printing serial no. for the order of this head on printed bills. */
+    printNo: v.optional(v.string()),
   },
   handler: async (ctx, { societyId, id, ...data }) => {
     await requireSocietyWrite(ctx, societyId);

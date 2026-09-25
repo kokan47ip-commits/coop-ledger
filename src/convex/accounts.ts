@@ -28,6 +28,8 @@ export const upsert = mutation({
     kind: v.optional(v.union(v.literal("bank_cash"), v.literal("receivable"))),
     openingBalance: v.number(),
     groupId: v.optional(v.id("accountGroups")),
+    /** Printing serial no. for the order of this ledger on printed statements. */
+    printNo: v.optional(v.string()),
   },
   handler: async (ctx, { societyId, id, ...data }) => {
     await requireSocietyWrite(ctx, societyId);

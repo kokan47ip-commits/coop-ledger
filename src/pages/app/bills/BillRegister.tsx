@@ -263,7 +263,7 @@ export default function BillRegister() {
       flatNo: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
       lines: (b.lines ?? [])
         .filter((l) => !isArrearsLine(l.name))
-        .map((l) => ({ name: l.name, amount: l.amount })),
+        .map((l) => ({ name: l.name, amount: l.amount, serial: l.printNo })),
       total: currentCharges,
       arrears,
       totalDue: currentCharges + arrears,

@@ -80,6 +80,8 @@ const schema = defineSchema(
       ),
       openingBalance: v.number(),
       groupId: v.optional(v.id("accountGroups")),
+      /** User-defined printing serial no. — orders this ledger on printed statements. */
+      printNo: v.optional(v.string()),
     }).index("by_society", ["societyId"]),
 
     // Ledger classification groups (e.g. Fixed Assets, Reserve & Surplus) that
@@ -128,6 +130,8 @@ const schema = defineSchema(
       amount: v.number(),
       unit: v.optional(v.union(v.literal("flat"), v.literal("member"))),
       isActive: v.boolean(),
+      /** User-defined printing serial no. — orders this head on printed bills. */
+      printNo: v.optional(v.string()),
     }).index("by_society", ["societyId"]),
 
     // Per-member tariff amounts, e.g. uploaded from an Excel sheet with flat
@@ -156,6 +160,8 @@ const schema = defineSchema(
           accountId: v.id("accounts"),
           name: v.string(),
           amount: v.number(),
+          /** Serial no. carried from the tariff head at generation time. */
+          printNo: v.optional(v.string()),
         }),
       ),
       total: v.number(),

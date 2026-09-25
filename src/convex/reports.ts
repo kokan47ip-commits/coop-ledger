@@ -40,6 +40,8 @@ export type CashBookSection = {
 
 export type TrialBalanceRow = {
   accountId: Id<"accounts">;
+  /** User-defined printing serial no. for statement order. */
+  printNo?: string;
   code: string;
   name: string;
   type: Doc<"accounts">["type"];
@@ -198,10 +200,26 @@ export async function computeTrialBalance(
       type: a.type,
       debit: net > 0 ? net : 0,
       credit: net < 0 ? -net : 0,
+      printNo: a.printNo,
     });
   }
-  rows.sort((a, b) => a.code.localeCompare(b.code));
+  rows.sort(byPrintOrder);
   return rows;
+}
+
+/**
+ * Printing order for statement rows: rows with a user-defined serial no.
+ * come first in numeric serial order, then the rest by account code.
+ */
+export function byPrintOrder(
+  a: { printNo?: string; code: string },
+  b: { printNo?: string; code: string },
+) {
+  return (
+    (a.printNo ?? "").localeCompare(b.printNo ?? "", undefined, {
+      numeric: true,
+    }) || a.code.localeCompare(b.code)
+  );
 }
 
 /** Single-account ledger with running balance from the opening balance. */
@@ -397,6 +415,7 @@ export function computeIncomeExpenditure(
         type: a.type,
         debit: 0,
         credit: net,
+        printNo: a.printNo,
       });
       totalIncome += net;
     } else {
@@ -407,12 +426,14 @@ export function computeIncomeExpenditure(
         type: a.type,
         debit: net,
         credit: 0,
+        printNo: a.printNo,
       });
       totalExpenditure += net;
     }
   }
-  income.sort((a, b) => a.code.localeCompare(b.code));
-  expenditure.sort((a, b) => a.code.localeCompare(b.code));
+  // Print order: serial-numbered ledgers first (numeric), then by code.
+  income.sort(byPrintOrder);
+  expenditure.sort(byPrintOrder);
   const surplus = totalIncome - totalExpenditure;
   return { income, expenditure, totalIncome, totalExpenditure, surplus };
 }
@@ -424,6 +445,8 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     name: string;
     amount: number;
     type: Doc<"accounts">["type"];
+    /** User-defined printing serial no. for statement order. */
+    printNo?: string;
   };
   const assets: Side[] = [];
   const liabilities: Side[] = [];
@@ -446,6 +469,7 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       name: a.name,
       amount: Math.abs(net),
       type: a.type,
+      printNo: a.printNo,
     };
     if (a.type === "asset") assets.push(row);
     else liabilities.push(row);
@@ -463,8 +487,9 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       type: "liability",
     });
   }
-  assets.sort((a, b) => a.code.localeCompare(b.code));
-  liabilities.sort((a, b) => a.code.localeCompare(b.code));
+  // Print order: serial-numbered ledgers first (numeric), then by code.
+  assets.sort(byPrintOrder);
+  liabilities.sort(byPrintOrder);
   const totalAssets = assets.reduce((s, r) => s + r.amount, 0);
   const totalLiabilities = liabilities.reduce((s, r) => s + r.amount, 0);
   return { assets, liabilities, totalAssets, totalLiabilities };
@@ -496,8 +521,14 @@ export function computeReceiptPayment(
       }
     }
   }
-  const inflow = new Map<Id<"accounts">, { name: string; amount: number }>();
-  const outflow = new Map<Id<"accounts">, { name: string; amount: number }>();
+  const inflow = new Map<
+    Id<"accounts">,
+    { name: string; amount: number; code: string; printNo?: string }
+  >();
+  const outflow = new Map<
+    Id<"accounts">,
+    { name: string; amount: number; code: string; printNo?: string }
+  >();
   let totalIn = 0;
   let totalOut = 0;
   for (const v of data.vouchers) {
@@ -507,7 +538,9 @@ export function computeReceiptPayment(
       const acc = accounts.find((a) => a._id === l.accountId);
       if (!acc || acc.kind === "bank_cash") continue; // skip the cash side
       const map = isReceipt ? inflow : outflow;
-      const entry = map.get(l.accountId) ?? { name: acc.name, amount: 0 };
+      const entry =
+        map.get(l.accountId) ??
+        { name: acc.name, amount: 0, code: acc.code, printNo: acc.printNo };
       const amt = isReceipt ? l.credit : l.debit;
       if (amt === 0) continue;
       entry.amount += amt;
@@ -516,12 +549,9 @@ export function computeReceiptPayment(
       else totalOut += amt;
     }
   }
-  const inflows = Array.from(inflow.values()).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
-  const outflows = Array.from(outflow.values()).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  // Print order: serial-numbered ledgers first (numeric), then by code.
+  const inflows = Array.from(inflow.values()).sort(byPrintOrder);
+  const outflows = Array.from(outflow.values()).sort(byPrintOrder);
   const closingCash = openingCash + totalIn - totalOut;
   return { openingCash, inflows, outflows, totalIn, totalOut, closingCash };
 }

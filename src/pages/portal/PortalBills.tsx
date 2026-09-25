@@ -69,7 +69,7 @@ export default function PortalBills() {
         memberBinding?.code,
       lines: (bill.lines ?? [])
         .filter((l) => !isArrearsLine(l.name))
-        .map((l) => ({ name: l.name, amount: l.amount })),
+        .map((l) => ({ name: l.name, amount: l.amount, serial: l.printNo })),
       total: currentCharges,
       arrears,
       totalDue: currentCharges + arrears,

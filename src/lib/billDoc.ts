@@ -21,7 +21,7 @@ export type LegacyBillData = {
   memberName2?: string;
   flatNo?: string;
   area?: string;
-  lines: { name: string; amount: number }[];
+  lines: { name: string; amount: number; serial?: string }[];
   total: number;
   arrears: number;
   /** Full amount due including arrears. */
@@ -161,7 +161,10 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   data.lines.forEach((l, i) => {
-    doc.text(`${i + 1}. ${l.name.toUpperCase()}`, x + 14, cy);
+    // Lines carry the tariff's printing serial no.; lines without one fall
+    // back to positional numbering.
+    const no = l.serial ?? String(i + 1);
+    doc.text(`${no}. ${l.name.toUpperCase()}`, x + 14, cy);
     doc.text(money(l.amount), x + w - 10, cy, { align: "right" });
     cy += 15;
   });
@@ -417,7 +420,7 @@ function billHtml(data: LegacyBillData): string {
   </table>
   <table class="parthead"><tr><th>PARTICULARS</th><th class="r">AMOUNT</th></tr></table>
   <table class="lines">
-    ${data.lines.map((l, i) => `<tr><td>${i + 1}.&nbsp; ${esc(l.name.toUpperCase())}</td><td class="num">${money(l.amount)}</td></tr>`).join("")}
+    ${data.lines.map((l, i) => `<tr><td>${l.serial ?? i + 1}.&nbsp; ${esc(l.name.toUpperCase())}</td><td class="num">${money(l.amount)}</td></tr>`).join("")}
     ${Array.from({ length: Math.max(0, 6 - data.lines.length) }, () => `<tr><td>&nbsp;</td><td></td></tr>`).join("")}
   </table>
   <table class="tot">

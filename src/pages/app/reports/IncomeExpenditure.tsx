@@ -12,12 +12,17 @@ import { useState } from "react";
 import { useQuery } from "convex/react";
 
 type IEResult = {
-  income: { code: string; name: string; credit: number }[];
-  expenditure: { code: string; name: string; debit: number }[];
+  income: { code: string; name: string; credit: number; printNo?: string }[];
+  expenditure: { code: string; name: string; debit: number; printNo?: string }[];
   totalIncome: number;
   totalExpenditure: number;
   surplus: number;
 };
+
+/** Statement serial: the user-defined Print No., else the running position. */
+function serialOf(printNo: string | undefined, position: number): string {
+  return printNo ?? String(position);
+}
 
 export default function IncomeExpenditure() {
   const { societyId, society } = useSociety();
@@ -46,19 +51,23 @@ export default function IncomeExpenditure() {
 
   const buildTable = (): TableSpec => {
     const rows: (string | number)[][] = [];
-    rows.push(["", "INCOME", "", ""]);
-    for (const r of ie?.income ?? []) rows.push(["", `    ${r.name}`, "", r.credit]);
-    rows.push(["", "Total Income", "", ie?.totalIncome ?? 0]);
-    rows.push(["", "", "", ""]);
-    rows.push(["", "EXPENDITURE", "", ""]);
-    for (const r of ie?.expenditure ?? []) rows.push(["", `    ${r.name}`, r.debit, ""]);
-    rows.push(["", "Total Expenditure", ie?.totalExpenditure ?? 0, ""]);
-    rows.push(["", "", "", ""]);
-    rows.push(["", ie && ie.surplus >= 0 ? "Surplus for the period" : "Deficit for the period", "", Math.abs(ie?.surplus ?? 0)]);
+    rows.push(["", "", "INCOME", "", ""]);
+    (ie?.income ?? []).forEach((r, i) =>
+      rows.push(["", serialOf(r.printNo, i + 1), `    ${r.name}`, "", r.credit]),
+    );
+    rows.push(["", "", "Total Income", "", ie?.totalIncome ?? 0]);
+    rows.push(["", "", "", "", ""]);
+    rows.push(["", "", "EXPENDITURE", "", ""]);
+    (ie?.expenditure ?? []).forEach((r, i) =>
+      rows.push(["", serialOf(r.printNo, i + 1), `    ${r.name}`, r.debit, ""]),
+    );
+    rows.push(["", "", "Total Expenditure", ie?.totalExpenditure ?? 0, ""]);
+    rows.push(["", "", "", "", ""]);
+    rows.push(["", "", ie && ie.surplus >= 0 ? "Surplus for the period" : "Deficit for the period", "", Math.abs(ie?.surplus ?? 0)]);
     return {
-      head: ["", "Particulars", "Amount (₹)", "Amount (₹)"],
+      head: ["", "S.No.", "Particulars", "Amount (₹)", "Amount (₹)"],
       body: rows,
-      columnStyles: { 2: { halign: "right" }, 3: { halign: "right" } },
+      columnStyles: { 3: { halign: "right" }, 4: { halign: "right" } },
     };
   };
 
@@ -105,14 +114,16 @@ export default function IncomeExpenditure() {
             <tbody>
               <tr className="border-b bg-accent/40">
                 <td colSpan={2} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em]">Income</td>
+                <td />
                 <td className="w-44" />
               </tr>
               {ie.income.length === 0 && (
-                <tr><td className="px-5 py-2 text-muted-foreground" colSpan={2}>No income recorded</td><td className="text-right px-5">—</td></tr>
+                <tr><td className="px-5 py-2 text-muted-foreground" colSpan={3}>No income recorded</td><td className="text-right px-5">—</td></tr>
               )}
-              {ie.income.map((r) => (
+              {ie.income.map((r, i) => (
                 <tr key={r.code + r.name} className="border-b last:border-0">
                   <td className="w-16 px-5 py-2.5 font-mono text-xs text-muted-foreground">{r.code}</td>
+                  <td className="w-14 px-2 py-2.5 text-center font-mono text-xs">{serialOf(r.printNo, i + 1)}</td>
                   <td className="px-0 py-2.5">{r.name}</td>
                   <td className="px-5 py-2.5 text-right tabular-nums">
                     {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(r.credit)}
@@ -120,6 +131,7 @@ export default function IncomeExpenditure() {
                 </tr>
               ))}
               <tr className="border-b-2 border-foreground/50 font-medium">
+                <td />
                 <td />
                 <td className="px-0 py-2.5">Total Income</td>
                 <td className="px-5 py-2.5 text-right tabular-nums">
@@ -130,13 +142,15 @@ export default function IncomeExpenditure() {
               <tr className="border-b bg-accent/40">
                 <td colSpan={2} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em]">Expenditure</td>
                 <td />
+                <td />
               </tr>
               {ie.expenditure.length === 0 && (
-                <tr><td className="px-5 py-2 text-muted-foreground" colSpan={2}>No expenditure recorded</td><td className="text-right px-5">—</td></tr>
+                <tr><td className="px-5 py-2 text-muted-foreground" colSpan={3}>No expenditure recorded</td><td className="text-right px-5">—</td></tr>
               )}
-              {ie.expenditure.map((r) => (
+              {ie.expenditure.map((r, i) => (
                 <tr key={r.code + r.name} className="border-b last:border-0">
                   <td className="w-16 px-5 py-2.5 font-mono text-xs text-muted-foreground">{r.code}</td>
+                  <td className="w-14 px-2 py-2.5 text-center font-mono text-xs">{serialOf(r.printNo, i + 1)}</td>
                   <td className="px-0 py-2.5">{r.name}</td>
                   <td className="px-5 py-2.5 text-right tabular-nums">
                     {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(r.debit)}
@@ -145,6 +159,7 @@ export default function IncomeExpenditure() {
               ))}
               <tr className="border-b-2 border-foreground/50 font-medium">
                 <td />
+                <td />
                 <td className="px-0 py-2.5">Total Expenditure</td>
                 <td className="px-5 py-2.5 text-right tabular-nums">
                   {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(ie.totalExpenditure)}
@@ -152,6 +167,7 @@ export default function IncomeExpenditure() {
               </tr>
 
               <tr className="bg-accent/30 text-base font-semibold">
+                <td />
                 <td />
                 <td className="px-0 py-4">
                   {ie.surplus >= 0 ? "Surplus for the period" : "Deficit for the period"}
