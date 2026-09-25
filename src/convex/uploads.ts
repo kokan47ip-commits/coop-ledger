@@ -24,7 +24,9 @@ function str(row: Record<string, unknown>, keys: string[]): string | undefined {
   const headerMap = new Map<string, unknown>();
   for (const [k, v] of Object.entries(row)) headerMap.set(normHeader(k), v);
   for (const k of keys) {
-    const raw = headerMap.get(k);
+    // Aliases may be raw sheet headers ("Flat No") — normalise them the same
+    // way as the map keys, or spaced/punctuated headers never match.
+    const raw = headerMap.get(normHeader(k));
     if (raw === undefined || raw === null) continue;
     const s = String(raw).trim();
     if (s !== "") return s;
@@ -39,7 +41,9 @@ function num(row: Record<string, unknown>, keys: string[]): number | undefined {
   const headerMap = new Map<string, unknown>();
   for (const [k, v] of Object.entries(row)) headerMap.set(normHeader(k), v);
   for (const k of keys) {
-    const raw = headerMap.get(k);
+    // Same normalisation as str(): raw header aliases must match the
+    // normalised map keys or lookups silently return undefined.
+    const raw = headerMap.get(normHeader(k));
     if (raw === undefined || raw === null) continue;
     if (String(raw).trim() === "") continue;
     const s = String(raw).replace(/[₹,\s]/g, "");
@@ -207,6 +211,8 @@ export const uploadTariffs = mutation({
         amount,
         unit,
         isActive: true,
+        // Optional printing serial no. for the order of this head on bills.
+        printNo: str(row, ["printno", "printserialno", "printserial", "serialno", "serial", "printorder", "srl"]),
       };
       if (match) {
         await ctx.db.patch(match._id, data);
@@ -249,9 +255,10 @@ export const uploadMemberTariffs = mutation({
     const fallbackAccount =
       accounts.filter((a) => a.type === "income").sort((a, b) => a.code.localeCompare(b.code))[0];
 
-    // Columns that are identity metadata, not tariff amounts.
+    // Columns that are identity metadata, not tariff amounts. Matched against
+    // the punctuation-stripped, lowercased header ("Sr. No." → "srno").
     const isIdentityColumn = (h: string) =>
-      /^(sr|srl|srlno|serial|serialno|sn|no|number|code|membercode|member code|memberid|member id|id|remarks|remark|note|notes|total|totalamount|grandtotal)$/.test(
+      /^(sr|srl|srlno|srno|sno|sl|slno|sn|serial|serialno|printno|no|number|code|membercode|memberid|memberno|membernumber|id|wing|building|block|floor|unittype|type|remarks|remark|note|notes|total|totalamount|grandtotal|date|status)$/.test(
         h.replace(/[^a-z0-9]/g, "").toLowerCase(),
       );
 
@@ -316,7 +323,9 @@ export const uploadMemberTariffs = mutation({
       }
     }
 
-    const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+    // Match unit codes regardless of separators/case: "A-101" ≡ "A101" ≡
+    // "a 101". Also tries wing+flat ("B" + "703" ≡ "B703") and member code.
+    const norm = (s: string) => s.replace(/[^a-z0-9]/gi, "").toLowerCase();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -327,8 +336,15 @@ export const uploadMemberTariffs = mutation({
         continue;
       }
       const member =
-        (flat && members.find((m) => m.flatNo && norm(m.flatNo) === norm(flat))) ??
-        (name && members.find((m) => norm(m.name) === norm(name))) ??
+        (flat &&
+          members.find(
+            (m) =>
+              !!m.flatNo &&
+              (norm(m.flatNo) === norm(flat!) ||
+                norm(`${m.wing ?? ""}${m.flatNo}`) === norm(flat!)),
+          )) ??
+        (flat && members.find((m) => norm(m.code) === norm(flat!))) ??
+        (name && members.find((m) => norm(m.name) === norm(name!))) ??
         undefined;
       if (!member) {
         result.errors.push(

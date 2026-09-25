@@ -23,7 +23,38 @@ export function parseExcelFile(file: File): Promise<ParsedSheet> {
           raw: false,
         });
         const filled = (r: unknown[]) => r.filter((c) => String(c ?? "").trim() !== "").length;
-        let headerIdx = matrix.findIndex((r) => filled(r) >= 2);
+        // Header detection: title banners ("Shanti CHS — Opening Details as on
+        // 01/04/2025") can also have 2+ filled cells, so prefer rows that look
+        // like real column headers — cells equal to known header words
+        // (Flat No, Name, Code, Date, Amount …) score far higher than width
+        // alone. Ties keep the earliest row.
+        const headerWords = new Set([
+          "flatno", "flat", "flatnumber", "unit", "house", "shop", "premises",
+          "name", "membername", "nameofmember", "ownername", "member",
+          "code", "membercode", "memberid", "memberno", "srno", "srlno", "printno",
+          "date", "joindate", "openingdate", "amount", "openingbalance", "balance",
+          "voucher", "voucherno", "vouchertype", "vouchers", "ledger", "ledgercode",
+          "ledgername", "account", "accountcode", "accountname", "tariff", "tariffname",
+          "head", "bank", "bankname", "mode", "cashbank", "reference", "chequeno",
+          "narration", "remarks", "particulars", "wing", "building", "floor",
+          "unittype", "type", "status", "unitamount", "tariffamount",
+        ]);
+        let headerIdx = -1;
+        let bestScore = -1;
+        for (let i = 0; i < Math.min(matrix.length, 10); i++) {
+          const r = matrix[i];
+          const f = filled(r);
+          if (f < 2) continue;
+          const tokens = r.filter((c) => {
+            const t = String(c ?? "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+            return t !== "" && headerWords.has(t);
+          }).length;
+          const score = tokens * 100 + f;
+          if (score > bestScore) {
+            bestScore = score;
+            headerIdx = i;
+          }
+        }
         if (headerIdx === -1) headerIdx = 0;
         const rawHeaders = (matrix[headerIdx] ?? []).map((h) => String(h ?? "").trim());
         // Drop trailing empties and de-duplicate repeated headers (Col, Col.1…).
@@ -156,19 +187,31 @@ export const TEMPLATES = {
 };
 
 export function downloadMemberTariffTemplate(
-  tariffNames: string[],
+  tariffs: { name: string; amount?: number }[],
   sampleMembers: { flatNo?: string; name: string }[],
 ) {
-  const cols = ["Flat No", "Name of Member", ...tariffNames];
-  const rows: Record<string, unknown>[] = sampleMembers.length > 0
-    ? sampleMembers.map((m, i) => {
-        const row: Record<string, unknown> = { "Flat No": m.flatNo ?? "", "Name of Member": m.name };
-        cols.slice(2).forEach((c, j) => {
-          row[c] = i === 0 ? [2500, 500, 300][j % 3] : "";
-        });
-        return row;
-      })
-    : [{ "Flat No": "A-101", "Name of Member": "Ramesh Kumar", ...Object.fromEntries(tariffNames.map((c) => [c, 2500])) }];
+  const cols = ["Flat No", "Name of Member", ...tariffs.map((t) => t.name)];
+  const rows: Record<string, unknown>[] =
+    sampleMembers.length > 0
+      ? sampleMembers.map((m, i) => {
+          const row: Record<string, unknown> = {
+            "Flat No": m.flatNo ?? "",
+            "Name of Member": m.name,
+          };
+          tariffs.forEach((t, j) => {
+            // First sample row carries the schedule amounts as a starting
+            // point; later rows stay blank (blank = use schedule amount).
+            row[t.name] = i === 0 ? (t.amount ?? [2500, 500, 300][j % 3]) : "";
+          });
+          return row;
+        })
+      : [
+          {
+            "Flat No": "A-101",
+            "Name of Member": "Ramesh Kumar",
+            ...Object.fromEntries(tariffs.map((t) => [t.name, t.amount ?? 2500])),
+          },
+        ];
   downloadWorkbook([{ name: "Custom Tariffs", rows }], "template-member-tariffs.xlsx");
 }
 

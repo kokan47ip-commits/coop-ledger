@@ -131,10 +131,25 @@ export default function Tariffs() {
       }
       const res = await uploadMemberTariffs({ societyId, rows });
       setLastUpload(res);
-      toast.success(
-        `Custom tariffs applied: ${res.inserted} added, ${res.updated} updated` +
-          (res.errors.length ? `, ${res.errors.length} rows skipped` : ""),
-      );
+      const skipped = res.skipped + res.errors.length;
+      if (res.inserted === 0 && res.updated === 0) {
+        if (skipped === 0) {
+          toast.info(
+            "Every amount already matches the saved schedule — nothing to change.",
+          );
+        } else {
+          toast.error(
+            `No amounts were applied — ${skipped} row(s) skipped. ` +
+              `See the details below: flat numbers or names must match saved members ` +
+              `(import members first if needed).`,
+          );
+        }
+      } else {
+        toast.success(
+          `Custom tariffs applied: ${res.inserted} added, ${res.updated} updated` +
+            (skipped > 0 ? `, ${skipped} row(s) skipped` : ""),
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -543,7 +558,7 @@ export default function Tariffs() {
                 size="sm"
                 onClick={() =>
                   downloadMemberTariffTemplate(
-                    (tariffs ?? []).map((t) => t.name),
+                    (tariffs ?? []).map((t) => ({ name: t.name, amount: t.amount })),
                     (members ?? []).slice(0, 5).map((m) => ({ flatNo: m.flatNo, name: m.name })),
                   )
                 }
@@ -570,6 +585,8 @@ export default function Tariffs() {
                 <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
                   <CheckCircle2 className="size-4 text-foreground" />
                   {lastUpload.inserted} added · {lastUpload.updated} updated
+                  {lastUpload.skipped > 0 &&
+                    ` · ${lastUpload.skipped} rows skipped (no member matched / all amounts blank)`}
                   {lastUpload.errors.length > 0 && ` · ${lastUpload.errors.length} row errors`}
                 </span>
               )}
