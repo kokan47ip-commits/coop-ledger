@@ -9,6 +9,7 @@ import {
   societyAccess,
   type SocietyAccess,
 } from "./lib";
+import { maybeClaimGuestSocieties } from "./societies";
 
 const emailField = v.string();
 const menuKeysField = v.optional(v.array(v.string()));
@@ -432,6 +433,11 @@ export const bindPendingGrants = mutation({
       await ctx.db.patch(userId, { softwareAdmin: true });
     }
 
+    // Cross-device data guarantee: any societies this user created while in
+    // guest mode — on this or any other device — are handed over to the real
+    // account here on the server, so nothing is ever stranded on one machine.
+    const claimedSocieties = await maybeClaimGuestSocieties(ctx, userId, email);
+
     const pending = await ctx.db
       .query("membersAccess")
       .withIndex("by_email", (q) => q.eq("email", email))
@@ -443,6 +449,6 @@ export const bindPendingGrants = mutation({
         bound++;
       }
     }
-    return bound;
+    return bound + claimedSocieties;
   },
 });

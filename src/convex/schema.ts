@@ -55,10 +55,15 @@ const schema = defineSchema(
       // stored here so the creator can adopt it after signing in with email —
       // guest identities are per-device, but the books must survive the login.
       claimCode: v.optional(v.string()),
+      // Guest-created societies also stamp the profile email so ownership can
+      // be handed over server-side when that email signs in — from any device,
+      // without relying on the creating device's localStorage.
+      claimEmail: v.optional(v.string()),
       receivableAccountId: v.optional(v.id("accounts")),
     })
       .index("by_creator", ["createdBy"])
-      .index("by_claim_code", ["claimCode"]),
+      .index("by_claim_code", ["claimCode"])
+      .index("by_claim_email", ["claimEmail"]),
 
     accounts: defineTable({
       societyId: v.id("societies"),

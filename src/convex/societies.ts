@@ -1,6 +1,7 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
 import {
   DEFAULT_ACCOUNTS,
@@ -123,6 +124,9 @@ export const create = mutation({
       fyStartMonth: args.fyStartMonth,
       fyYear: args.fyYear,
       fyStartDate: args.fyStartDate,
+      // Guests stamp their profile email here so the society can be handed
+      // over server-side when that email signs in from any device.
+      claimEmail: isGuest ? (args.email?.toLowerCase().trim() || undefined) : undefined,
       createdBy: userId,
       claimCode,
     });
@@ -185,6 +189,36 @@ export const myClaimCodes = query({
       .map((s) => ({ societyId: s._id, name: s.name, claimCode: s.claimCode! }));
   },
 });
+
+/**
+ * Cross-device data guarantee: guest (anonymous) sessions stamp every society
+ * they create with the email entered in the society profile. When that email
+ * signs in — from any PC, phone or tablet — the societies are handed over to
+ * the real account right here on the server, so nothing entered as a guest is
+ * ever stranded on the device that created it. The localStorage claim-code
+ * path stays as a fallback for guests who left the profile email blank.
+ *
+ * Returns the number of societies claimed.
+ */
+export async function maybeClaimGuestSocieties(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  email: string,
+): Promise<number> {
+  const normalized = email.toLowerCase().trim();
+  if (!normalized) return 0;
+  const pending = await ctx.db
+    .query("societies")
+    .withIndex("by_claim_email", (q) => q.eq("claimEmail", normalized))
+    .collect();
+  let claimed = 0;
+  for (const s of pending) {
+    if (!s.claimCode) continue; // already owned by a real account
+    await ctx.db.patch(s._id, { createdBy: userId, claimCode: undefined });
+    claimed++;
+  }
+  return claimed;
+}
 
 /**
  * Society-profile edits are owner-only (they change the books' identity),

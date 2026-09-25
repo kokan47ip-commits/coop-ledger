@@ -153,17 +153,28 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     ? null
     : ((menusResult?.menus as string[] | null | undefined) ?? null);
 
-  // When a guest signs in with email afterwards, any societies they created as
-  // a guest on this device are adopted into the email account automatically —
-  // so nothing entered in guest mode is ever "lost on login". Email invites
-  // issued before sign-up are bound to the account on first sign-in here too.
+  // When a guest signs in with email afterwards, their societies are adopted
+  // into the email account — first server-side (bindGrants hands over every
+  // society stamped with the profile email, from any device), then any
+  // leftovers via this device's stored claim codes. Email invites issued
+  // before sign-up are bound to the account here too. Nothing entered as a
+  // guest is ever "lost on login": the books live server-side and follow the
+  // account to any PC, phone, tablet or laptop they sign in from.
   useEffect(() => {
     if (isLoading || isGuest || !isAuthenticated || adoptingRef.current) return;
     if (!bindRef.current) {
       bindRef.current = true;
-      void bindGrants().catch(() => {
-        bindRef.current = false;
-      });
+      void bindGrants()
+        .then((claimed) => {
+          if (typeof claimed === "number" && claimed > 0) {
+            toast.success(
+              `Claimed ${claimed} guest ${claimed === 1 ? "society" : "societies"} into your account`,
+            );
+          }
+        })
+        .catch(() => {
+          bindRef.current = false;
+        });
     }
     const codes = loadClaimCodes();
     const pending = Object.entries(codes);

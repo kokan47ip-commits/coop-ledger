@@ -44,7 +44,6 @@ function resolveRedirectAfterAuth(
 type PasswordStep =
   | "signIn"
   | "signUp"
-  | "verify"
   | "forgot"
   | "reset";
 
@@ -71,7 +70,6 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   // Password flow state.
   const [pwStep, setPwStep] = useState<PasswordStep>("signIn");
   const [pwEmail, setPwEmail] = useState("");
-  const [verifyCode, setVerifyCode] = useState("");
   const [resetCode, setResetCode] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -96,7 +94,9 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           ? "Incorrect email or password."
           : msg.includes("Invalid code")
             ? "That code is incorrect or has expired."
-            : msg,
+            : msg.includes("Account ") && msg.includes("already exists")
+              ? "An account with this email already exists. Sign in instead — or reset the password if you forgot it."
+              : msg,
       );
       setIsLoading(false);
     }
@@ -162,25 +162,9 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     setPwEmail(email);
     await runSignIn(async () => {
       formData.set("flow", flow);
-      // Resolves { signingIn: true } when signed in immediately (email already
-      // verified); signingIn: false means the verification step must complete.
-      const result = await signIn("password", formData);
-      const signedIn =
-        typeof result === "object" && result !== null && "signingIn" in result
-          ? (result as { signingIn: boolean }).signingIn
-          : true;
-      setPwStep(signedIn ? "signIn" : "verify");
-      setNotice(null);
-    });
-  };
-
-  const handleVerifySubmit = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    await runSignIn(async () => {
-      formData.set("flow", "email-verification");
+      // Without a `verify` provider this resolves signed-in immediately for
+      // both flows — a fresh sign-up goes straight to the dashboard with the
+      // user-defined password, no emailed code required.
       await signIn("password", formData);
     });
   };
@@ -338,55 +322,6 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                         isLoading={isLoading}
                       />
                     </CardContent>
-                  </form>
-                </>
-              ) : pwStep === "verify" ? (
-                <>
-                  <CardHeader className="text-center mt-4">
-                    <CardTitle className="tracking-tight">Verify your email</CardTitle>
-                    <CardDescription>
-                      Enter the 6-digit code sent to {pwEmail}. It expires in
-                      fifteen minutes.
-                    </CardDescription>
-                  </CardHeader>
-                  <form onSubmit={handleVerifySubmit}>
-                    <CardContent className="pb-4">
-                      <input type="hidden" name="email" value={pwEmail} />
-                      <input type="hidden" name="code" value={verifyCode} />
-                      <OtpInput
-                        value={verifyCode}
-                        onChange={setVerifyCode}
-                        isLoading={isLoading}
-                      />
-                      {notice && (
-                        <p className="text-sm text-emerald-600 dark:text-emerald-400 text-center mt-3">
-                          {notice}
-                        </p>
-                      )}
-                      {error && (
-                        <p className="mt-2 text-sm text-red-500 text-center">{error}</p>
-                      )}
-                    </CardContent>
-                    <CardFooter className="flex-col gap-2">
-                      <SubmitButton
-                        label="Verify code"
-                        loadingLabel="Verifying..."
-                        disabled={isLoading || verifyCode.length !== 6}
-                        isLoading={isLoading}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="w-full"
-                        onClick={() => {
-                          setPwStep("signIn");
-                          setError(null);
-                        }}
-                        disabled={isLoading}
-                      >
-                        <ArrowLeft className="mr-2 h-4 w-4" /> Back to sign in
-                      </Button>
-                    </CardFooter>
                   </form>
                 </>
               ) : pwStep === "forgot" ? (
@@ -689,8 +624,9 @@ function GuestButton({
         Preview as guest
       </Button>
       <p className="mt-2 text-center text-xs text-muted-foreground">
-        Guest data stays on this device only. Sign in with email — from any PC —
-        to keep societies and books in your account.
+        Guest data is saved safely on the server. Sign in with the society's
+        profile email — from any PC, mobile, tablet or laptop — and your
+        societies and books come with your account.
       </p>
     </>
   );

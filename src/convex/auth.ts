@@ -11,11 +11,17 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
     emailOtp,
     Anonymous,
     // Traditional email + password sign-in. Passwords are hashed (Scrypt) and
-    // stored by Convex Auth. Verification and reset codes reuse the same email
-    // delivery as the sign-in OTP. Without `verify`, an existing email-OTP
-    // account is linked to the password account on first password sign-in.
+    // stored by Convex Auth. Reset codes reuse the same email delivery as the
+    // sign-in OTP.
+    //
+    // NOTE: no `verify` provider on purpose. With `verify` set, sign-up does
+    // not sign the user in — it parks the account in an unverified state
+    // (result.signingIn === false) until a 6-digit emailed code is entered,
+    // so a freshly chosen password would fail on the next sign-in attempt
+    // until that extra step completed. Without `verify`, "Create an account"
+    // signs in immediately with the user-defined password (password reset is
+    // still available and proves email ownership for recovery).
     Password({
-      verify: passwordVerifyEmail,
       reset: passwordResetEmail,
       validatePasswordRequirements: (password: string) => {
         if (password.length < 8 || !/\d/.test(password)) {
