@@ -22,10 +22,10 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { formatMoney, todayISO } from "@/lib/format";
+import { effectiveFyPeriod, formatMoney, todayISO } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, Send } from "lucide-react";
-import { useState } from "react";
+import { AlertCircle, Landmark, Send } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -43,7 +43,7 @@ type OpenBill = {
 type PayAccount = { _id: Id<"accounts">; code: string; name: string };
 
 export default function PortalPay() {
-  const { societyId } = useSociety();
+  const { societyId, society } = useSociety();
   const openBills = useQuery(
     api.memberPortal.myOpenBills,
     societyId ? { societyId } : "skip",
@@ -62,6 +62,21 @@ export default function PortalPay() {
 
   const submitPayment = useMutation(api.memberPortal.submitPayment);
 
+  // Pre-select the society's first cash/bank account so the member only has
+  // to change it when paying somewhere other than the default account.
+  useEffect(() => {
+    if (!accountId && accounts && accounts.length > 0) {
+      setAccountId(accounts[0]._id);
+    }
+  }, [accounts, accountId]);
+
+  // The payment is dated today; if today sits outside the society's current
+  // books period the server would decline it — warn before they type anything.
+  const today = todayISO();
+  const fy = effectiveFyPeriod(society);
+  const booksClosed = !!society && (today < fy.from || today > fy.to);
+  const noAccounts = accounts !== undefined && accounts !== null && accounts.length === 0;
+
   const parsedAllocs = Object.entries(allocs)
     .map(([id, amt]) => ({ billId: id as Id<"bills">, amount: Number(amt) || 0 }))
     .filter((a) => a.amount > 0);
@@ -72,25 +87,26 @@ export default function PortalPay() {
     return b ? a.amount > b.balance + 0.005 : true;
   });
 
+  /** Why the submit button is disabled — shown next to it so it's never a mystery. */
+  const blockedReason: string | null = booksClosed
+    ? "The society's current books period does not include today's date — payments are paused. Please contact the society office."
+    : noAccounts
+      ? "No cash/bank account is available for payments yet — please contact the society office."
+      : !accountId
+        ? "Select the cash/bank account you are paying into."
+        : parsedAllocs.length === 0
+          ? "Tick a bill and enter the amount you want to pay."
+          : overAllocated
+            ? "One of the amounts is more than the bill balance — reduce it to continue."
+            : null;
+
   const submit = async () => {
-    if (!societyId) return;
-    if (!accountId) {
-      toast.error("Choose the cash/bank account you are paying into.");
-      return;
-    }
-    if (parsedAllocs.length === 0) {
-      toast.error("Enter the amount to pay against at least one bill.");
-      return;
-    }
-    if (overAllocated) {
-      toast.error("An amount exceeds the bill balance — adjust and retry.");
-      return;
-    }
+    if (!societyId || blockedReason) return;
     setSubmitting(true);
     try {
       const res = await submitPayment({
         societyId,
-        date: todayISO(),
+        date: today,
         bankCashAccountId: accountId as Id<"accounts">,
         mode,
         reference: reference.trim() || undefined,
@@ -123,6 +139,27 @@ export default function PortalPay() {
 
   return (
     <div className="space-y-6">
+      {booksClosed && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+          <Landmark className="mt-0.5 size-4 shrink-0" />
+          <p>
+            The society's current books period is <strong>{fy.from}</strong> to{" "}
+            <strong>{fy.to}</strong>, which does not include today. Payments
+            are paused — please contact the society office.
+          </p>
+        </div>
+      )}
+      {noAccounts && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+          <Landmark className="mt-0.5 size-4 shrink-0" />
+          <p>
+            The society has not marked any account as a cash/bank account yet.
+            Once the office adds one (Chart of Accounts → kind "Bank / Cash"),
+            you can pay here.
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-end gap-3">
         <div className="w-56">
           <Label className="text-xs text-muted-foreground">Paying into</Label>
@@ -236,6 +273,15 @@ export default function PortalPay() {
                             [b._id]: e.target.value,
                           }))
                         }
+                        onBlur={(e) =>
+                          setAllocs((prev) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n) && n > b.balance) {
+                              return { ...prev, [b._id]: String(b.balance.toFixed(2)) };
+                            }
+                            return prev;
+                          })
+                        }
                         className="ml-auto h-8 w-32 text-right"
                       />
                     ) : (
@@ -278,16 +324,16 @@ export default function PortalPay() {
               {formatMoney(total)}
             </p>
           </div>
-          {overAllocated && (
-            <p className="flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="size-4" /> An amount exceeds the bill
-              balance.
+          {blockedReason && !submitting && (
+            <p className="flex max-w-md items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              {blockedReason}
             </p>
           )}
           <Button
             className="ml-auto"
             size="lg"
-            disabled={submitting || total <= 0 || overAllocated || !accountId}
+            disabled={submitting || !!blockedReason}
             onClick={submit}
           >
             <Send className="mr-2 size-4" />
