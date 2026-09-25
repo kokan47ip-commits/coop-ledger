@@ -33,6 +33,8 @@ type Society = {
   pincode?: string;
   email?: string;
   phone?: string;
+  /** Set by societies.listMine for member-portal grants — no book access. */
+  portalOnly?: boolean;
 };
 
 type SocietyContextValue = {
@@ -108,8 +110,13 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
   const adoptingRef = useRef(false);
   const bindRef = useRef(false);
 
+  // Prefer a stored selection; otherwise skip portal-only societies so a
+  // member login's first active society is never one they can't open.
   const activeId =
-    societies.find((s) => s._id === selectedId)?._id ?? societies[0]?._id ?? null;
+    societies.find((s) => s._id === selectedId)?._id ??
+    societies.find((s) => !s.portalOnly)?._id ??
+    societies[0]?._id ??
+    null;
 
   // Resolve the caller's effective role over the active society. Owners are
   // detected from society.createdBy; invited users through access.myAccess.
@@ -127,13 +134,19 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     activeId && !isGuest ? { societyId: activeId } : "skip",
   );
   const isAdmin = menusResult?.admin === true;
+  // The active society's portalOnly flag arrives with the societies list, one
+  // round-trip before myAccess resolves — use it as the synchronous first
+  // signal so portal logins get redirected before any book query can fire.
+  const activeSociety = societies.find((s) => s._id === activeId) ?? null;
   const role: SocietyRole = isGuest
     ? "owner" // guests act on their own device-scope societies
     : societies.some((s) => s._id === activeId && s.createdBy === user?._id)
       ? "owner"
-      : isAdmin
-        ? "editor" // admins act as editors everywhere
-        : ((accessResult as SocietyRole | undefined) ?? "none");
+      : activeSociety?.portalOnly
+        ? "member" // synchronous: flagged in listMine via the member-role grant
+        : isAdmin
+          ? "editor" // admins act as editors everywhere
+          : ((accessResult as SocietyRole | undefined) ?? "none");
   const canEdit = role === "owner" || role === "editor";
   // Guests and admins are never menu-restricted; admins can always open Users & Rights.
   const allowedMenus: string[] | null = isGuest || isAdmin

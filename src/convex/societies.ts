@@ -26,7 +26,12 @@ export const listMine = query({
     if (await isSoftwareAdmin(ctx, userId)) {
       const all = await ctx.db.query("societies").collect();
       const seen = new Set(created.map((s) => s._id));
-      return [...created, ...all.filter((s) => !seen.has(s._id))];
+      type SocietyRow = (typeof created)[number] & { portalOnly?: boolean };
+      const rows: SocietyRow[] = [
+        ...created.map((s) => ({ ...s })),
+        ...all.filter((s) => !seen.has(s._id)).map((s) => ({ ...s })),
+      ];
+      return rows;
     }
 
     const user = await ctx.db.get(userId);
@@ -38,16 +43,27 @@ export const listMine = query({
           .withIndex("by_email", (q) => q.eq("email", email))
           .collect()
       : [];
-    const shared: typeof created = [];
+    type SocietyRow = (typeof created)[number] & { portalOnly?: boolean };
+    const shared: SocietyRow[] = [];
     for (const g of grants) {
       const s = await ctx.db.get(g.societyId);
       if (s && !created.some((c) => c._id === s._id)) {
         // Never expose another society's guest claim code to a granted user —
-        // it is an ownership-takeover secret.
-        shared.push(s.claimCode ? { ...s, claimCode: undefined } : s);
+        // it is an ownership-takeover secret. Portal (member-role) grants are
+        // flagged so the client can route straight to /portal without firing
+        // any society-books query first.
+        shared.push({
+          ...s,
+          claimCode: undefined,
+          portalOnly: g.role === "member",
+        });
       }
     }
-    return [...created, ...shared];
+    const result: SocietyRow[] = [
+      ...created.map((s) => ({ ...s })),
+      ...shared,
+    ];
+    return result;
   },
 });
 

@@ -45,11 +45,16 @@ type DashboardResult = {
 };
 
 export default function Dashboard() {
-  const { societyId, society } = useSociety();
+  const { societyId, society, role } = useSociety();
   const period = effectiveFyPeriod(society);
+  // Portal (member-role) logins have no book access — the dashboard query is
+  // skipped entirely for them; AppLayout bounces them to /portal.
+  const canSeeBooks = role === "owner" || role === "editor" || role === "viewer" || role === "none";
   const stats = useQuery(
     api.api.dashboard,
-    societyId ? { societyId, fromDate: period.from, toDate: period.to } : "skip",
+    societyId && canSeeBooks
+      ? { societyId, fromDate: period.from, toDate: period.to }
+      : "skip",
   ) as DashboardResult | undefined;
 
   const fyLabel = `${formatDate(period.from)} – ${formatDate(period.to)}`;
