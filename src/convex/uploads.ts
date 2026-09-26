@@ -11,7 +11,14 @@ import {
   VOUCHER_PREFIX,
 } from "./lib";
 
-type Result = { inserted: number; updated: number; skipped: number; errors: string[] };
+type Result = {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  /** Non-fatal explanations (e.g. which sheet column created a new head) shown under the upload details. */
+  notes?: string[];
+};
 
 /**
  * Normalises an Excel header for flexible matching: strips punctuation/spaces
@@ -313,14 +320,47 @@ export const uploadMemberTariffs = mutation({
       /^(wing|building|block)$/.test(normHeader(h)),
     );
 
-    // Resolve (or create) a tariff per column header.
+    // Resolve (or create) a tariff per column header. Saved head names and
+    // sheet headers can differ in case/punctuation/spacing (or carry stray
+    // spaces), so match on normalised names first, then a UNIQUE containment
+    // match — silently creating a near-duplicate head would split member
+    // amounts across two columns of the schedule.
+    // /gi matters here (see isIdentityColumn): without it uppercase letters
+    // are stripped before lowercasing ("SINKING FUND" → "").
+    const normTariffName = (s: string) =>
+      s.replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase();
+    const note = (msg: string) => {
+      (result.notes ??= []).push(msg);
+    };
+    const findTariff = (header: string): Doc<"tariffs"> | undefined => {
+      const target = normTariffName(header);
+      if (!target) return undefined;
+      const exact = existingTariffs.filter((t) => normTariffName(t.name) === target);
+      if (exact.length > 0) {
+        // Same-named duplicates can exist from earlier uploads — prefer the
+        // active head, then the oldest, and surface the collision.
+        const pick = exact.find((t) => t.isActive) ?? exact[0];
+        if (exact.length > 1)
+          note(
+            `Column "${header.trim()}": ${exact.length} same-named tariff heads exist — amounts were saved under "${pick.name}". Delete the duplicates on the Tariff Heads tab.`,
+          );
+        return pick;
+      }
+      const contains = existingTariffs.filter((t) => {
+        const n = normTariffName(t.name);
+        return n.includes(target) || (target.includes(n) && n.length >= 4);
+      });
+      return contains.length === 1 ? contains[0] : undefined;
+    };
     const tariffByKey = new Map<string, Doc<"tariffs">>();
     for (const key of tariffKeys) {
       const tariffName = key.trim().replace(/\s+/g, " ");
-      const match = existingTariffs.find(
-        (t) => t.name.toLowerCase() === tariffName.toLowerCase(),
-      );
+      const match = findTariff(key);
       if (match) {
+        if (normTariffName(match.name) !== normTariffName(key))
+          note(
+            `Column "${tariffName}" was mapped to the existing tariff head "${match.name}".`,
+          );
         tariffByKey.set(key, match);
       } else {
         if (!fallbackAccount) {
@@ -342,6 +382,9 @@ export const uploadMemberTariffs = mutation({
           existingTariffs.push(created);
           tariffByKey.set(key, created);
           result.inserted++;
+          note(
+            `Column "${tariffName}": no existing head matched, so a new tariff head was created (income account "${fallbackAccount.code} — ${fallbackAccount.name}"). If this duplicates an existing head, delete it on the Tariff Heads tab and re-upload.`,
+          );
         }
       }
     }

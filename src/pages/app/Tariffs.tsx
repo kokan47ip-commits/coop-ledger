@@ -74,7 +74,14 @@ type OverrideRow = {
   amount: number;
 };
 
-type UploadResult = { inserted: number; updated: number; skipped: number; errors: string[] };
+type UploadResult = {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  /** Non-fatal explanations — which sheet column mapped to which head, new heads created, duplicates found. */
+  notes?: string[];
+};
 
 export default function Tariffs() {
   const { societyId, canEdit } = useSociety();
@@ -133,10 +140,12 @@ export default function Tariffs() {
       setLastUpload(res);
       const skipped = res.skipped + res.errors.length;
       const firstIssue = res.errors[0];
+      const noteCount = res.notes?.length ?? 0;
+      const noteSuffix = noteCount > 0 ? ` ${noteCount} column note(s) below.` : "";
       if (res.inserted === 0 && res.updated === 0) {
         if (skipped === 0) {
           toast.info(
-            "Every amount already matches the saved schedule — nothing to change.",
+            "Every amount already matches the saved schedule — nothing to change." + noteSuffix,
           );
         } else {
           toast.error(
@@ -149,7 +158,8 @@ export default function Tariffs() {
       } else {
         toast.success(
           `Custom tariffs applied: ${res.inserted} added, ${res.updated} updated` +
-            (skipped > 0 ? `, ${skipped} row(s) skipped` : ""),
+            (skipped > 0 ? `, ${skipped} row(s) skipped` : "") +
+            noteSuffix,
           { duration: 6000 },
         );
       }
@@ -574,7 +584,17 @@ export default function Tariffs() {
                 size="sm"
                 onClick={() =>
                   downloadMemberTariffTemplate(
-                    (tariffs ?? []).map((t) => ({ name: t.name, amount: t.amount })),
+                    // Same order as the schedule below (Print No., then name) so
+                    // the downloaded columns line up with what the user sees.
+                    (tariffs ?? [])
+                      .slice()
+                      .sort(
+                        (a, b) =>
+                          (a.printNo ?? "").localeCompare(b.printNo ?? "", undefined, {
+                            numeric: true,
+                          }) || a.name.localeCompare(b.name),
+                      )
+                      .map((t) => ({ name: t.name, amount: t.amount })),
                     (members ?? []).slice(0, 5).map((m) => ({ flatNo: m.flatNo, name: m.name })),
                   )
                 }
@@ -611,6 +631,13 @@ export default function Tariffs() {
               <div className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-md bg-accent/50 p-3 text-xs text-muted-foreground">
                 {lastUpload.errors.slice(0, 20).map((e, i) => (
                   <p key={i}>{e}</p>
+                ))}
+              </div>
+            )}
+            {lastUpload && (lastUpload.notes?.length ?? 0) > 0 && (
+              <div className="mt-3 max-h-32 space-y-1 overflow-y-auto rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                {lastUpload.notes!.slice(0, 20).map((n, i) => (
+                  <p key={i}>{n}</p>
                 ))}
               </div>
             )}
