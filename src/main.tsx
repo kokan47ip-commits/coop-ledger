@@ -4,43 +4,86 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
-import React, { StrictMode, useEffect, lazy, Suspense } from "react";
+import React, { StrictMode, useEffect, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import { SocietyProvider } from "@/components/SocietyContext";
 import "./index.css";
 
+/**
+ * Stale-chunk self-healing. The platform redeploys the app when files change
+ * (HMR is off), so a tab holding the previous bundle asks for route chunks by
+ * their OLD content hash and gets 404s ("Failed to fetch dynamically imported
+ * module"). Wrap every lazy route: on a fetch/preload failure reload the tab
+ * ONCE to pick up the fresh assets. The sessionStorage flag prevents reload
+ * loops if a chunk is genuinely broken; any successful import re-arms the
+ * guard so a later redeploy (tab kept open) also self-heals.
+ */
+const CHUNK_RELOAD_FLAG = "vly:chunk-reload";
+
+function isChunkLoadError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /failed to fetch|dynamically imported module|preload|importing a module|chunk/i.test(msg);
+}
+
+function lazyPage(loader: () => Promise<{ default: React.ComponentType<any> }>) {
+  return React.lazy(() =>
+    loader().then(
+      (mod) => {
+        sessionStorage.removeItem(CHUNK_RELOAD_FLAG);
+        return mod;
+      },
+      (err) => {
+        if (!sessionStorage.getItem(CHUNK_RELOAD_FLAG) && isChunkLoadError(err)) {
+          sessionStorage.setItem(CHUNK_RELOAD_FLAG, "1");
+          window.location.reload();
+        }
+        throw err;
+      },
+    ),
+  );
+}
+
+// Belt-and-braces: Vite also surfaces failed module preloads as this event.
+window.addEventListener("vite:preloadError", (e) => {
+  e.preventDefault();
+  if (!sessionStorage.getItem(CHUNK_RELOAD_FLAG)) {
+    sessionStorage.setItem(CHUNK_RELOAD_FLAG, "1");
+    window.location.reload();
+  }
+});
+
 // Lazy load route components for better code splitting
-const Landing = lazy(() => import("./pages/Landing.tsx"));
-const AuthPage = lazy(() => import("./pages/Auth.tsx"));
-const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
-const NotFound = lazy(() => import("./pages/NotFound.tsx"));
-const AppLayout = lazy(() => import("@/components/AppLayout.tsx"));
-const SocietyProfile = lazy(() => import("./pages/app/SocietyProfile.tsx"));
-const Members = lazy(() => import("./pages/app/Members.tsx"));
-const ChartOfAccounts = lazy(() => import("./pages/app/ChartOfAccounts.tsx"));
-const Tariffs = lazy(() => import("./pages/app/Tariffs.tsx"));
-const BillRegister = lazy(() => import("./pages/app/bills/BillRegister.tsx"));
-const BillView = lazy(() => import("./pages/app/bills/BillView.tsx"));
-const MemberReceipt = lazy(() => import("./pages/app/vouchers/MemberReceipt.tsx"));
-const OtherReceipt = lazy(() => import("./pages/app/vouchers/OtherReceipt.tsx"));
-const Payment = lazy(() => import("./pages/app/vouchers/Payment.tsx"));
-const Journal = lazy(() => import("./pages/app/vouchers/Journal.tsx"));
-const MemberLedger = lazy(() => import("./pages/app/ledgers/MemberLedger.tsx"));
-const GeneralLedger = lazy(() => import("./pages/app/ledgers/GeneralLedger.tsx"));
-const CashBook = lazy(() => import("./pages/app/ledgers/CashBook.tsx"));
-const IncomeExpenditure = lazy(() => import("./pages/app/reports/IncomeExpenditure.tsx"));
-const BalanceSheet = lazy(() => import("./pages/app/reports/BalanceSheet.tsx"));
-const ReceiptPayment = lazy(() => import("./pages/app/reports/ReceiptPayment.tsx"));
-const Uploads = lazy(() => import("./pages/app/Uploads.tsx"));
-const TransactionImport = lazy(() => import("./pages/app/TransactionImport.tsx"));
-const UsersRights = lazy(() => import("./pages/app/UsersRights.tsx"));
-const PortalHome = lazy(() => import("./pages/portal/PortalHome.tsx"));
-const PortalLedger = lazy(() => import("./pages/portal/PortalLedger.tsx"));
-const PortalBills = lazy(() => import("./pages/portal/PortalBills.tsx"));
-const PortalReceipts = lazy(() => import("./pages/portal/PortalReceipts.tsx"));
-const PortalPay = lazy(() => import("./pages/portal/PortalPay.tsx"));
-const PortalProfile = lazy(() => import("./pages/portal/PortalProfile.tsx"));
+const Landing = lazyPage(() => import("./pages/Landing.tsx"));
+const AuthPage = lazyPage(() => import("./pages/Auth.tsx"));
+const Dashboard = lazyPage(() => import("./pages/Dashboard.tsx"));
+const NotFound = lazyPage(() => import("./pages/NotFound.tsx"));
+const AppLayout = lazyPage(() => import("@/components/AppLayout.tsx"));
+const SocietyProfile = lazyPage(() => import("./pages/app/SocietyProfile.tsx"));
+const Members = lazyPage(() => import("./pages/app/Members.tsx"));
+const ChartOfAccounts = lazyPage(() => import("./pages/app/ChartOfAccounts.tsx"));
+const Tariffs = lazyPage(() => import("./pages/app/Tariffs.tsx"));
+const BillRegister = lazyPage(() => import("./pages/app/bills/BillRegister.tsx"));
+const BillView = lazyPage(() => import("./pages/app/bills/BillView.tsx"));
+const MemberReceipt = lazyPage(() => import("./pages/app/vouchers/MemberReceipt.tsx"));
+const OtherReceipt = lazyPage(() => import("./pages/app/vouchers/OtherReceipt.tsx"));
+const Payment = lazyPage(() => import("./pages/app/vouchers/Payment.tsx"));
+const Journal = lazyPage(() => import("./pages/app/vouchers/Journal.tsx"));
+const MemberLedger = lazyPage(() => import("./pages/app/ledgers/MemberLedger.tsx"));
+const GeneralLedger = lazyPage(() => import("./pages/app/ledgers/GeneralLedger.tsx"));
+const CashBook = lazyPage(() => import("./pages/app/ledgers/CashBook.tsx"));
+const IncomeExpenditure = lazyPage(() => import("./pages/app/reports/IncomeExpenditure.tsx"));
+const BalanceSheet = lazyPage(() => import("./pages/app/reports/BalanceSheet.tsx"));
+const ReceiptPayment = lazyPage(() => import("./pages/app/reports/ReceiptPayment.tsx"));
+const Uploads = lazyPage(() => import("./pages/app/Uploads.tsx"));
+const TransactionImport = lazyPage(() => import("./pages/app/TransactionImport.tsx"));
+const UsersRights = lazyPage(() => import("./pages/app/UsersRights.tsx"));
+const PortalHome = lazyPage(() => import("./pages/portal/PortalHome.tsx"));
+const PortalLedger = lazyPage(() => import("./pages/portal/PortalLedger.tsx"));
+const PortalBills = lazyPage(() => import("./pages/portal/PortalBills.tsx"));
+const PortalReceipts = lazyPage(() => import("./pages/portal/PortalReceipts.tsx"));
+const PortalPay = lazyPage(() => import("./pages/portal/PortalPay.tsx"));
+const PortalProfile = lazyPage(() => import("./pages/portal/PortalProfile.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
