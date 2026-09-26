@@ -259,14 +259,21 @@ export const uploadMemberTariffs = mutation({
     // the punctuation-stripped, lowercased header ("Sr. No." → "srno").
     const isIdentityColumn = (h: string) =>
       /^(sr|srl|srlno|srno|sno|sl|slno|sn|serial|serialno|printno|printserialno|no|number|code|membercode|memberid|memberno|membernumber|id|wing|building|block|floor|unittype|type|remarks|remark|note|notes|total|totalamount|grandtotal|date|status)$/.test(
-        h.replace(/[^a-z0-9]/g, "").toLowerCase(),
+        // /gi matters: strip case-insensitively BEFORE lowercasing, or
+        // uppercase letters are deleted ("Sr. No." → "ro") and headers like
+        // "Flat No" / "Name of Member" never match anywhere downstream.
+        h.replace(/[^a-z0-9]/gi, "").toLowerCase(),
       );
 
     if (rows.length === 0) return result;
 
     // Identify tariff columns from the first row's keys. Headers are
     // normalised (punctuation/case-insensitive) for detection.
-    const normHeader = (h: string) => h.replace(/[^a-z0-9]/g, "").toLowerCase();
+    // /gi is required (see isIdentityColumn above): without it, uppercase
+    // letters are stripped before lowercasing — "Flat No" became "lato" and
+    // "Name of Member" became "ameofember", so uploads of the app's own
+    // template failed with "must contain a Flat No. or Name of Member column".
+    const normHeader = (h: string) => h.replace(/[^a-z0-9]/gi, "").toLowerCase();
     const headerKeys = Object.keys(rows[0]);
     const flatKey = headerKeys.find((h) =>
       /^(flatno|flat|flatnumber|unit|house|houseno|housenumber|shop|premises)$/.test(normHeader(h)),
@@ -286,8 +293,16 @@ export const uploadMemberTariffs = mutation({
       return result;
     }
     if (!flatKey && !nameKey) {
+      // If a flat/name-like header is visibly present but didn't match, the
+      // cell likely carries hidden characters or non-standard wording — tell
+      // the user exactly what to re-type instead of only listing columns.
+      const hint = headerKeys.some((h) =>
+        /flat|unit|house|shop|premises|name|member|owner/i.test(h),
+      )
+        ? ` Your sheet appears to have that column — re-type its header exactly as "Flat No" (or "Name of Member") and try again.`
+        : "";
       result.errors.push(
-        `Sheet must contain a "Flat No." or "Name of Member" column. Detected sheet columns: ${headerKeys.join(" · ") || "none"}.`,
+        `Sheet must contain a "Flat No." or "Name of Member" column.${hint} Detected sheet columns: ${headerKeys.join(" · ") || "none"}.`,
       );
       return result;
     }
