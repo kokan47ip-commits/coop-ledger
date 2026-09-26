@@ -207,9 +207,12 @@ export function downloadMemberTariffTemplate(
         })
       : [
           {
-            "Flat No": "A-101",
-            "Name of Member": "Ramesh Kumar",
-            ...Object.fromEntries(tariffs.map((t) => [t.name, t.amount ?? 2500])),
+            // No fake example rows: amounts only apply to members that already
+            // exist in the society, so the sheet must be filled with the same
+            // flat numbers / names as on the Members page.
+            "Flat No": "(same flat no. as on the Members page)",
+            "Name of Member": "(same member name as on the Members page)",
+            ...Object.fromEntries(tariffs.map((t) => [t.name, t.amount ?? ""])),
           },
         ];
   downloadWorkbook([{ name: "Custom Tariffs", rows }], "template-member-tariffs.xlsx");

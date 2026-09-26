@@ -132,6 +132,7 @@ export default function Tariffs() {
       const res = await uploadMemberTariffs({ societyId, rows });
       setLastUpload(res);
       const skipped = res.skipped + res.errors.length;
+      const firstIssue = res.errors[0];
       if (res.inserted === 0 && res.updated === 0) {
         if (skipped === 0) {
           toast.info(
@@ -139,15 +140,17 @@ export default function Tariffs() {
           );
         } else {
           toast.error(
-            `No amounts were applied — ${skipped} row(s) skipped. ` +
-              `See the details below: flat numbers or names must match saved members ` +
-              `(import members first if needed).`,
+            `No amounts were applied — ${skipped} row(s) skipped.` +
+              (firstIssue ? ` First issue: ${firstIssue}` : "") +
+              ` Full details below.`,
+            { duration: 9000 },
           );
         }
       } else {
         toast.success(
           `Custom tariffs applied: ${res.inserted} added, ${res.updated} updated` +
             (skipped > 0 ? `, ${skipped} row(s) skipped` : ""),
+          { duration: 6000 },
         );
       }
     } catch (err) {
@@ -547,11 +550,24 @@ export default function Tariffs() {
                 <p className="text-sm text-muted-foreground">
                   Upload a sheet with Flat No., Name of Member and one amount column per tariff to fill the schedule
                   below. Column headers match tariff heads (created automatically if new); rows match members by flat
-                  number or name. Enter 0 to exempt a member from a charge; leave blank to skip that head.
+                  number or name — separators and honorifics (Shri/Smt/Mr) are ignored. Enter 0 to exempt a member from a
+                  charge; leave blank to skip that head.
                 </p>
                 <p className="pt-1 font-mono text-[11px] text-muted-foreground">
                   Flat No · Name of Member · Custom Tariff 1 · Custom Tariff 2 · Custom Tariff 3 …
                 </p>
+                {members && members.length > 0 && (
+                  <p className="pt-1 text-[11px] text-muted-foreground">
+                    Flat numbers on the Members page: {" "}
+                    <span className="font-mono">
+                      {(members ?? [])
+                        .slice(0, 8)
+                        .map((m) => [m.wing, m.flatNo].filter(Boolean).join("") || m.code)
+                        .join(", ")}
+                      {(members ?? []).length > 8 ? " …" : ""}
+                    </span>
+                  </p>
+                )}
               </div>
               <Button
                 variant="ghost"
@@ -586,8 +602,8 @@ export default function Tariffs() {
                   <CheckCircle2 className="size-4 text-foreground" />
                   {lastUpload.inserted} added · {lastUpload.updated} updated
                   {lastUpload.skipped > 0 &&
-                    ` · ${lastUpload.skipped} rows skipped (no member matched / all amounts blank)`}
-                  {lastUpload.errors.length > 0 && ` · ${lastUpload.errors.length} row errors`}
+                    ` · ${lastUpload.skipped} row(s) skipped`}
+                  {lastUpload.errors.length > 0 && ` · ${lastUpload.errors.length} issue(s)`}
                 </span>
               )}
             </div>

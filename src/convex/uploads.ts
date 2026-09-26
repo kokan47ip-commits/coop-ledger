@@ -258,7 +258,7 @@ export const uploadMemberTariffs = mutation({
     // Columns that are identity metadata, not tariff amounts. Matched against
     // the punctuation-stripped, lowercased header ("Sr. No." → "srno").
     const isIdentityColumn = (h: string) =>
-      /^(sr|srl|srlno|srno|sno|sl|slno|sn|serial|serialno|printno|no|number|code|membercode|memberid|memberno|membernumber|id|wing|building|block|floor|unittype|type|remarks|remark|note|notes|total|totalamount|grandtotal|date|status)$/.test(
+      /^(sr|srl|srlno|srno|sno|sl|slno|sn|serial|serialno|printno|printserialno|no|number|code|membercode|memberid|memberno|membernumber|id|wing|building|block|floor|unittype|type|remarks|remark|note|notes|total|totalamount|grandtotal|date|status)$/.test(
         h.replace(/[^a-z0-9]/g, "").toLowerCase(),
       );
 
@@ -281,14 +281,22 @@ export const uploadMemberTariffs = mutation({
     );
     if (tariffKeys.length === 0) {
       result.errors.push(
-        "No tariff columns found. Beyond Flat No. and Name, each remaining column is treated as a tariff.",
+        `No tariff columns found. Beyond "${flatKey ?? "—"}" and "${nameKey ?? "—"}", every remaining column is treated as a tariff. Detected sheet columns: ${headerKeys.join(" · ") || "none"}.`,
       );
       return result;
     }
     if (!flatKey && !nameKey) {
-      result.errors.push('Sheet must contain a "Flat No." or "Name of Member" column.');
+      result.errors.push(
+        `Sheet must contain a "Flat No." or "Name of Member" column. Detected sheet columns: ${headerKeys.join(" · ") || "none"}.`,
+      );
       return result;
     }
+
+    // Optional Wing/Building column — combined with the sheet's flat number
+    // before matching ("Wing B" + "703" ≡ member wing "B" + flat "703").
+    const wingKey = headerKeys.find((h) =>
+      /^(wing|building|block)$/.test(normHeader(h)),
+    );
 
     // Resolve (or create) a tariff per column header.
     const tariffByKey = new Map<string, Doc<"tariffs">>();
@@ -326,6 +334,16 @@ export const uploadMemberTariffs = mutation({
     // Match unit codes regardless of separators/case: "A-101" ≡ "A101" ≡
     // "a 101". Also tries wing+flat ("B" + "703" ≡ "B703") and member code.
     const norm = (s: string) => s.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    /** "flat 101", "unit no. 101", "shop-5" → "101"/"5" — numbers only. */
+    const digits = (s: string) => s.replace(/\D+/g, "");
+    /** "Shri. Ramesh  Kumar" → "ramesh kumar"; drops honorifics/punct. */
+    const normName = (s: string) =>
+      s
+        .replace(/[^a-zA-Z\s]/g, " ")
+        .replace(/\b(shri|shree|smt|mr|mrs|ms|dr|late)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -335,20 +353,56 @@ export const uploadMemberTariffs = mutation({
         result.errors.push(`Row ${i + 2}: missing flat number and member name.`);
         continue;
       }
+      const sheetWing = wingKey ? str(row, [wingKey]) : undefined;
+      const flatVariants = [
+        ...(flat ? [norm(flat)] : []),
+        // Wing column next to Flat No: "B" + "703" → "b703".
+        ...(sheetWing && flat ? [norm(sheetWing) + norm(flat)] : []),
+        // Wing already typed into the flat cell: "B-703" → also "703".
+        ...(flat && digits(flat) !== norm(flat) ? [digits(flat)] : []),
+      ];
+      const nameVariants = name ? [normName(name)] : [];
       const member =
-        (flat &&
+        (flatVariants.length > 0 &&
           members.find(
             (m) =>
-              !!m.flatNo &&
-              (norm(m.flatNo) === norm(flat!) ||
-                norm(`${m.wing ?? ""}${m.flatNo}`) === norm(flat!)),
+              (m.flatNo &&
+                flatVariants.some(
+                  (fv) =>
+                    fv !== "" &&
+                    (fv === norm(m.flatNo ?? "") ||
+                      fv === norm(`${m.wing ?? ""}${m.flatNo ?? ""}`) ||
+                      // digits-only fallback: "101" ≡ "A-101" / "B/703"
+                      (digits(fv) !== "" && digits(fv) === digits(m.flatNo ?? ""))),
+                )) ||
+              (sheetWing &&
+                m.wing &&
+                norm(sheetWing) === norm(m.wing) &&
+                flat &&
+                m.flatNo &&
+                norm(flat) === norm(m.flatNo)),
           )) ??
-        (flat && members.find((m) => norm(m.code) === norm(flat!))) ??
-        (name && members.find((m) => norm(m.name) === norm(name!))) ??
+        (flat && members.find((m) => norm(m.code) === norm(flat))) ??
+        (nameVariants.length > 0 &&
+          members.find(
+            (m) =>
+              normName(m.name) === nameVariants[0] ||
+              // Unique containment: sheet "ramesh kumar patel" matches saved
+              // "Ramesh Kumar" when only ONE saved name fits inside it.
+              (nameVariants[0].includes(normName(m.name)) &&
+                normName(m.name).length >= 4 &&
+                members.filter((x) => nameVariants[0].includes(normName(x.name)))
+                  .length === 1),
+          )) ??
         undefined;
       if (!member) {
+        const saved = members
+          .slice(0, 6)
+          .map((m) => [m.flatNo, m.wing, m.code, m.name].filter(Boolean).join(" / "))
+          .join(" · ");
         result.errors.push(
-          `Row ${i + 2}: no member matches flat "${flat ?? "—"}"${name ? ` / name "${name}"` : ""}. Import members first.`,
+          `Row ${i + 2}: no member matches flat "${flat ?? "—"}"${name ? ` / name "${name}"` : ""}. ` +
+            `Saved members look like: ${saved || "none — import members first"}.`,
         );
         continue;
       }
@@ -377,7 +431,20 @@ export const uploadMemberTariffs = mutation({
         }
         rowApplied++;
       }
-      if (rowApplied === 0) result.skipped++;
+      if (rowApplied === 0) {
+        result.skipped++;
+        // Surface silent skips: the member matched but no amount cell held a
+        // number, or every tariff column failed to resolve.
+        if (tariffByKey.size > 0) {
+          result.errors.push(
+            `Row ${i + 2}: matched ${member.name} but no amount cells were filled — enter numbers under each tariff column (blank = skip, 0 = exempt).`,
+          );
+        } else {
+          result.errors.push(
+            `Row ${i + 2}: matched ${member.name} but no tariff column could be resolved against the schedule.`,
+          );
+        }
+      }
     }
     return result;
   },
