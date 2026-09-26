@@ -422,35 +422,69 @@ export const bindPendingGrants = mutation({
     const userId = await requireUserId(ctx);
     const user = await ctx.db.get(userId);
     const email = user?.email?.toLowerCase().trim();
-    if (!email || user?.isAnonymous) return 0;
+    // A guest session that was later given the owner's email (same user row,
+    // isAnonymous stays true) counts as a real account: its email-keyed
+    // recovery must run so its books follow that email to every device.
+    if (!email) return 0;
 
     // Bootstrap: the first real account becomes the software admin.
+    // Guests and converted guest accounts are never promoted by this — a
+    // fresh device usually starts as a guest, so handing the system admin
+    // flag to a guest/converted identity would lock the owner out.
     const existingAdmins = await ctx.db
       .query("users")
       .filter((q) => q.eq(q.field("softwareAdmin"), true))
       .collect();
-    if (existingAdmins.length === 0) {
+    if (existingAdmins.length === 0 && !user?.isAnonymous) {
       await ctx.db.patch(userId, { softwareAdmin: true });
     }
 
-    // Recovery guarantee — runs on every software-admin login. A society
-    // whose owner identity is unusable must never strand its books:
+    // Recovery guarantee. A society whose owner identity is unusable must
+    // never strand its books, and a guest session's books must follow their
+    // owner's email to every device:
     //  • the owner user row no longer exists (retired guest session), or
-    //  • the owner is an anonymous guest whose data must follow the admin
-    //    account to any PC/mobile/tablet (the device claim-code path fails
-    //    silently across devices).
-    // Adopting here re-links the books to a live, recoverable account.
-    if (existingAdmins.length === 0 || user?.softwareAdmin === true) {
+    //  • the owner is still an anonymous guest whose stamped email equals
+    //    THIS account's email (guest sessions that were given an email keep
+    //    their books under that email — a later password/OTP sign-in for the
+    //    same email is the same person, on any device), or
+    //  • the society was stamped with THIS email as its claim/handoff target
+    //    (guest-created societies stamp the society profile email).
+    //
+    // Email-keyed handoff runs for EVERY email-backed account — it is tied
+    // to the email itself, so it is safe on any device and needs no admin
+    // rights. Pure anonymous guests (no email) returned above, keeping their
+    // device-local data. Admins additionally adopt any other
+    // orphaned/guest-owned society so nothing is ever stranded.
+    {
+      const isAdminNow =
+        user?.softwareAdmin === true || existingAdmins.length === 0;
       const users = await ctx.db.query("users").collect();
       const userIds = new Set(users.map((u) => u._id));
-      const orphans = (await ctx.db.query("societies").collect()).filter(
-        (s) =>
-          s.createdBy !== userId &&
-          s.createdBy !== undefined &&
-          (!userIds.has(s.createdBy) ||
-            users.find((u) => u._id === s.createdBy)?.isAnonymous === true),
+      const adoptable = (await ctx.db.query("societies").collect()).filter(
+        (s) => {
+          if (s.createdBy === userId) return false;
+          const owner = s.createdBy
+            ? users.find((u) => u._id === s.createdBy)
+            : undefined;
+          const ownerDead =
+            s.createdBy !== undefined && !userIds.has(s.createdBy);
+          const ownerIsGuest = owner?.isAnonymous === true;
+          const ownerIsMyGuest =
+            ownerIsGuest &&
+            owner?.email?.toLowerCase().trim() === email;
+          // Email handoff: the guest stamped this account's email when the
+          // society was created, or an adoption set it as the recovery target.
+          const stampedForMe =
+            (s.claimEmail?.toLowerCase().trim() ?? null) === email;
+          if (
+            (stampedForMe || ownerIsMyGuest) &&
+            (ownerDead || ownerIsGuest || owner === undefined)
+          )
+            return true;
+          return isAdminNow && (ownerDead || ownerIsGuest);
+        },
       );
-      for (const s of orphans) {
+      for (const s of adoptable) {
         await ctx.db.patch(s._id, {
           createdBy: userId,
           claimCode: undefined,

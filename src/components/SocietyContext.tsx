@@ -153,15 +153,21 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
     ? null
     : ((menusResult?.menus as string[] | null | undefined) ?? null);
 
-  // When a guest signs in with email afterwards, their societies are adopted
-  // into the email account — first server-side (bindGrants hands over every
-  // society stamped with the profile email, from any device), then any
-  // leftovers via this device's stored claim codes. Email invites issued
-  // before sign-up are bound to the account here too. Nothing entered as a
-  // guest is ever "lost on login": the books live server-side and follow the
-  // account to any PC, phone, tablet or laptop they sign in from.
+  // When an email-backed session signs in, their societies are adopted into
+  // the account — first server-side (bindGrants hands over every society
+  // stamped with their email, plus any society still owned by a guest
+  // identity carrying that same email, from any device), then any leftovers
+  // via this device's stored claim codes. Email invites issued before
+  // sign-up are bound to the account here too. Nothing entered while
+  // browsing as a guest is ever "lost on login": the books live server-side
+  // and follow the account to any PC, phone, tablet or laptop.
+  //
+  // Runs whenever the session has an email — including a guest session that
+  // was given the owner's email (isAnonymous stays true after conversion),
+  // so the same recovery fires on a fresh device or an expired session.
+  const hasEmail = !!user?.email;
   useEffect(() => {
-    if (isLoading || isGuest || !isAuthenticated || adoptingRef.current) return;
+    if (isLoading || !hasEmail || !isAuthenticated || adoptingRef.current) return;
     if (!bindRef.current) {
       bindRef.current = true;
       void bindGrants()
@@ -196,7 +202,7 @@ export function SocietyProvider({ children }: { children: React.ReactNode }) {
         }
       }
     })();
-  }, [isLoading, isGuest, isAuthenticated, adopt, bindGrants]);
+  }, [isLoading, hasEmail, isAuthenticated, adopt, bindGrants]);
 
   const setActiveId = useCallback((id: Id<"societies">) => {
     setSelectedId(id);

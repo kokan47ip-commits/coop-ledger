@@ -25,6 +25,8 @@ import {
   FolderOpen,
   Landmark,
   LayoutDashboard,
+  Loader2,
+  LogIn,
   LogOut,
   Plus,
   Receipt,
@@ -339,6 +341,72 @@ export function AppLayout() {
             : null;
 
   if (!isLoading && !societyId && !isSetupRoute) {
+    // Guest sessions keep data on the server but tied to the guest identity
+    // of THIS device. A fresh device — or an expired session — therefore
+    // starts empty: the way back to the books is signing in with the email
+    // they were saved under, so say that instead of pushing "create society".
+    if (isGuest) {
+      // A guest session that carries an email (converted identity) restores
+      // its books automatically on mount — show that it is happening.
+      if (user?.email) {
+        return (
+          <div className="flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center">
+            <span className="brand-gradient mx-auto flex size-12 items-center justify-center rounded-xl text-xs font-bold tracking-wide text-white shadow-lg shadow-primary/40">
+              IAS
+            </span>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Restoring your societies…
+            </h1>
+            <p className="max-w-md text-sm leading-6 text-muted-foreground">
+              Linking your books to <strong>{user.email}</strong> — they will
+              open here automatically in a moment.
+            </p>
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        );
+      }
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-8 px-6 text-center">
+          <div className="max-w-md space-y-4">
+            <span className="brand-gradient mx-auto flex size-12 items-center justify-center rounded-xl text-xs font-bold tracking-wide text-white shadow-lg shadow-primary/40">
+              IAS
+            </span>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              You are browsing as a guest
+            </h1>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Your societies and books are stored safely on the server — but
+              they follow your <strong>email account</strong>, not this device.
+              Sign in with the same email you used before (for example on your
+              phone) and everything opens right up here.
+            </p>
+          </div>
+          <div className="flex flex-col items-center gap-3 sm:flex-row">
+            <Button
+              size="lg"
+              className="px-8"
+              onClick={() => {
+                // /auth bounces signed-in sessions back here, so end the
+                // guest session first — then the sign-in screen is reachable.
+                void signOut().then(() => navigate("/auth?returnTo=%2Fdashboard"));
+              }}
+            >
+              <LogIn className="size-4" /> Sign in with email
+            </Button>
+            <Button asChild variant="outline" size="lg" className="px-6">
+              <Link to="/app/society?new=1">
+                <Plus className="size-4" /> Continue as guest
+              </Link>
+            </Button>
+          </div>
+          <p className="max-w-md text-xs leading-5 text-muted-foreground/80">
+            Guest data entered on this device is never lost — sign in with the
+            society's profile email and it is adopted into your account
+            automatically.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-8 px-6 text-center">
         <div className="max-w-md space-y-4">
@@ -346,18 +414,31 @@ export function AppLayout() {
             IAS
           </span>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Set up your first client society
+            No societies on this account yet
           </h1>
           <p className="text-sm leading-6 text-muted-foreground">
-            Create a society profile to open its books — the standard chart of
-            accounts is generated automatically, ready for bills and vouchers.
+            Signed in as <strong>{user?.email ?? "your account"}</strong>. Books
+            live under the email they were created with — if your societies are
+            missing, sign out and sign in with that email instead.
           </p>
         </div>
-        <Button asChild size="lg" className="px-8">
-          <Link to="/app/society?new=1">
-            <Plus className="size-4" /> Create society
-          </Link>
-        </Button>
+        <div className="flex flex-col items-center gap-3 sm:flex-row">
+          <Button asChild size="lg" className="px-8">
+            <Link to="/app/society?new=1">
+              <Plus className="size-4" /> Create society
+            </Link>
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            className="px-6"
+            onClick={() => {
+              void signOut().then(() => navigate("/auth?returnTo=%2Fdashboard"));
+            }}
+          >
+            <LogOut className="size-4" /> Sign in with a different email
+          </Button>
+        </div>
       </div>
     );
   }
@@ -477,7 +558,11 @@ export function AppLayout() {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{user?.name ?? user?.email ?? "Signed in"}</p>
                 <p className="truncate text-xs text-sidebar-foreground/55">
-                  {roleLabel ? `${user?.email ?? "Account"} · ${roleLabel}` : user?.email ?? "Account"}
+                  {isGuest && !user?.email
+                    ? "Guest preview — sign in to use on any device"
+                    : roleLabel
+                      ? `${user?.email ?? "Account"} · ${roleLabel}`
+                      : user?.email ?? "Account"}
                 </p>
               </div>
             </div>
@@ -560,8 +645,17 @@ export function AppLayout() {
                 this device until you sign in with your email — which carries
                 your societies and books to any PC you log in from.
               </p>
-              <Button asChild variant="outline" size="sm" className="shrink-0 border-amber-600/40 text-amber-900 hover:border-amber-600/60 hover:bg-amber-100/60 hover:text-amber-900 dark:text-amber-200 dark:hover:bg-amber-950/60 dark:hover:text-amber-100">
-                <Link to="/auth">Sign in with email</Link>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-amber-600/40 text-amber-900 hover:border-amber-600/60 hover:bg-amber-100/60 hover:text-amber-900 dark:text-amber-200 dark:hover:bg-amber-950/60 dark:hover:text-amber-100"
+                onClick={() => {
+                  // /auth bounces authenticated sessions back, so end the
+                  // guest session before opening the sign-in screen.
+                  void signOut().then(() => navigate("/auth?returnTo=%2Fdashboard"));
+                }}
+              >
+                <LogIn className="size-4" /> Sign in with email
               </Button>
             </div>
           )}
