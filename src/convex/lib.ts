@@ -74,33 +74,40 @@ export async function societyMemberBinding(
       g.memberId !== undefined,
   );
   const boundId = grant?.memberId;
-  if (boundId) {
-    const bound = await ctx.db.get(boundId);
-    // Row still exists → bind as before (an office deactivation must not
-    // silently re-point the login somewhere else). Self-heal only when the
-    // bound row is gone, e.g. members were re-imported and bills now live on
-    // a new row while the grant still pointed at the deleted one.
-    if (bound && bound.societyId === society._id) return bound._id;
-  }
   const members = await ctx.db
     .query("members")
     .withIndex("by_society", (q) => q.eq("societyId", society._id))
     .collect();
   const norm = (s?: string) => (s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-  const old = boundId ? await ctx.db.get(boundId) : undefined;
-  const oldCode = norm(old?.code);
-  const oldFlat = norm(old?.flatNo);
-  const oldWing = norm(old?.wing);
-  const oldName = norm(old?.name);
-  const byIdentity = old
-    ? members.find((m) => oldCode !== "" && norm(m.code) === oldCode) ??
-      members.find(
+  const active = members.filter((m) => m.isActive);
+  const bound = boundId ? await ctx.db.get(boundId) : undefined;
+
+  // 1) Bound row exists and is active → bind as before.
+  if (bound && bound.societyId === society._id && bound.isActive) return bound._id;
+
+  // 2) Self-heal: the bound row is missing OR stale/inactive (e.g. members
+  // were re-imported — bills now live on the new active rows while the grant
+  // still points at the old one, so the portal showed no bills). Re-point to
+  // the matching ACTIVE member: same login email on the member, then same
+  // code, then same wing+flat, then same name.
+  const byEmail = active.find((m) => norm(m.email) === email);
+  if (byEmail) return byEmail._id;
+  const oldCode = norm(bound?.code);
+  const oldFlat = norm(bound?.flatNo);
+  const oldWing = norm(bound?.wing);
+  const oldName = norm(bound?.name);
+  const byIdentity = bound
+    ? active.find((m) => oldCode !== "" && norm(m.code) === oldCode) ??
+      active.find(
         (m) => oldFlat !== "" && norm(m.flatNo) === oldFlat && norm(m.wing) === oldWing,
       ) ??
-      members.find((m) => oldName !== "" && norm(m.name) === oldName)
+      active.find((m) => oldName !== "" && norm(m.name) === oldName)
     : undefined;
-  const byEmail = members.find((m) => norm(m.email) === email);
-  return byIdentity?._id ?? byEmail?._id ?? null;
+  if (byIdentity) return byIdentity._id;
+
+  // 3) Nothing active matches — keep the original binding (an office
+  // deactivation must not silently hand the login to someone else).
+  return bound && bound.societyId === society._id ? bound._id : null;
 }
 
 /** True when the signed-in user is a software-level administrator. */

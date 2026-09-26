@@ -142,6 +142,78 @@ export const myReceipts = query({
   },
 });
 
+/**
+ * Read-only diagnosis for an empty portal: what the login is bound to, how
+ * many members are active, and where this login's bills would live. Shown on
+ * the portal Bills page when the list is empty so the office can fix the
+ * grant/binding without guesswork.
+ */
+export const debugMyBinding = query({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { email: null as string | null, grants: [], bound: null, emailMatch: null, activeMembers: 0, billsOnActiveMembers: 0 };
+    const society = await ctx.db.get(societyId);
+    if (!society) return { email: null as string | null, grants: [], bound: null, emailMatch: null, activeMembers: 0, billsOnActiveMembers: 0 };
+    const user = await ctx.db.get(userId);
+    const email = user?.email?.toLowerCase().trim() ?? null;
+    const grants = await ctx.db
+      .query("membersAccess")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const myGrants = grants
+      .filter((g) => (email && g.email === email) || g.userId === userId)
+      .map((g) => ({ role: g.role, memberId: g.memberId ?? null, grantEmail: g.email }));
+    const memberGrant = myGrants.find((g) => g.role === "member" && g.memberId);
+    const boundId = memberGrant?.memberId ?? null;
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const active = members.filter((m) => m.isActive);
+    const countBills = async (memberId: Id<"members">) =>
+      (
+        await ctx.db
+          .query("bills")
+          .withIndex("by_society_member", (q) =>
+            q.eq("societyId", societyId).eq("memberId", memberId),
+          )
+          .collect()
+      ).length;
+    const boundRow = boundId ? (members.find((m) => m._id === boundId) ?? null) : null;
+    const bound = boundRow
+      ? {
+          name: boundRow.name,
+          flat: [boundRow.wing, boundRow.flatNo].filter(Boolean).join("-") || boundRow.code,
+          isActive: boundRow.isActive,
+          bills: await countBills(boundRow._id),
+        }
+      : boundId
+        ? { name: null, flat: null, isActive: false, bills: 0 }
+        : null;
+    const emailMatchRow = email
+      ? (active.find((m) => (m.email ?? "").toLowerCase().trim() === email) ?? null)
+      : null;
+    const emailMatch = emailMatchRow
+      ? {
+          name: emailMatchRow.name,
+          flat: [emailMatchRow.wing, emailMatchRow.flatNo].filter(Boolean).join("-") || emailMatchRow.code,
+          bills: await countBills(emailMatchRow._id),
+        }
+      : null;
+    let billsOnActiveMembers = 0;
+    for (const m of active) billsOnActiveMembers += await countBills(m._id);
+    return {
+      email,
+      grants: myGrants,
+      bound,
+      emailMatch,
+      activeMembers: active.length,
+      billsOnActiveMembers,
+    };
+  },
+});
+
 /** My ledger — same rows the society's Member Ledger shows, but only mine. */
 export const myLedger = query({
   args: {

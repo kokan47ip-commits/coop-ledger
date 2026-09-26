@@ -32,6 +32,12 @@ export default function PortalBills() {
     api.memberPortal.myBills,
     societyId ? { societyId } : "skip",
   ) as Bill[] | null | undefined;
+  // Self-diagnosis when the list comes back empty — shows what the login is
+  // actually bound to and whether bills exist elsewhere in the register.
+  const debug = useQuery(
+    api.memberPortal.debugMyBinding,
+    societyId && bills !== null && (bills ?? []).length === 0 ? { societyId } : "skip",
+  );
 
   const buildData = (bill: Bill): LegacyBillData => {
     const isArrearsLine = (name: string) =>
@@ -191,11 +197,26 @@ export default function PortalBills() {
             ))}
             {bills.length === 0 && (
               <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="py-8 text-center text-muted-foreground"
-                >
-                  No bills have been raised for your flat yet.
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <div className="space-y-1">
+                    <p>No bills have been raised for your flat yet.</p>
+                    {debug && (
+                      <p className="text-xs">
+                        {debug.email
+                          ? `Signed in as ${debug.email}.`
+                          : "Not signed in with an email."}{" "}
+                        {debug.bound
+                          ? `Linked to flat ${debug.bound.flat ?? "?"} (${debug.bound.isActive ? "active" : "inactive member row"}) which has ${debug.bound.bills} bill(s).`
+                          : "No flat is linked to this login."}
+                        {debug.emailMatch &&
+                          ` A member row with this email (${debug.emailMatch.flat}) holds ${debug.emailMatch.bills} bill(s).`}
+                        {" "}
+                        {debug.billsOnActiveMembers > 0
+                          ? `${debug.billsOnActiveMembers} bill(s) exist across ${debug.activeMembers} active member(s) — ask the office to link your login to the right flat.`
+                          : `No bills exist on any of the ${debug.activeMembers} active member(s) — generate bills first.`}
+                      </p>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             )}
