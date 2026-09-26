@@ -406,8 +406,10 @@ export const submitPayment = mutation({
     reference: v.optional(v.string()),
     narration: v.optional(v.string()),
     allocations: v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
+    /** Advance: pay without selecting bills — credited to the member's ledger. */
+    amount: v.optional(v.number()),
   },
-  handler: async (ctx, { societyId, date, bankCashAccountId, mode, reference, narration, allocations }) => {
+  handler: async (ctx, { societyId, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
     const bind = await portalBinding(ctx, societyId);
     if (!bind) {
       throw new Error(
@@ -453,8 +455,20 @@ export const submitPayment = mutation({
       seen.add(a.billId);
       total += a.amount;
     }
+    // Advance payment: no bill selections needed — the full amount is
+    // credited to the member's ledger (receivable) and settles future bills.
+    if (amount !== undefined && amount > 0) {
+      if (amount + 0.005 < total) {
+        throw new Error(
+          "The allocated bill amounts exceed the payment amount — reduce the allocations.",
+        );
+      }
+      total = Math.round(amount * 100) / 100;
+    }
     if (total <= 0) {
-      throw new Error("Enter at least one bill allocation for the payment.");
+      throw new Error(
+        "Enter an amount to pay — with no bills selected the payment is kept as an advance.",
+      );
     }
 
     // Post the receipt: Dr Bank/Cash, Cr Members Receivable (same posting the
@@ -481,7 +495,9 @@ export const submitPayment = mutation({
       reference,
       narration:
         narration ??
-        `Online payment by member for ${allocations.length} bill(s)`,
+        (allocations.length > 0
+          ? `Online payment by member for ${allocations.length} bill(s)`
+          : "Advance payment by member"),
       total,
       lines: [
         { accountId: bankCashAccountId, debit: total, credit: 0 },

@@ -87,6 +87,11 @@ export default function PortalPay() {
     return b ? a.amount > b.balance + 0.005 : true;
   });
 
+  // Advance: pay an amount without selecting any bills — credited to the
+  // member's ledger and settled against future bills by the office.
+  const [advance, setAdvance] = useState("");
+  const advanceNum = Number(advance) || 0;
+
   /** Why the submit button is disabled — shown next to it so it's never a mystery. */
   const blockedReason: string | null = booksClosed
     ? "The society's current books period does not include today's date — payments are paused. Please contact the society office."
@@ -94,8 +99,8 @@ export default function PortalPay() {
       ? "No cash/bank account is available for payments yet — please contact the society office."
       : !accountId
         ? "Select the cash/bank account you are paying into."
-        : parsedAllocs.length === 0
-          ? "Tick a bill and enter the amount you want to pay."
+        : parsedAllocs.length === 0 && advanceNum <= 0
+          ? "Tick a bill and enter the amount to pay — or enter an advance amount below."
           : overAllocated
             ? "One of the amounts is more than the bill balance — reduce it to continue."
             : null;
@@ -112,11 +117,15 @@ export default function PortalPay() {
         reference: reference.trim() || undefined,
         narration: narration.trim() || undefined,
         allocations: parsedAllocs,
+        amount: parsedAllocs.length === 0 ? advanceNum : undefined,
       });
       toast.success(
-        `Payment recorded — receipt ${res.voucherNo} for ${formatMoney(res.total)}.`,
+        parsedAllocs.length === 0
+          ? `Advance payment recorded — receipt ${res.voucherNo} for ${formatMoney(res.total)}.`
+          : `Payment recorded — receipt ${res.voucherNo} for ${formatMoney(res.total)}.`,
       );
       setAllocs({});
+      setAdvance("");
       setReference("");
       setNarration("");
     } catch (err) {
@@ -211,6 +220,35 @@ export default function PortalPay() {
           />
         </div>
       </div>
+
+      {/* Advance payment — when there are no dues (or paying ahead of them) */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">No dues right now? Pay in advance</CardTitle>
+          <CardDescription>
+            The amount is credited to your flat's ledger and adjusted against
+            future maintenance bills by the society office.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <div className="w-48">
+            <Label className="text-xs text-muted-foreground">Advance amount (₹)</Label>
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={advance}
+              onChange={(e) => setAdvance(e.target.value.replace(/[^0-9.]/g, ""))}
+              placeholder="0.00"
+              className="mt-1 text-right tabular-nums"
+            />
+          </div>
+          {parsedAllocs.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Bill selections below take priority — clear them to pay the advance amount instead.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="rounded-lg border">
         <Table>

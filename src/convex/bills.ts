@@ -59,6 +59,9 @@ export const generate = mutation({
     interestFixed: v.optional(v.number()),
     /** Income account the interest posts to (default: Interest Income). */
     interestAccountId: v.optional(v.id("accounts")),
+    /** Replace-mode: recreate this period's bills (applies new rates/amounts).
+     * Bills with receipts recorded against them are kept and NOT recreated. */
+    replace: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -73,6 +76,7 @@ export const generate = mutation({
       interestRate = 0,
       interestFixed = 0,
       interestAccountId,
+      replace = false,
     },
   ) => {
     const society = await requireSocietyWrite(ctx, societyId);
@@ -112,6 +116,32 @@ export const generate = mutation({
           "No income account found to post interest to — add one in Chart of Accounts (e.g. Interest Income).",
         );
     }
+    // Replace-mode: drop the period's bills that carry no receipts so new
+    // rates/interest take effect, keeping at most one receipted bill per
+    // member (payments stay pointed at a live bill of the same member+period).
+    if (replace) {
+      const vouchers = await ctx.db
+        .query("vouchers")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect();
+      const allocated = new Set<Id<"bills">>();
+      for (const vch of vouchers) {
+        for (const a of vch.allocations ?? []) allocated.add(a.billId);
+      }
+      const allBills = await ctx.db
+        .query("bills")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect();
+      const byMember = new Map<string, Doc<"bills">[]>();
+      for (const b of allBills.filter((x) => x.period === period)) {
+        byMember.set(b.memberId, [...(byMember.get(b.memberId) ?? []), b]);
+      }
+      for (const [, list] of byMember) {
+        const keep = list.filter((b) => allocated.has(b._id) || b.paidAmount > 0);
+        for (const b of keep.slice(1)) await ctx.db.delete(b._id);
+        for (const b of list.filter((x) => !keep.includes(x))) await ctx.db.delete(b._id);
+      }
+    }
     const allTariffs = await ctx.db
       .query("tariffs")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -146,6 +176,8 @@ export const generate = mutation({
           q.eq("societyId", societyId).eq("memberId", memberId),
         )
         .collect();
+      // Without replace-mode a second generation for the same period is a
+      // no-op; with replace-mode unpaid bills were already deleted above.
       if (existing.some((b) => b.period === period)) {
         skipped++;
         continue;
@@ -262,6 +294,7 @@ export const removeByPeriod = mutation({
       .collect();
     const inPeriod = bills.filter((b) => b.period === period);
     if (inPeriod.length === 0) return { deleted: 0, blocked: 0 };
+    const inPeriodIds = new Set(inPeriod.map((b) => b._id));
     const vouchers = await ctx.db
       .query("vouchers")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -270,15 +303,19 @@ export const removeByPeriod = mutation({
     for (const vch of vouchers) {
       for (const a of vch.allocations ?? []) allocated.add(a.billId);
     }
+    // Detach allocations from receipts instead of refusing to delete: the
+    // receipt remains as a credit (advance) on the member's ledger.
     let deleted = 0;
     let blocked = 0;
     for (const b of inPeriod) {
-      if (allocated.has(b._id) || b.paidAmount > 0) {
-        blocked++;
-        continue;
-      }
       await ctx.db.delete(b._id);
       deleted++;
+    }
+    for (const vch of vouchers) {
+      const allocs = (vch.allocations ?? []).filter((a) => !inPeriodIds.has(a.billId));
+      if (allocs.length !== (vch.allocations ?? []).length) {
+        await ctx.db.patch(vch._id, { allocations: allocs.length > 0 ? allocs : undefined });
+      }
     }
     return { deleted, blocked };
   },
@@ -346,12 +383,23 @@ export const remove = mutation({
     const bill = await ctx.db.get(id);
     if (!bill || bill.societyId !== societyId)
       throw new Error("Bill not found.");
+    // Bills and receipts are separate entities: the bill is the debit, the
+    // receipt the credit on the member's ledger. Deleting a bill only removes
+    // the debit — the receipt stays as a legitimate ledger credit (an advance
+    // when nothing else is due). Paid/partial status is a settlement view,
+    // not an accounting fact.
     const vouchers = await ctx.db
       .query("vouchers")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    if (vouchers.some((v) => (v.allocations ?? []).some((a) => a.billId === id)))
-      throw new Error("Bill has receipts allocated; remove them first.");
+    for (const vch of vouchers) {
+      const allocs = (vch.allocations ?? []).filter((a) => a.billId !== id);
+      if (allocs.length !== (vch.allocations ?? []).length) {
+        await ctx.db.patch(vch._id, {
+          allocations: allocs.length > 0 ? allocs : undefined,
+        });
+      }
+    }
     await ctx.db.delete(id);
   },
 });

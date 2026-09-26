@@ -167,8 +167,12 @@ export default function MemberLedger() {
         i = j;
       }
     }
-    const totDr = items.reduce((s, r) => s + r.debit, 0);
-    const totCr = items.reduce((s, r) => s + r.credit, 0);
+    // Totals include the opening balance row so Dr/Cr columns foot correctly
+    // with the printed statement format ("To/By Opening balance old").
+    const openingDr = mem.openingBalance < 0 ? -mem.openingBalance : 0;
+    const openingCr = mem.openingBalance > 0 ? mem.openingBalance : 0;
+    const totDr = openingDr + items.reduce((s, r) => s + r.debit, 0);
+    const totCr = openingCr + items.reduce((s, r) => s + r.credit, 0);
     const closing = rows.length > 0 ? rows[rows.length - 1].balance : mem.openingBalance;
     return { member: mem, title: `${mem.code}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing };
   };
@@ -454,7 +458,7 @@ export default function MemberLedger() {
                         {s.member.openingBalance !== 0 && (
                           <tr>
                             <td colSpan={2} className="py-1 pr-2">
-                              {s.member.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old"}
+                              {s.member.openingBalance > 0 ? "To Opening balance old" : "By Opening balance old"}
                             </td>
                             {isDetail && headNames.map((n) => <td key={n} />)}
                             {!isDetail && <td />}

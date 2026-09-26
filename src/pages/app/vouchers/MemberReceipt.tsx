@@ -160,19 +160,20 @@ export default function MemberReceipt() {
       return;
     }
     const bankId = form.bankCashAccountId || bankAccounts[0]?._id;
-    // With no outstanding bills there are no allocations — send explicit
-    // balanced lines (Dr Bank/Cash, Cr Members Receivable) so the backend
-    // accepts an advance/against-account receipt.
-    const noAllocLines =
-      previewAllocation.rows.length === 0 && bankId && receivableAccount
+    // Explicit balanced lines for the FULL amount received: Dr Bank/Cash,
+    // Cr Members Receivable. Allocations settle bills; anything above the
+    // outstanding bills (or a receipt with no dues at all) stays on the
+    // member's ledger as an advance credit — nothing is silently dropped.
+    const fullLines =
+      bankId && receivableAccount
         ? [
             { accountId: bankId as Id<"accounts">, debit: amountNum, credit: 0 },
             { accountId: receivableAccount._id, debit: 0, credit: amountNum },
           ]
         : [];
-    if (previewAllocation.rows.length === 0 && !noAllocLines.length) {
+    if (fullLines.length === 0) {
       toast.error(
-        "No outstanding bills and no Members Receivable / bank-cash account found — add them in Chart of Accounts first.",
+        "No Members Receivable / bank-cash account found — add them in Chart of Accounts first.",
       );
       return;
     }
@@ -186,11 +187,13 @@ export default function MemberReceipt() {
         bankCashAccountId: bankId as never,
         reference: composeReference(),
         narration: composeNarration(),
-        lines: noAllocLines,
+        lines: fullLines,
         allocations: previewAllocation.rows.map((r) => ({ billId: r.bill._id, amount: r.take })),
       });
       toast.success(
-        `Receipt saved${previewAllocation.unallocated > 0 ? ` · ${formatUnallocated(previewAllocation.unallocated)} kept as advance` : ""}`,
+        previewAllocation.unallocated > 0
+          ? `Receipt saved · ${formatUnallocated(previewAllocation.unallocated)} kept as advance on the member's ledger`
+          : "Receipt saved",
       );
       setForm({
         ...form,

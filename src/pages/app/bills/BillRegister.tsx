@@ -121,6 +121,9 @@ export default function BillRegister() {
   const [interestRate, setInterestRate] = useState("1.5");
   const [interestFixed, setInterestFixed] = useState("100");
   const [interestAccountId, setInterestAccountId] = useState("");
+  // Replace existing bills of the period (applies new rates/amounts/interest).
+  const [replaceBills, setReplaceBills] = useState(false);
+  const [showInterestCol, setShowInterestCol] = useState(false);
   const incomeAccounts = (accounts ?? []).filter((a) => a.type === "income");
   const defaultInterestAccountId =
     incomeAccounts.find((a) => a.name.toLowerCase().includes("interest"))?._id ??
@@ -183,6 +186,11 @@ export default function BillRegister() {
    *  — …") is reported in the arrears columns, not hidden in the Bill amount. */
   const billCharges = (b: Bill) =>
     (b.lines ?? []).filter((l) => !isArrearsLine(l.name)).reduce((s, l) => s + l.amount, 0);
+  /** Interest / late-fee line on the bill, if any. */
+  const billInterest = (b: Bill) =>
+    (b.lines ?? [])
+      .filter((l) => /^(interest|late fee)/i.test(l.name))
+      .reduce((s, l) => s + l.amount, 0);
   /** Opening balance carried into this bill at generation (first bill only). */
   const billCarried = (b: Bill) =>
     (b.lines ?? []).filter((l) => isArrearsLine(l.name)).reduce((s, l) => s + l.amount, 0);
@@ -396,7 +404,9 @@ export default function BillRegister() {
         interestAccountId: (interestAccountId || defaultInterestAccountId || undefined) as
           | Id<"accounts">
           | undefined,
+        replace: replaceBills,
       });
+      if (interestMode !== "none") setShowInterestCol(true);
       toast.success(
         `Generated ${res.created} bill(s)` +
           (res.skipped > 0 ? ` · ${res.skipped} skipped (already exist or inactive)` : ""),
@@ -579,7 +589,7 @@ export default function BillRegister() {
     const label = formatPeriod(periodFilter);
     if (
       !confirm(
-        `Delete ALL bills for ${label}? Bills that already have receipts recorded against them are kept. This cannot be undone.`,
+        `Delete ALL bills for ${label}? The bills disappear from registers and the member portal; receipts already recorded stay on the members' ledgers as credits (advances). This cannot be undone.`,
       )
     )
       return;
@@ -588,13 +598,10 @@ export default function BillRegister() {
       const res = await deleteMonth({ societyId, period: periodFilter });
       if (res.deleted === 0 && res.blocked === 0) {
         toast.info(`No bills exist for ${label}.`);
-      } else if (res.blocked > 0) {
-        toast.warning(
-          `Deleted ${res.deleted} bill(s) — ${res.blocked} kept because receipts are recorded against them. Delete those receipts first if needed.`,
-          { duration: 9000 },
-        );
       } else {
-        toast.success(`Deleted ${res.deleted} bill(s) for ${label}.`);
+        toast.success(
+          `Deleted ${res.deleted} bill(s) for ${label}. Existing receipts remain on the members' ledgers.`,
+        );
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete bills");
@@ -708,9 +715,13 @@ export default function BillRegister() {
           </div>
           <div className="flex items-end">
             <Button onClick={doGenerate} disabled={generating || (tariffs ?? []).filter((t) => t.isActive).length === 0} className="w-full rounded-lg">
-              {generating ? "Generating…" : "Generate for all active members"}
+              {generating ? "Generating…" : replaceBills ? "Regenerate (replaces existing)" : "Generate for all active members"}
             </Button>
           </div>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground sm:col-span-2 lg:col-span-5">
+            <Checkbox checked={replaceBills} onCheckedChange={(v) => setReplaceBills(v === true)} />
+            Replace existing bills for the period (applies new amounts, heads and interest — bills with receipts are kept)
+          </label>
 
           {/* Interest / late fee — charged on the outstanding balance at generation */}
           <div className="grid gap-3 rounded-md bg-muted/40 p-3 sm:col-span-2 lg:col-span-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -815,6 +826,7 @@ export default function BillRegister() {
                 <TableHead className="text-right">Principal Arr.</TableHead>
                 <TableHead className="text-right">Interest Arr.</TableHead>
                 <TableHead className="text-right">Total Arr.</TableHead>
+                {showInterestCol && <TableHead className="text-right">Interest</TableHead>}
                 <TableHead className="bg-emerald-500/10 text-right">Total Due</TableHead>
                 {tariffColumns.map((t) => (
                   <TableHead key={t._id} className="text-right">
@@ -850,6 +862,9 @@ export default function BillRegister() {
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(0)}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
+                    {showInterestCol && (
+                      <TableCell className={rightAlign}>{formatMoney(billInterest(b))}</TableCell>
+                    )}
                     <TableCell className={`bg-emerald-500/10 font-medium ${rightAlign}`}>
                       {formatMoney(rowTotal(b, principal))}
                     </TableCell>                        {tariffColumns.map((t) => {

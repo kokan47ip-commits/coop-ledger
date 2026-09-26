@@ -82,32 +82,47 @@ export async function societyMemberBinding(
   const active = members.filter((m) => m.isActive);
   const bound = boundId ? await ctx.db.get(boundId) : undefined;
 
-  // 1) Bound row exists and is active → bind as before.
-  if (bound && bound.societyId === society._id && bound.isActive) return bound._id;
-
-  // 2) Self-heal: the bound row is missing OR stale/inactive (e.g. members
-  // were re-imported — bills now live on the new active rows while the grant
-  // still points at the old one, so the portal showed no bills). Re-point to
-  // the matching ACTIVE member: same login email on the member, then same
-  // code, then same wing+flat, then same name.
-  const byEmail = active.find((m) => norm(m.email) === email);
-  if (byEmail) return byEmail._id;
+  // Candidate rows in preference order: the bound row, the active member
+  // carrying the login email, then identity matches (re-imported members).
   const oldCode = norm(bound?.code);
   const oldFlat = norm(bound?.flatNo);
   const oldWing = norm(bound?.wing);
   const oldName = norm(bound?.name);
-  const byIdentity = bound
-    ? active.find((m) => oldCode !== "" && norm(m.code) === oldCode) ??
+  const candidates: Doc<"members">[] = [];
+  const push = (m?: Doc<"members"> | null) => {
+    if (m && m.societyId === society._id && !candidates.some((c) => c._id === m._id))
+      candidates.push(m);
+  };
+  push(bound);
+  push(active.find((m) => norm(m.email) === email));
+  if (bound) {
+    push(active.find((m) => oldCode !== "" && norm(m.code) === oldCode));
+    push(
       active.find(
         (m) => oldFlat !== "" && norm(m.flatNo) === oldFlat && norm(m.wing) === oldWing,
-      ) ??
-      active.find((m) => oldName !== "" && norm(m.name) === oldName)
-    : undefined;
-  if (byIdentity) return byIdentity._id;
+      ),
+    );
+    push(active.find((m) => oldName !== "" && norm(m.name) === oldName));
+  }
 
-  // 3) Nothing active matches — keep the original binding (an office
-  // deactivation must not silently hand the login to someone else).
-  return bound && bound.societyId === society._id ? bound._id : null;
+  // Bills decide: the right row is the one the register actually billed.
+  const billCount = async (m: Doc<"members">) =>
+    (
+      await ctx.db
+        .query("bills")
+        .withIndex("by_society_member", (q) =>
+          q.eq("societyId", society._id).eq("memberId", m._id),
+        )
+        .collect()
+    ).length;
+  for (const c of candidates) {
+    if (c.isActive && (await billCount(c)) > 0) return c._id;
+  }
+  // No bills anywhere (or none generated yet): keep the bound row when it is
+  // active, else the best active candidate, else the original binding.
+  const boundActive = bound && bound.societyId === society._id && bound.isActive;
+  if (boundActive) return bound!._id;
+  return candidates.find((c) => c.isActive)?._id ?? (bound ? bound._id : null);
 }
 
 /** True when the signed-in user is a software-level administrator. */

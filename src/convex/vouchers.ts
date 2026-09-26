@@ -189,7 +189,9 @@ export const create = mutation({
     const activeLines = lines.filter((l) => l.debit !== 0 || l.credit !== 0);
 
     // Member receipts auto-post Dr Bank/Cash, Cr Receivable; the amount comes
-    // from the bill allocations when no manual lines are provided.
+    // from the bill allocations when no manual lines are provided. An amount
+    // ABOVE the allocations (or no allocations at all) is kept as an advance —
+    // the full receipt is always credited to the member's ledger.
     if (type === "member_receipt" && activeLines.length === 0) {
       const allocTotal = (allocations ?? []).reduce((s, a) => s + a.amount, 0);
       if (allocTotal <= 0)
@@ -216,6 +218,8 @@ export const create = mutation({
       throw new Error("Debits and credits must balance.");
 
     if (type === "member_receipt" && args.memberId) {
+      // The receipt's total is what was received (the debit side); only the
+      // allocated part settles bills — the remainder is an advance credit.
       return await insertMemberReceipt(ctx, societyId, {
         date: args.date,
         memberId: args.memberId,
