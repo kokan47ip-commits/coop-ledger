@@ -182,4 +182,19 @@
     background-clip: text;
     color: transparent;
   }
+
+  /*
+   * Keep a wide table's horizontal scrollbar reachable at the bottom of the
+   * VIEWPORT instead of below the last row (previously you had to scroll the
+   * whole page down to reach it). Capping the shared table container's height
+   * makes the container itself scroll vertically; its own horizontal scrollbar
+   * then stays pinned to the visible bottom edge. Long pages scroll within the
+   * table frame — unchanged: sticky first column, hover, and row striping.
+   */
+  [data-slot="table-container"] {
+    max-height: max(60vh, calc(100vh - 320px));
+    overflow-y: auto;
+    /* Reserve room so the horizontal bar is never covered by the vertical one. */
+    scrollbar-gutter: stable;
+  }
 }
