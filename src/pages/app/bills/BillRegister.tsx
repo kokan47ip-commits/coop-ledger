@@ -55,9 +55,10 @@ function periodLong(period: string): string {
   return `${MONTHS_FULL[Number(m) - 1] ?? m} ${y}`;
 }
 
-/** "Arrears — opening balance" style line carrying the opening receivable. */
+/** Non-charge lines: carried opening balance (arrears or credit/advance). */
 function isArrearsLine(name: string): boolean {
-  return name.toLowerCase().startsWith("arrears");
+  const n = name.toLowerCase();
+  return n.startsWith("arrears") || n.startsWith("credit balance");
 }
 
 export default function BillRegister() {
@@ -123,7 +124,8 @@ export default function BillRegister() {
   const [interestAccountId, setInterestAccountId] = useState("");
   // Replace existing bills of the period (applies new rates/amounts/interest).
   const [replaceBills, setReplaceBills] = useState(false);
-  const [showInterestCol, setShowInterestCol] = useState(false);
+  // Interest column is always available — it shows 0.00 for bills with none.
+  const [showInterestCol, setShowInterestCol] = useState(true);
   const incomeAccounts = (accounts ?? []).filter((a) => a.type === "income");
   const defaultInterestAccountId =
     incomeAccounts.find((a) => a.name.toLowerCase().includes("interest"))?._id ??

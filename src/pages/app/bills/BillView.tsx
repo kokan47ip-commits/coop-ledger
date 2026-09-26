@@ -30,7 +30,11 @@ export default function BillView() {
 
   // Arrears: earlier-period unpaid balances plus any carried opening line on
   // this bill. Current charge lines are everything else.
-  const isArrearsLine = (name: string) => name.toLowerCase().startsWith("arrears");
+  // Non-charge lines: carried opening balance (arrears or credit/advance).
+  const isArrearsLine = (name: string) => {
+    const n = name.toLowerCase();
+    return n.startsWith("arrears") || n.startsWith("credit balance");
+  };
   const arrears =
     (bills ?? [])
       .filter((b) => b.memberId === bill.memberId && b.period < bill.period)

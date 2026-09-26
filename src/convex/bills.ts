@@ -206,12 +206,15 @@ export const generate = mutation({
         continue;
       }
       // Interest / late fee on the member's outstanding balance (unpaid
-      // earlier bills) at generation time. A percent rate is per month —
-      // bills are monthly, so 1.5% ≈ 18% per annum. Charged only when the
-      // member is actually in arrears; 0 outstanding → no charge.
-      const outstandingBefore = existing
-        .filter((b) => b.period < period)
-        .reduce((s, b) => s + (b.total - b.paidAmount), 0);
+      // earlier bills, minus advance credits) at generation time. A percent
+      // rate is per month — bills are monthly, so 1.5% ≈ 18% per annum.
+      // Charged only when the member is actually in arrears; a net advance
+      // (credit balance) is never charged interest.
+      // Net outstanding = unpaid earlier bills + opening balance (a credit
+      // opening REDUCES the dues; only a net positive balance is charged).
+      const outstandingBefore =
+        existing.filter((b) => b.period < period).reduce((s, b) => s + (b.total - b.paidAmount), 0) +
+        member.openingBalance;
       const interestAmount =
         outstandingBefore > 0 && interestAccount
           ? interestMode === "percent" && interestRate > 0
@@ -236,24 +239,31 @@ export const generate = mutation({
               },
             ]
           : lines;
-      // Opening receivable carried as a separate arrears line on the member's
-      // first bill — it appears on the printed bill and flows into the books
-      // (Dr receivable), while charge-head income stays untouched.
+      // Opening balance carried as a separate arrears line on the member's
+      // first bill — positive (dues) appears on the printed bill and flows
+      // into the books (Dr receivable). A NEGATIVE opening (advance/credit)
+      // is carried the same way: the printed bill shows it as a deducted
+      // credit balance, and the books credit the receivable (advance) so the
+      // receivable total stays equal to the sum of member ledgers.
       const hasEarlierBills = existing.some(
         (b) => b.period < period || (b.period === period && b.issueDate <= issueDate),
       );
       const openingCarried =
-        member.openingBalance > 0 && !hasEarlierBills && receivableId
+        member.openingBalance !== 0 && !hasEarlierBills && receivableId
           ? member.openingBalance
           : 0;
       const total = allLines.reduce((s, l) => s + l.amount, 0) + openingCarried;
       const insertLines =
-        openingCarried > 0 && receivableId
+        openingCarried !== 0 && receivableId
           ? [
               {
                 tariffId: undefined,
                 accountId: receivableId,
-                name: "Arrears — opening balance",
+                name:
+                  openingCarried > 0
+                    ? "Arrears — opening balance"
+                    : "Credit balance — advance adjusted",
+                // Negative amount = deduction on the printed bill.
                 amount: openingCarried,
               },
               ...allLines,
@@ -346,9 +356,12 @@ export const updateLines = mutation({
     const bill = await ctx.db.get(id);
     if (!bill || bill.societyId !== societyId)
       throw new Error("Bill not found.");
-    // Arrears is computed from earlier bills at print/report time; the grid
-    // only edits current-period charge heads, so keep any arrears line as-is.
-    const isArrearsLine = (name: string) => name.toLowerCase().startsWith("arrears");
+    // Arrears/credit-balance lines are computed at generation/print time; the
+    // grid only edits current-period charge heads, so keep them as-is.
+    const isArrearsLine = (name: string) => {
+      const n = name.toLowerCase();
+      return n.startsWith("arrears") || n.startsWith("credit balance");
+    };
     const arrearsLines = (bill.lines ?? []).filter((l) => isArrearsLine(l.name));
     const chargeLines = lines.filter((l) => !isArrearsLine(l.name) && l.amount !== 0);
     const total =
