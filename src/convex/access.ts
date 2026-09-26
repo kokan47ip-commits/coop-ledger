@@ -433,6 +433,32 @@ export const bindPendingGrants = mutation({
       await ctx.db.patch(userId, { softwareAdmin: true });
     }
 
+    // Recovery guarantee — runs on every software-admin login. A society
+    // whose owner identity is unusable must never strand its books:
+    //  • the owner user row no longer exists (retired guest session), or
+    //  • the owner is an anonymous guest whose data must follow the admin
+    //    account to any PC/mobile/tablet (the device claim-code path fails
+    //    silently across devices).
+    // Adopting here re-links the books to a live, recoverable account.
+    if (existingAdmins.length === 0 || user?.softwareAdmin === true) {
+      const users = await ctx.db.query("users").collect();
+      const userIds = new Set(users.map((u) => u._id));
+      const orphans = (await ctx.db.query("societies").collect()).filter(
+        (s) =>
+          s.createdBy !== userId &&
+          s.createdBy !== undefined &&
+          (!userIds.has(s.createdBy) ||
+            users.find((u) => u._id === s.createdBy)?.isAnonymous === true),
+      );
+      for (const s of orphans) {
+        await ctx.db.patch(s._id, {
+          createdBy: userId,
+          claimCode: undefined,
+          claimEmail: undefined,
+        });
+      }
+    }
+
     // Cross-device data guarantee: any societies this user created while in
     // guest mode — on this or any other device — are handed over to the real
     // account here on the server, so nothing is ever stranded on one machine.
