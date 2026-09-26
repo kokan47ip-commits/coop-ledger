@@ -116,6 +116,17 @@ export default function BillRegister() {
   // Arrears as-on date: the cutoff for carrying forward earlier unpaid bills.
   const [arrearsDate, setArrearsDate] = useState(effectiveFyPeriod(society).from);
   const [generating, setGenerating] = useState(false);
+  // Interest / late fee on the outstanding balance, charged at generation.
+  const [interestMode, setInterestMode] = useState<"none" | "percent" | "fixed">("none");
+  const [interestRate, setInterestRate] = useState("1.5");
+  const [interestFixed, setInterestFixed] = useState("100");
+  const [interestAccountId, setInterestAccountId] = useState("");
+  const incomeAccounts = (accounts ?? []).filter((a) => a.type === "income");
+  const defaultInterestAccountId =
+    incomeAccounts.find((a) => a.name.toLowerCase().includes("interest"))?._id ??
+    incomeAccounts.slice().sort((a, b) => a.code.localeCompare(b.code))[0]?._id;
+  const deleteMonth = useMutation(api.bills.removeByPeriod);
+  const [deletingMonth, setDeletingMonth] = useState(false);
 
   const memberOf = (id: Id<"members">) => members?.find((m) => m._id === id);
   const unitNo = (m?: Member) => m?.flatNo || m?.code || "—";
@@ -379,6 +390,12 @@ export default function BillRegister() {
         dueDate,
         arrearsDate: arrearsDate || undefined,
         memberIds: activeMembers.map((m) => m._id),
+        interestMode,
+        interestRate: interestMode === "percent" ? Number(interestRate) || 0 : 0,
+        interestFixed: interestMode === "fixed" ? Number(interestFixed) || 0 : 0,
+        interestAccountId: (interestAccountId || defaultInterestAccountId || undefined) as
+          | Id<"accounts">
+          | undefined,
       });
       toast.success(
         `Generated ${res.created} bill(s)` +
@@ -557,6 +574,35 @@ export default function BillRegister() {
     }
   };
 
+  const doDeleteMonth = async () => {
+    if (!societyId) return;
+    const label = formatPeriod(periodFilter);
+    if (
+      !confirm(
+        `Delete ALL bills for ${label}? Bills that already have receipts recorded against them are kept. This cannot be undone.`,
+      )
+    )
+      return;
+    setDeletingMonth(true);
+    try {
+      const res = await deleteMonth({ societyId, period: periodFilter });
+      if (res.deleted === 0 && res.blocked === 0) {
+        toast.info(`No bills exist for ${label}.`);
+      } else if (res.blocked > 0) {
+        toast.warning(
+          `Deleted ${res.deleted} bill(s) — ${res.blocked} kept because receipts are recorded against them. Delete those receipts first if needed.`,
+          { duration: 9000 },
+        );
+      } else {
+        toast.success(`Deleted ${res.deleted} bill(s) for ${label}.`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete bills");
+    } finally {
+      setDeletingMonth(false);
+    }
+  };
+
   const receivableMissing =
     society && !society.receivableAccountId &&
     (accounts ?? []).some((a) => a.kind === "receivable");
@@ -665,6 +711,54 @@ export default function BillRegister() {
               {generating ? "Generating…" : "Generate for all active members"}
             </Button>
           </div>
+
+          {/* Interest / late fee — charged on the outstanding balance at generation */}
+          <div className="grid gap-3 rounded-md bg-muted/40 p-3 sm:col-span-2 lg:col-span-5 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-2">
+              <Label htmlFor="b-intmode">Interest / late fee</Label>
+              <Select value={interestMode} onValueChange={(v) => setInterestMode(v as typeof interestMode)}>
+                <SelectTrigger id="b-intmode"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="percent">Percent per month</SelectItem>
+                  <SelectItem value="fixed">Fixed amount</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {interestMode === "percent" && (
+              <div className="space-y-2">
+                <Label htmlFor="b-intrate">Rate (% per month)</Label>
+                <Input id="b-intrate" type="number" step="0.01" min="0" value={interestRate}
+                  onChange={(e) => setInterestRate(e.target.value)} />
+              </div>
+            )}
+            {interestMode === "fixed" && (
+              <div className="space-y-2">
+                <Label htmlFor="b-intfix">Fixed amount (₹)</Label>
+                <Input id="b-intfix" type="number" step="0.01" min="0" value={interestFixed}
+                  onChange={(e) => setInterestFixed(e.target.value)} />
+              </div>
+            )}
+            {interestMode !== "none" && (
+              <div className="space-y-2">
+                <Label>Post interest to</Label>
+                <Select value={interestAccountId || defaultInterestAccountId || undefined}
+                  onValueChange={setInterestAccountId}>
+                  <SelectTrigger><SelectValue placeholder="Interest Income" /></SelectTrigger>
+                  <SelectContent>
+                    {incomeAccounts.map((a) => (
+                      <SelectItem key={a._id} value={a._id}>{a.code} — {a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {interestMode !== "none" && (
+              <p className="self-center text-[11px] leading-4 text-muted-foreground sm:col-span-2 lg:col-span-1">
+                Charged only on members with unpaid earlier bills. 1.5% p.m. ≈ 18% p.a.
+              </p>
+            )}
+          </div>
         </div>
       </div>
       ) : null}
@@ -675,6 +769,17 @@ export default function BillRegister() {
           {hasEdits && <span className="ml-2 font-medium text-foreground">· {Object.keys(edits).length} row(s) edited — Save to apply</span>}
         </p>
         <div className="flex items-center gap-2">
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              disabled={deletingMonth || rows.length === 0}
+              onClick={doDeleteMonth}
+            >
+              <Trash2 className="size-4" /> {deletingMonth ? "Deleting…" : "Delete month"}
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
             <Download className="size-4" /> PDF
           </Button>

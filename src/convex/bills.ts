@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { assertInFy, nextNumber, pad, requireSociety, requireSocietyWrite } from "./lib";
 
@@ -48,8 +49,32 @@ export const generate = mutation({
     /** As-on date for computing the arrears carried into these bills. */
     arrearsDate: v.optional(v.string()),
     memberIds: v.array(v.id("members")),
+    /** Interest / late fee on the outstanding balance at generation. */
+    interestMode: v.optional(
+      v.union(v.literal("none"), v.literal("percent"), v.literal("fixed")),
+    ),
+    /** Percent mode: rate per month applied to the outstanding balance. */
+    interestRate: v.optional(v.number()),
+    /** Fixed mode: flat amount charged per bill cycle when in arrears. */
+    interestFixed: v.optional(v.number()),
+    /** Income account the interest posts to (default: Interest Income). */
+    interestAccountId: v.optional(v.id("accounts")),
   },
-  handler: async (ctx, { societyId, period, issueDate, dueDate, arrearsDate, memberIds }) => {
+  handler: async (
+    ctx,
+    {
+      societyId,
+      period,
+      issueDate,
+      dueDate,
+      arrearsDate,
+      memberIds,
+      interestMode = "none",
+      interestRate = 0,
+      interestFixed = 0,
+      interestAccountId,
+    },
+  ) => {
     const society = await requireSocietyWrite(ctx, societyId);
     // Bills post income to the books — decline bills issued outside the year.
     assertInFy(society, issueDate, "Bill");
@@ -60,6 +85,33 @@ export const generate = mutation({
         .withIndex("by_society", (q) => q.eq("societyId", societyId))
         .collect())
         .find((a) => a.kind === "receivable")?._id;
+    // Interest / late fee: resolve the income account once, up front.
+    const wantsInterest =
+      (interestMode === "percent" && interestRate > 0) ||
+      (interestMode === "fixed" && interestFixed > 0);
+    let interestAccount: Doc<"accounts"> | undefined;
+    if (wantsInterest) {
+      const accounts = await ctx.db
+        .query("accounts")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect();
+      interestAccount = interestAccountId
+        ? accounts.find(
+            (a) => a._id === interestAccountId && a.societyId === societyId,
+          )
+        : accounts.find(
+            (a) =>
+              a.type === "income" &&
+              a.name.toLowerCase().includes("interest"),
+          ) ??
+          accounts
+            .filter((a) => a.type === "income")
+            .sort((a, b) => a.code.localeCompare(b.code))[0];
+      if (!interestAccount)
+        throw new Error(
+          "No income account found to post interest to — add one in Chart of Accounts (e.g. Interest Income).",
+        );
+    }
     const allTariffs = await ctx.db
       .query("tariffs")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -121,6 +173,37 @@ export const generate = mutation({
         skipped++;
         continue;
       }
+      // Interest / late fee on the member's outstanding balance (unpaid
+      // earlier bills) at generation time. A percent rate is per month —
+      // bills are monthly, so 1.5% ≈ 18% per annum. Charged only when the
+      // member is actually in arrears; 0 outstanding → no charge.
+      const outstandingBefore = existing
+        .filter((b) => b.period < period)
+        .reduce((s, b) => s + (b.total - b.paidAmount), 0);
+      const interestAmount =
+        outstandingBefore > 0 && interestAccount
+          ? interestMode === "percent" && interestRate > 0
+            ? Math.round(outstandingBefore * (interestRate / 100) * 100) / 100
+            : interestMode === "fixed"
+              ? interestFixed
+              : 0
+          : 0;
+      const allLines =
+        interestAmount > 0 && interestAccount
+          ? [
+              ...lines,
+              {
+                tariffId: undefined,
+                accountId: interestAccount._id,
+                name:
+                  interestMode === "percent"
+                    ? `Interest on arrears @ ${interestRate}% p.m.`
+                    : "Late fee on outstanding dues",
+                amount: interestAmount,
+                printNo: undefined,
+              },
+            ]
+          : lines;
       // Opening receivable carried as a separate arrears line on the member's
       // first bill — it appears on the printed bill and flows into the books
       // (Dr receivable), while charge-head income stays untouched.
@@ -131,7 +214,7 @@ export const generate = mutation({
         member.openingBalance > 0 && !hasEarlierBills && receivableId
           ? member.openingBalance
           : 0;
-      const total = lines.reduce((s, l) => s + l.amount, 0) + openingCarried;
+      const total = allLines.reduce((s, l) => s + l.amount, 0) + openingCarried;
       const insertLines =
         openingCarried > 0 && receivableId
           ? [
@@ -141,9 +224,9 @@ export const generate = mutation({
                 name: "Arrears — opening balance",
                 amount: openingCarried,
               },
-              ...lines,
+              ...allLines,
             ]
-          : lines;
+          : allLines;
       const n = await nextNumber(ctx, `${societyId}:bill`);
       await ctx.db.insert("bills", {
         societyId,
@@ -161,6 +244,43 @@ export const generate = mutation({
       created++;
     }
     return { created, skipped };
+  },
+});
+
+/**
+ * Delete every bill of one billing period in one go (admin bulk action).
+ * Bills with receipts recorded against them are kept — receipts must be
+ * deleted first. Returns both counts so the UI can report what happened.
+ */
+export const removeByPeriod = mutation({
+  args: { societyId: v.id("societies"), period: v.string() },
+  handler: async (ctx, { societyId, period }) => {
+    await requireSocietyWrite(ctx, societyId);
+    const bills = await ctx.db
+      .query("bills")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const inPeriod = bills.filter((b) => b.period === period);
+    if (inPeriod.length === 0) return { deleted: 0, blocked: 0 };
+    const vouchers = await ctx.db
+      .query("vouchers")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const allocated = new Set<Id<"bills">>();
+    for (const vch of vouchers) {
+      for (const a of vch.allocations ?? []) allocated.add(a.billId);
+    }
+    let deleted = 0;
+    let blocked = 0;
+    for (const b of inPeriod) {
+      if (allocated.has(b._id) || b.paidAmount > 0) {
+        blocked++;
+        continue;
+      }
+      await ctx.db.delete(b._id);
+      deleted++;
+    }
+    return { deleted, blocked };
   },
 });
 
