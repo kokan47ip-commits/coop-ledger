@@ -324,7 +324,7 @@ export default function MemberReceipt() {
       ) : (
       <form onSubmit={editId ? submitEdit : submit} className="mb-10 rounded-lg border">
         {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
-        <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
+        <div className="grid gap-3 border-b p-3 sm:grid-cols-4">
           <div className="space-y-2">
             <Label>Book Code</Label>
             <Input value="Receipts" readOnly className="bg-muted/50" />
@@ -363,7 +363,7 @@ export default function MemberReceipt() {
         </div>
 
         {/* Member + Cash/Bank + Cur Bal + Amount + Cheque No + Cheque Date */}
-        <div className="grid gap-4 border-b p-4 sm:grid-cols-12">
+        <div className="grid gap-3 border-b p-3 sm:grid-cols-12">
           <div className="space-y-2 sm:col-span-3">
             <Label htmlFor="mr-member">{editId ? "Member" : "Member *"}</Label>
             <Select
@@ -435,13 +435,13 @@ export default function MemberReceipt() {
             <Input id="mr-chqdt" type="date" value={form.chequeDate}
               onChange={(e) => setForm({ ...form, chequeDate: e.target.value })} />
           </div>
-          <div className="space-y-2 sm:col-span-12">
+          <div className="space-y-2 sm:col-span-6">
             <Label htmlFor="mr-bankname" className="text-muted-foreground">Bank Name</Label>
             <Input id="mr-bankname" value={form.bankName}
               onChange={(e) => setForm({ ...form, bankName: e.target.value })}
               placeholder="For cheque / NEFT instruments" />
           </div>
-          <div className="space-y-2 sm:col-span-12">
+          <div className="space-y-2 sm:col-span-6">
             <Label htmlFor="mr-narr">Narration</Label>
             <Input id="mr-narr" value={form.narration}
               onChange={(e) => setForm({ ...form, narration: e.target.value })}

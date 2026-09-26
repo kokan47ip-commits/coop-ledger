@@ -350,7 +350,7 @@ export function LedgerVoucherForm({
   ) : (
     <form onSubmit={submit} className="mb-10 rounded-lg border">
       {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
-      <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
+      <div className="grid gap-3 border-b p-3 sm:grid-cols-4">
         <div className="space-y-2">
           <Label>Book Code</Label>
           <Input value={isPayment ? "Payments" : "Receipts"} readOnly className="bg-muted/50" />
@@ -385,7 +385,7 @@ export function LedgerVoucherForm({
       </div>
 
       {/* Cash/Bank + Cur Bal + Amount + Cheque No + Cheque Date */}
-      <div className="grid gap-4 border-b p-4 sm:grid-cols-12">
+      <div className="grid gap-3 border-b p-3 sm:grid-cols-12">
         <div className="space-y-2 sm:col-span-4">
           <Label>Cash/Bank *</Label>
           <div className="flex items-center gap-3">
@@ -418,12 +418,12 @@ export function LedgerVoucherForm({
           <Input id="v-chqdt" type="date" value={chequeDate}
             onChange={(e) => setChequeDate(e.target.value)} />
         </div>
-        <div className="space-y-2 sm:col-span-12">
+        <div className="space-y-2 sm:col-span-6">
           <Label htmlFor="v-bankname" className="text-muted-foreground">Bank Name</Label>
           <Input id="v-bankname" value={bankName} onChange={(e) => setBankName(e.target.value)}
             placeholder="For cheque / NEFT instruments" />
         </div>
-        <div className="space-y-2 sm:col-span-12">
+        <div className="space-y-2 sm:col-span-6">
           <Label htmlFor="v-narr">Narration</Label>
           <Input id="v-narr" value={narration} onChange={(e) => setNarration(e.target.value)}
             placeholder={isPayment ? "PAID TO … FOR …" : "Received towards …"} />
@@ -431,7 +431,7 @@ export function LedgerVoucherForm({
       </div>
 
       {/* Ledger · Debit · Credit · Add — one row, Cur Bal below the ledger */}
-      <div className="border-b p-4">
+      <div className="border-b p-3">
         <div className="grid items-start gap-3 sm:grid-cols-12">
           <div className="space-y-2 sm:col-span-6">
             <Label>Ledger</Label>

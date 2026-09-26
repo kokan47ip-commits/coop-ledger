@@ -55,6 +55,11 @@ function periodLong(period: string): string {
   return `${MONTHS_FULL[Number(m) - 1] ?? m} ${y}`;
 }
 
+/** "Arrears — opening balance" style line carrying the opening receivable. */
+function isArrearsLine(name: string): boolean {
+  return name.toLowerCase().startsWith("arrears");
+}
+
 export default function BillRegister() {
   const { societyId, society, canEdit } = useSociety();
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
@@ -163,12 +168,32 @@ export default function BillRegister() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bills, members, periodFilter, applied, tariffColumns]);
 
-  /** Row-level total due: edited/current tariff lines + arrears before this period. */
+  /** Charge lines only — the opening balance carried on the bill ("Arrears
+   *  — …") is reported in the arrears columns, not hidden in the Bill amount. */
+  const billCharges = (b: Bill) =>
+    (b.lines ?? []).filter((l) => !isArrearsLine(l.name)).reduce((s, l) => s + l.amount, 0);
+  /** Opening balance carried into this bill at generation (first bill only). */
+  const billCarried = (b: Bill) =>
+    (b.lines ?? []).filter((l) => isArrearsLine(l.name)).reduce((s, l) => s + l.amount, 0);
+  /** Principal arrears for the register: earlier unpaid bills PLUS the
+   *  opening balance carried on this bill, so it is visible instead of
+   *  silently inflating the Bill column. */
+  const principalArrFor = (b: Bill) =>
+    arrearsBefore(b.memberId, periodFilter) + billCarried(b);
+
+  /** Row-level total due: edited/current tariff lines + custom lines + arrears. */
   const rowTotal = (b: Bill, principal: number) => {
     let sum = principal;
     for (const t of tariffColumns) {
       const edited = edits[b._id]?.[t._id];
       sum += edited !== undefined && edited !== "" ? Number(edited) : lineAmount(b, t._id);
+    }
+    // Custom charge lines outside the tariff columns still count toward the due.
+    const tariffIds = new Set(tariffColumns.map((t) => t._id));
+    for (const l of b.lines ?? []) {
+      if (isArrearsLine(l.name)) continue;
+      if (l.tariffId && tariffIds.has(l.tariffId)) continue;
+      sum += l.amount;
     }
     return sum;
   };
@@ -184,7 +209,7 @@ export default function BillRegister() {
       perTariff: {} as Record<string, number>,
     };
     for (const b of rows) {
-      const principal = arrearsBefore(b.memberId, periodFilter);
+      const principal = principalArrFor(b);
       const due = rowTotal(b, principal);
       t.billTotal += due - principal;
       t.principalArr += principal;
@@ -234,9 +259,7 @@ export default function BillRegister() {
 
   /** Single-bill export in the legacy Shama-I format. */
   const exportSingle = (b: Bill, kind: "pdf" | "word") => {
-    if (!society) return;
-    const m = memberOf(b.memberId);
-    const isArrearsLine = (name: string) => name.toLowerCase().startsWith("arrears");
+    if (!society) return;    const m = memberOf(b.memberId);
     const arrearsFromBills = (bills ?? [])
       .filter((x) => x.memberId === b.memberId && x.period < b.period)
       .reduce((s, x) => s + (x.total - x.paidAmount), 0);
@@ -283,15 +306,15 @@ export default function BillRegister() {
     ];
     const body = rows.map((b) => {
       const m = memberOf(b.memberId);
-      const principal = arrearsBefore(b.memberId, periodFilter);
+      const principalArr = principalArrFor(b);
       return [
         b.billNo.replace(/^BILL-/, ""),
         unitNo(m),
         m?.name ?? "—",
-        b.total,
-        principal,
+        billCharges(b),
+        principalArr,
         0,
-        b.total + principal,
+        billCharges(b) + principalArr,
         ...tariffColumns.map((t) => lineAmount(b, t._id)),
       ];
     });
@@ -699,7 +722,7 @@ export default function BillRegister() {
             <TableBody>
               {rows.map((b) => {
                 const m = memberOf(b.memberId);
-                const principal = arrearsBefore(b.memberId, periodFilter);
+                const principal = principalArrFor(b);
                 return (
                   <TableRow key={b._id}>
                     <TableCell>
@@ -718,7 +741,7 @@ export default function BillRegister() {
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-44 truncate" title={m?.name}>{m?.name ?? "—"}</TableCell>
-                    <TableCell className={rightAlign}>{formatMoney(b.total)}</TableCell>
+                    <TableCell className={rightAlign}>{formatMoney(billCharges(b))}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(0)}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>

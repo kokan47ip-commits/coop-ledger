@@ -7,6 +7,7 @@ import {
   requireSociety,
   requireUserId,
   societyAccess,
+  societyMemberBinding,
   type SocietyAccess,
 } from "./lib";
 import { maybeClaimGuestSocieties } from "./societies";
@@ -95,22 +96,15 @@ export const myMemberBinding = query({
     if (!userId) return null;
     const society = await ctx.db.get(societyId);
     if (!society) return null;
-    const user = await ctx.db.get(userId);
-    const email = user?.email?.toLowerCase().trim() ?? null;
-    if (!email) return null;
-    const grants = await ctx.db
-      .query("membersAccess")
-      .withIndex("by_society", (q) => q.eq("societyId", society._id))
-      .collect();
-    const grant = grants.find(
-      (g) =>
-        (g.userId === userId || g.email === email) && g.role === "member",
-    );
-    if (!grant?.memberId) return null;
-    const member = await ctx.db.get(grant.memberId);
+    // Shared resolution with the portal: validates the bound flat exists and
+    // is active, and re-points logins whose member row was re-imported so
+    // their bills/receipts show up again.
+    const memberId = await societyMemberBinding(ctx, society, userId);
+    if (!memberId) return null;
+    const member = await ctx.db.get(memberId);
     if (!member) return null;
     return {
-      memberId: grant.memberId,
+      memberId: member._id,
       name: member.name,
       flatNo: member.flatNo,
       wing: member.wing,

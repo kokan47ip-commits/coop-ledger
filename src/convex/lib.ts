@@ -73,7 +73,34 @@ export async function societyMemberBinding(
       g.role === "member" &&
       g.memberId !== undefined,
   );
-  return grant?.memberId ?? null;
+  const boundId = grant?.memberId;
+  if (boundId) {
+    const bound = await ctx.db.get(boundId);
+    // Row still exists → bind as before (an office deactivation must not
+    // silently re-point the login somewhere else). Self-heal only when the
+    // bound row is gone, e.g. members were re-imported and bills now live on
+    // a new row while the grant still pointed at the deleted one.
+    if (bound && bound.societyId === society._id) return bound._id;
+  }
+  const members = await ctx.db
+    .query("members")
+    .withIndex("by_society", (q) => q.eq("societyId", society._id))
+    .collect();
+  const norm = (s?: string) => (s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  const old = boundId ? await ctx.db.get(boundId) : undefined;
+  const oldCode = norm(old?.code);
+  const oldFlat = norm(old?.flatNo);
+  const oldWing = norm(old?.wing);
+  const oldName = norm(old?.name);
+  const byIdentity = old
+    ? members.find((m) => oldCode !== "" && norm(m.code) === oldCode) ??
+      members.find(
+        (m) => oldFlat !== "" && norm(m.flatNo) === oldFlat && norm(m.wing) === oldWing,
+      ) ??
+      members.find((m) => oldName !== "" && norm(m.name) === oldName)
+    : undefined;
+  const byEmail = members.find((m) => norm(m.email) === email);
+  return byIdentity?._id ?? byEmail?._id ?? null;
 }
 
 /** True when the signed-in user is a software-level administrator. */
