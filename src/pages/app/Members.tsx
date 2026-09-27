@@ -567,6 +567,18 @@ export default function Members() {
                 <Label htmlFor="m-email">Email</Label>
                 <Input id="m-email" type="email" value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                {form.id && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() => {
+                      const m = (members ?? []).find((x) => x._id === form.id);
+                      if (m) openPassword(m);
+                    }}
+                  >
+                    <KeyRound className="size-3.5" /> Set system-generated portal password…
+                  </button>
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Ownership</Label>
@@ -611,6 +623,52 @@ export default function Members() {
               <Button type="submit">{form.id ? "Save changes" : "Add member"}</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Portal password: admin generates/sets a member's portal login password. */}
+      <Dialog open={!!pwMember} onOpenChange={(o) => !o && setPwMember(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Portal login — {pwMember?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              Login email: <span className="font-mono text-foreground">{pwMember?.email}</span>
+              {!pwMember?.email && (
+                <span className="text-destructive">no email on this member — save one first</span>
+              )}
+              {pwStatus?.hasPassword && " · a password is already set (saving replaces it)"}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="pw-value">Password</Label>
+              <div className="flex gap-2">
+                <Input id="pw-value" className="font-mono" value={pwValue}
+                  onChange={(e) => setPwValue(e.target.value)} />
+                <Button type="button" variant="outline" size="icon" title="Generate password"
+                  onClick={generatePw}>
+                  <RefreshCw className="size-4" />
+                </Button>
+                <Button type="button" variant="outline" size="icon" title="Copy password"
+                  onClick={() => {
+                    navigator.clipboard.writeText(pwValue);
+                    toast.success("Password copied");
+                  }}>
+                  <Copy className="size-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Minimum 8 characters with at least one number. The password is never shown again —
+                copy it and share it with the member now.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPwMember(null)}>Cancel</Button>
+              <Button onClick={savePassword} disabled={pwSaving || !pwValue || !pwMember?.email}>
+                {pwSaving ? "Saving…" : "Save password"}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
