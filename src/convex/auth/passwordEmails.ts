@@ -6,7 +6,7 @@ import { RandomReader, generateRandomString } from "@oslojs/crypto/random";
  * Email delivery for the Password provider's verification and reset codes.
  * Uses the same Freebuff transactional endpoint as the sign-in OTP.
  */
-async function sendCode(email: string, token: string) {
+export async function sendCode(email: string, token: string) {
   try {
     await axios.post(
       "https://auth.freebuff.app/send_otp",
@@ -26,7 +26,7 @@ async function sendCode(email: string, token: string) {
   }
 }
 
-function sixDigitToken() {
+export function sixDigitToken() {
   const random: RandomReader = {
     read(bytes: Uint8Array) {
       crypto.getRandomValues(bytes);

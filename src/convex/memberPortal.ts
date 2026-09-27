@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   assertInFy,
@@ -619,7 +619,36 @@ export const adminSetMemberPassword = mutation({
     }
     assertPasswordRules(password);
 
-    await upsertPasswordCredential(ctx, email, password);
+    const { userId: credUserId } = await upsertPasswordCredential(ctx, email, password);
+
+    // Portal access: a password alone is not enough — the login must be
+    // bound to this flat via a membersAccess "member" grant, or the portal
+    // shows no bills/ledger. Create it here (or re-point it to this flat) so
+    // setting the password makes the portal fully work in one step. Broader
+    // grants (editor/viewer) are left untouched, and the owner's own email
+    // never needs a grant.
+    const owner = society.createdBy ? await ctx.db.get(society.createdBy) : null;
+    if (owner?.email?.toLowerCase().trim() !== email) {
+      const grants = await ctx.db
+        .query("membersAccess")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect();
+      const existing = grants.find((g) => g.email === email);
+      if (!existing) {
+        await ctx.db.insert("membersAccess", {
+          societyId,
+          email,
+          role: "member",
+          memberId,
+          userId: credUserId,
+          grantedBy: callerId,
+          createdAt: Date.now(),
+        });
+      } else if (existing.role === "member" && existing.memberId !== memberId) {
+        await ctx.db.patch(existing._id, { memberId });
+      }
+    }
+
     return { email };
   },
 });
@@ -666,13 +695,14 @@ export const adminMemberPasswordStatus = query({
  * Convex Auth's own Password provider storage (provider "password",
  * providerAccountId = the lower-cased email, Scrypt-hashed secret). When the
  * credential already exists its old sessions are invalidated so a reset
- * password takes effect immediately.
+ * password takes effect immediately, and any sign-in lockout is cleared —
+ * saving a password here is the account's unlock mechanism.
  */
 async function upsertPasswordCredential(
   ctx: MutationCtx,
   email: string,
   password: string,
-) {
+): Promise<{ userId: Id<"users">; accountId: Id<"authAccounts"> }> {
   const secret = await hashPassword(password);
   const existing = await ctx.db
     .query("authAccounts")
@@ -695,7 +725,7 @@ async function upsertPasswordCredential(
       .withIndex("userId", (q) => q.eq("userId", existing.userId))
       .collect();
     for (const s of sessions) await ctx.db.delete(s._id);
-    return;
+    return { userId: existing.userId, accountId: existing._id };
   }
   // No credential yet: reuse the existing user row when the email has signed
   // in some other way (OTP), otherwise create a fresh user + credential —
@@ -718,4 +748,143 @@ async function upsertPasswordCredential(
     .withIndex("identifier", (q) => q.eq("identifier", accountId))
     .collect();
   for (const l of staleLimits) await ctx.db.delete(l._id);
+  return { userId, accountId };
 }
+
+/**
+ * Stores a fresh 6-digit code for the login page's "Set your password" flow
+ * (called from emailOtpActions.sendPasswordSetupCode, which emails it).
+ */
+export const pwSetupPrepare = internalMutation({
+  args: { email: v.string() },
+  handler: async (ctx, { email }) => {
+    const account = await ctx.db
+      .query("authAccounts")
+      .withIndex("providerAndAccountId", (q) =>
+        q.eq("provider", "password").eq("providerAccountId", email),
+      )
+      .unique();
+    // Replace any live setup code for this email with a fresh one.
+    if (account) {
+      const stale = await ctx.db
+        .query("authVerificationCodes")
+        .withIndex("accountId", (q) => q.eq("accountId", account._id))
+        .collect();
+      for (const row of stale) await ctx.db.delete(row._id);
+    }
+    const code = await pwGenerateCode(ctx);
+    const accountId =
+      account?._id ??
+      (await ctx.db.insert("authAccounts", {
+        userId: await pwSetupUserFor(ctx, email),
+        provider: "password",
+        providerAccountId: email,
+      }));
+    await ctx.db.insert("authVerificationCodes", {
+      accountId,
+      provider: "password",
+      code,
+      expirationTime: Date.now() + 15 * 60 * 1000,
+    });
+    return { code };
+  },
+});
+
+/** First user row for an email, reused across setups. */
+async function pwSetupUserFor(ctx: MutationCtx, email: string) {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("email", (q) => q.eq("email", email))
+    .unique();
+  return user?._id ?? (await ctx.db.insert("users", { email, name: email }));
+}
+
+/** Collision-safe 6-digit code generator for the password-setup flow. */
+async function pwGenerateCode(ctx: MutationCtx): Promise<string> {
+  for (let i = 0; i < 5; i++) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const clash = await ctx.db
+      .query("authVerificationCodes")
+      .withIndex("code", (q) => q.eq("code", code))
+      .collect();
+    if (clash.length === 0) return code;
+  }
+  return String(Date.now()).slice(-6);
+}
+
+/**
+ * Self-service password set from the login page: the user proves they own
+ * the email by entering the OTP code they were sent (the same code the
+ * "Sign in with an emailed code" flow delivers), then chooses a new
+ * password. Works for members who have never signed up (the credential is
+ * created fresh) and doubles as an unlock — the saved credential clears any
+ * sign-in lockout.
+ */
+export const setPasswordWithOtp = mutation({
+  args: {
+    email: v.string(),
+    code: v.string(),
+    newPassword: v.string(),
+  },
+  handler: async (ctx, { email, code, newPassword }) => {
+    const normalized = email.toLowerCase().trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
+      throw new Error("Enter a valid email address.");
+    }
+    assertPasswordRules(newPassword);
+
+    // Brute-force guard: 5 wrong codes per email; a success clears the guard.
+    const guardId = `pwsetup:${normalized}`;
+    const guard = await ctx.db
+      .query("authRateLimits")
+      .withIndex("identifier", (q) => q.eq("identifier", guardId))
+      .unique();
+    if (guard && guard.attemptsLeft < 1) {
+      throw new Error(
+        "Too many wrong codes — request a new code in a few minutes.",
+      );
+    }
+
+    // Match the code against any live verification code for this email
+    // (OTP sign-in codes and password-reset codes both prove ownership).
+    const rows = await ctx.db
+      .query("authVerificationCodes")
+      .withIndex("code", (q) => q.eq("code", code))
+      .collect();
+    const now = Date.now();
+    let matched: Doc<"authVerificationCodes"> | null = null;
+    for (const row of rows) {
+      if (row.expirationTime < now) {
+        await ctx.db.delete(row._id);
+        continue;
+      }
+      const account = await ctx.db.get(row.accountId);
+      if (account && account.providerAccountId === normalized) {
+        matched = row;
+        break;
+      }
+    }
+    if (!matched) {
+      if (guard) {
+        await ctx.db.patch(guard._id, {
+          attemptsLeft: guard.attemptsLeft - 1,
+          lastAttemptTime: Date.now(),
+        });
+      } else {
+        await ctx.db.insert("authRateLimits", {
+          identifier: guardId,
+          attemptsLeft: 4,
+          lastAttemptTime: Date.now(),
+        });
+      }
+      throw new Error(
+        "That code is incorrect or has expired. Request a new code and try again.",
+      );
+    }
+    await ctx.db.delete(matched._id);
+    if (guard) await ctx.db.delete(guard._id);
+
+    await upsertPasswordCredential(ctx, normalized, newPassword);
+    return { email: normalized };
+  },
+});

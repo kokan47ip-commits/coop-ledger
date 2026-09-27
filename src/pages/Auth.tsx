@@ -15,6 +15,9 @@ import {
 } from "@/components/ui/input-otp";
 
 import { useAuth } from "@/hooks/use-auth";
+import { api } from "@/convex/_generated/api";
+import { useAction, useMutation } from "convex/react";
+import { toast } from "sonner";
 import {
   ArrowLeft,
   ArrowRight,
@@ -22,6 +25,7 @@ import {
   Loader2,
   Mail,
   MailCheck,
+  ShieldCheck,
   UserX,
 } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
@@ -45,7 +49,8 @@ type PasswordStep =
   | "signIn"
   | "signUp"
   | "forgot"
-  | "reset";
+  | "reset"
+  | "setpw";
 
 function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const { isLoading: authLoading, isAuthenticated, signIn } = useAuth();
@@ -72,6 +77,15 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const [pwEmail, setPwEmail] = useState("");
   const [resetCode, setResetCode] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+
+  // "Set your password" (first-time members with an office-assigned login):
+  // request the emailed code, then choose a password.
+  const requestPasswordSetupCode = useAction(api.emailOtpActions.sendPasswordSetupCode);
+  const setPasswordWithOtp = useMutation(api.memberPortal.setPasswordWithOtp);
+  const [setpwEmail, setSetpwEmail] = useState("");
+  const [setpwCode, setSetpwCode] = useState("");
+  const [setpwPw, setSetpwPw] = useState("");
+  const [setpwBusy, setSetpwBusy] = useState(false);
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
@@ -205,6 +219,59 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     });
   };
 
+  /* --------------------- Set-your-password (first login) ------------------ */
+
+  const handleSetPwEmailSubmit = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    setSetpwBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await requestPasswordSetupCode({ email: setpwEmail });
+      setNotice(`Code sent to ${setpwEmail}.`);
+      setIsLoading(false);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not send the code. Try again.",
+      );
+    } finally {
+      setSetpwBusy(false);
+    }
+  };
+
+  const handleSetPwSubmit = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+    setSetpwBusy(true);
+    setError(null);
+    try {
+      await setPasswordWithOtp({
+        email: setpwEmail,
+        code: setpwCode.trim(),
+        newPassword: setpwPw,
+      });
+      toast.success(
+        "Password set — sign in with your email and this password.",
+      );
+      setPwEmail(setpwEmail);
+      setPwStep("signIn");
+      setNotice("Password set. Sign in below.");
+      setSetpwCode("");
+      setSetpwPw("");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not set the password.",
+      );
+    } finally {
+      setSetpwBusy(false);
+    }
+  };
+
   /* ------------------------------- Render -------------------------------- */
 
   return (
@@ -312,6 +379,21 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                             </Button>
                           )}
                         </div>
+                        {pwStep === "signIn" && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                            onClick={() => {
+                              setPwStep("setpw");
+                              setSetpwEmail(pwEmail);
+                              setError(null);
+                              setNotice(null);
+                            }}
+                          >
+                            <ShieldCheck className="size-3.5" />
+                            First login? Set your password with an emailed code
+                          </button>
+                        )}
                       </div>
                       <Divider />
                       <MethodSwitch
@@ -325,6 +407,119 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       />
                     </CardContent>
                   </form>
+                </>
+              ) : pwStep === "setpw" ? (
+                <>
+                  <CardHeader className="text-center mt-4">
+                    <CardTitle className="tracking-tight">Set your password</CardTitle>
+                    <CardDescription>
+                      {setpwCode === ""
+                        ? "Enter the email your society office registered — we'll text you a 6-digit code."
+                        : `Enter the code sent to ${setpwEmail} and choose a password.`}
+                    </CardDescription>
+                  </CardHeader>
+                  {setpwCode === "" ? (
+                    <form onSubmit={handleSetPwEmailSubmit}>
+                      <CardContent>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            name="email"
+                            placeholder="name@example.com"
+                            type="email"
+                            className="pl-9"
+                            value={setpwEmail}
+                            onChange={(e) => setSetpwEmail(e.target.value)}
+                            disabled={setpwBusy}
+                            required
+                          />
+                        </div>
+                        {notice && (
+                          <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-400">{notice}</p>
+                        )}
+                        {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+                      </CardContent>
+                      <CardFooter className="flex-col gap-2">
+                        <Button type="submit" className="w-full" disabled={setpwBusy}>
+                          {setpwBusy ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Email me a code
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="w-full"
+                          onClick={() => {
+                            setPwStep("signIn");
+                            setError(null);
+                            setNotice(null);
+                          }}
+                          disabled={setpwBusy}
+                        >
+                          <ArrowLeft className="mr-2 h-4 w-4" /> Back to sign in
+                        </Button>
+                      </CardFooter>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleSetPwSubmit}>
+                      <CardContent>
+                        <InputOTP
+                          value={setpwCode}
+                          onChange={setSetpwCode}
+                          maxLength={6}
+                          disabled={setpwBusy}
+                        >
+                          <InputOTPGroup>
+                            {Array.from({ length: 6 }).map((_, index) => (
+                              <InputOTPSlot key={index} index={index} />
+                            ))}
+                          </InputOTPGroup>
+                        </InputOTP>
+                        <div className="relative mt-4">
+                          <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            placeholder="New password (8+ chars, 1 number)"
+                            type="password"
+                            className="pl-9"
+                            value={setpwPw}
+                            onChange={(e) => setSetpwPw(e.target.value)}
+                            autoComplete="new-password"
+                            disabled={setpwBusy}
+                            required
+                          />
+                        </div>
+                        {error && (
+                          <p className="mt-2 text-sm text-red-500">{error}</p>
+                        )}
+                      </CardContent>
+                      <CardFooter className="flex-col gap-2">
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={setpwBusy || setpwCode.length !== 6 || setpwPw.length === 0}
+                        >
+                          {setpwBusy ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Save password & sign in
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="w-full"
+                          onClick={() => {
+                            setSetpwCode("");
+                            setError(null);
+                            setNotice(null);
+                          }}
+                          disabled={setpwBusy}
+                        >
+                          <ArrowLeft className="mr-2 h-4 w-4" /> Change email / resend code
+                        </Button>
+                      </CardFooter>
+                    </form>
+                  )}
                 </>
               ) : pwStep === "forgot" ? (
                 <>
