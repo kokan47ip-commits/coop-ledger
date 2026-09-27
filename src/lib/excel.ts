@@ -187,10 +187,16 @@ export const TEMPLATES = {
 };
 
 export function downloadMemberTariffTemplate(
-  tariffs: { name: string; amount?: number }[],
+  tariffs: { name: string; shortName?: string; amount?: number }[],
   sampleMembers: { flatNo?: string; name: string }[],
 ) {
-  const cols = ["Flat No", "Name of Member", ...tariffs.map((t) => t.name)];
+  // Template columns print the short name when set — the upload matcher
+  // matches them back to the head (exact on either name, then containment).
+  const cols = [
+    "Flat No",
+    "Name of Member",
+    ...tariffs.map((t) => t.shortName?.trim() || t.name),
+  ];
   const rows: Record<string, unknown>[] =
     sampleMembers.length > 0
       ? sampleMembers.map((m, i) => {
@@ -201,7 +207,8 @@ export function downloadMemberTariffTemplate(
           tariffs.forEach((t, j) => {
             // First sample row carries the schedule amounts as a starting
             // point; later rows stay blank (blank = use schedule amount).
-            row[t.name] = i === 0 ? (t.amount ?? [2500, 500, 300][j % 3]) : "";
+            row[t.shortName?.trim() || t.name] =
+              i === 0 ? (t.amount ?? [2500, 500, 300][j % 3]) : "";
           });
           return row;
         })
@@ -212,7 +219,9 @@ export function downloadMemberTariffTemplate(
             // flat numbers / names as on the Members page.
             "Flat No": "(same flat no. as on the Members page)",
             "Name of Member": "(same member name as on the Members page)",
-            ...Object.fromEntries(tariffs.map((t) => [t.name, t.amount ?? ""])),
+            ...Object.fromEntries(
+              tariffs.map((t) => [t.shortName?.trim() || t.name, t.amount ?? ""]),
+            ),
           },
         ];
   downloadWorkbook([{ name: "Custom Tariffs", rows }], "template-member-tariffs.xlsx");

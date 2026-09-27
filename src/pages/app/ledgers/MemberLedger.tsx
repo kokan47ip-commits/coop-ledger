@@ -58,6 +58,11 @@ export default function MemberLedger() {
   const { societyId, society } = useSociety();
   const signatures = useCommitteeSignatures();
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip") as Member[] | undefined;
+  // Tariff schedule: the detail ledger's head columns print the tariff's
+  // short name when set (bills may carry either wording on their lines).
+  const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip") as
+    | Doc<"tariffs">[]
+    | undefined;
 
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<Set<string>>(
@@ -199,6 +204,12 @@ export default function MemberLedger() {
     }
   }
 
+  /** Printed label for a head column: the tariff's short name when set. */
+  const headLabel = (n: string) => {
+    const t = (tariffs ?? []).find((x) => x.name === n);
+    return t?.shortName?.trim() || n;
+  };
+
   const meta: ExportMeta | null = society
     ? {
         societyName: society.name,
@@ -244,7 +255,7 @@ export default function MemberLedger() {
     if (body.length === 0) body.push(["", "", "No transactions in this period", "", "", ""]);
 
     const head = isDetail
-      ? ["Date", "Bill / Voucher No.", ...headNames, "Narration", "Debit", "Credit", "Balance"]
+      ? ["Date", "Bill / Voucher No.", ...headNames.map(headLabel), "Narration", "Debit", "Credit", "Balance"]
       : ["Date", "Bill / Voucher No.", "Narration", "Debit", "Credit", "Balance"];
     const columnStyles: TableSpec["columnStyles"] = {};
     const moneyStart = isDetail ? 2 + headNames.length + 1 : 3;
@@ -446,7 +457,7 @@ export default function MemberLedger() {
                           <th className="w-20 py-1.5 pr-2 font-bold">Date</th>
                           <th className="w-24 py-1.5 pr-2 font-bold">Bill / Voucher No.</th>
                           {isDetail && headNames.map((n) => (
-                            <th key={n} className="py-1.5 pr-2 text-right font-bold whitespace-nowrap">{n}</th>
+                            <th key={n} className="py-1.5 pr-2 text-right font-bold whitespace-nowrap">{headLabel(n)}</th>
                           ))}
                           {!isDetail && <th className="py-1.5 pr-2 font-bold">Narration</th>}
                           <th className="w-24 py-1.5 text-right font-bold">Debit</th>

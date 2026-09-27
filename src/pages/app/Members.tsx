@@ -31,7 +31,7 @@ import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR, formatPeriod, fyStartISO, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { BookText, Copy, Download, FileText, HandCoins, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -330,6 +330,53 @@ export default function Members() {
     }
   };
 
+  // ---- System-generated member portal login password (office-managed) ----
+  const [pwMember, setPwMember] = useState<MemberRow | null>(null);
+  const [pwValue, setPwValue] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+  const pwStatus = useQuery(
+    api.memberPortal.adminMemberPasswordStatus,
+    societyId && pwMember ? { societyId, memberId: pwMember._id } : "skip",
+  ) as { hasPassword: boolean; hasEmail: boolean } | undefined;
+  const setMemberPassword = useMutation(api.memberPortal.adminSetMemberPassword);
+
+  /** Random, legible password: 10 chars with upper, lower and 2+ digits. */
+  const generatePw = () => {
+    const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O
+    const lower = "abcdefghijkmnpqrstuvwxyz"; // no l/o
+    const digits = "23456789"; // no 0/1
+    const all = upper + lower + digits;
+    const pick = (set: string) => set[Math.floor(Math.random() * set.length)];
+    let out = pick(upper) + pick(lower) + pick(lower) + pick(digits) + pick(digits);
+    for (let i = 0; i < 5; i++) out += pick(all);
+    setPwValue(out);
+  };
+
+  const openPassword = (m: MemberRow) => {
+    setPwMember(m);
+    generatePw();
+  };
+
+  const savePassword = async () => {
+    if (!societyId || !pwMember) return;
+    setPwSaving(true);
+    try {
+      const res = await setMemberPassword({
+        societyId,
+        memberId: pwMember._id,
+        password: pwValue,
+      });
+      toast.success(
+        `Password saved for ${res.email} — share it with ${pwMember.name}; it is not shown again.`,
+      );
+      setPwMember(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to set password");
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -400,6 +447,17 @@ export default function Members() {
                       >
                         <HandCoins className="size-3.5" />
                       </Button>
+                      {canEdit && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          title="System-generated portal password"
+                          onClick={() => openPassword(m)}
+                        >
+                          <KeyRound className="size-3.5" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

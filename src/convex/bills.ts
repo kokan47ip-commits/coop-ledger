@@ -195,7 +195,8 @@ export const generate = mutation({
           return {
             tariffId: t._id,
             accountId: t.accountId,
-            name: t.name,
+            // Print label: short name when set, else the full head name.
+            name: t.shortName?.trim() || t.name,
             amount: base,
             printNo: t.printNo,
           };
@@ -215,12 +216,14 @@ export const generate = mutation({
       const outstandingBefore =
         existing.filter((b) => b.period < period).reduce((s, b) => s + (b.total - b.paidAmount), 0) +
         member.openingBalance;
+      // Interest is rounded to the nearest rupee in both modes — printed
+      // bills never carry paise on the interest head.
       const interestAmount =
         outstandingBefore > 0 && interestAccount
           ? interestMode === "percent" && interestRate > 0
-            ? Math.round(outstandingBefore * (interestRate / 100) * 100) / 100
+            ? Math.round(outstandingBefore * (interestRate / 100))
             : interestMode === "fixed"
-              ? interestFixed
+              ? Math.round(interestFixed)
               : 0
           : 0;
       const allLines =
@@ -383,7 +386,11 @@ export const updateLines = mutation({
       const t = l.tariffId
         ? allTariffs.find((x) => x._id === l.tariffId)
         : undefined;
-      return t ? { ...l, printNo: t.printNo } : l;
+      // Re-stamp both print order and the short-name print label so grid edits
+      // follow the tariff schedule, not the generation-time wording.
+      return t
+        ? { ...l, printNo: t.printNo, name: t.shortName?.trim() || t.name }
+        : l;
     });
     await ctx.db.patch(id, { lines: [...arrearsLines, ...stamped], total, status });
   },

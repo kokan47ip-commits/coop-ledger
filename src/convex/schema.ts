@@ -126,6 +126,9 @@ const schema = defineSchema(
     tariffs: defineTable({
       societyId: v.id("societies"),
       name: v.string(),
+      /** Optional short label printed on the member schedule, member ledger
+       *  head columns and bills. Falls back to the full name. */
+      shortName: v.optional(v.string()),
       accountId: v.id("accounts"),
       amount: v.number(),
       unit: v.optional(v.union(v.literal("flat"), v.literal("member"))),

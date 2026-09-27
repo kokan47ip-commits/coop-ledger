@@ -18,6 +18,8 @@ export const upsert = mutation({
     societyId: v.id("societies"),
     id: v.optional(v.id("tariffs")),
     name: v.string(),
+    /** Short label printed on the member schedule, ledger heads and bills. */
+    shortName: v.optional(v.string()),
     accountId: v.id("accounts"),
     amount: v.number(),
     unit: v.optional(v.union(v.literal("flat"), v.literal("member"))),

@@ -323,7 +323,8 @@ export default function BillRegister() {
     const head = [
       "Bill No", "Unit No.", "Unit Name",
       "Bill", "Principal", "Interest", "Total Due",
-      ...tariffColumns.map((t) => t.name),
+      // Printed register columns use the tariff's short name when set.
+      ...tariffColumns.map((t) => t.shortName?.trim() || t.name),
     ];
     const body = rows.map((b) => {
       const m = memberOf(b.memberId);
@@ -832,7 +833,7 @@ export default function BillRegister() {
                 <TableHead className="bg-emerald-500/10 text-right">Total Due</TableHead>
                 {tariffColumns.map((t) => (
                   <TableHead key={t._id} className="text-right">
-                    <span className="block max-w-24 truncate" title={t.name}>{t.name}</span>
+                    <span className="block max-w-24 truncate" title={t.name}>{t.shortName?.trim() || t.name}</span>
                   </TableHead>
                 ))}
                 <TableHead className="text-right">Actions</TableHead>

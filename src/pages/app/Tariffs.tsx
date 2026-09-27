@@ -40,6 +40,8 @@ import { formatMoney } from "@/lib/format";
 type TariffRow = {
   _id: Id<"tariffs">;
   name: string;
+  /** Short label printed on the member schedule, ledger heads and bills. */
+  shortName?: string;
   accountId: Id<"accounts">;
   amount: number;
   unit?: "flat" | "member";
@@ -100,6 +102,7 @@ export default function Tariffs() {
   const [form, setForm] = useState({
     id: "" as Id<"tariffs"> | "",
     name: "",
+    shortName: "",
     accountId: "",
     amount: "0",
     unit: "flat",
@@ -178,6 +181,7 @@ export default function Tariffs() {
         societyId,
         id: form.id || undefined,
         name: form.name.trim(),
+        shortName: form.shortName.trim() || undefined,
         accountId: form.accountId as Id<"accounts">,
         amount: Number(form.amount) || 0,
         unit: form.unit as "flat" | "member",
@@ -206,6 +210,7 @@ export default function Tariffs() {
   const [editId, setEditId] = useState<Id<"tariffs"> | null>(null);
   const [editForm, setEditForm] = useState({
     name: "",
+    shortName: "",
     accountId: "",
     amount: "0",
     unit: "flat",
@@ -218,6 +223,7 @@ export default function Tariffs() {
     setEditId(t._id);
     setEditForm({
       name: t.name,
+      shortName: t.shortName ?? "",
       accountId: t.accountId,
       amount: String(t.amount),
       unit: t.unit ?? "flat",
@@ -245,6 +251,7 @@ export default function Tariffs() {
         societyId,
         id: editId,
         name: editForm.name.trim(),
+        shortName: editForm.shortName.trim() || undefined,
         accountId: editForm.accountId as Id<"accounts">,
         amount,
         unit: editForm.unit as "flat" | "member",
@@ -274,7 +281,7 @@ export default function Tariffs() {
             className="rounded-lg"
             disabled={!canEdit || incomeAccounts.length === 0}
             onClick={() => {
-              setForm({ id: "", name: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true, printNo: "" });
+              setForm({ id: "", name: "", shortName: "", accountId: incomeAccounts[0]?._id ?? "", amount: "0", unit: "flat", isActive: true, printNo: "" });
               setOpen(true);
             }}
           >
@@ -322,6 +329,7 @@ export default function Tariffs() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-20">Print No.</TableHead>
                   <TableHead>Tariff</TableHead>
+                  <TableHead>Short name</TableHead>
                   <TableHead>Income account</TableHead>
                   <TableHead>Basis</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
@@ -363,6 +371,19 @@ export default function Tariffs() {
                             />
                           ) : (
                             t.name
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {editing ? (
+                            <Input
+                              value={editForm.shortName}
+                              onChange={(e) => setEditForm({ ...editForm, shortName: e.target.value })}
+                              className="h-8"
+                              placeholder="—"
+                              title="Short label printed on the member schedule, ledger heads and bills"
+                            />
+                          ) : (
+                            t.shortName || "—"
                           )}
                         </TableCell>
                         <TableCell className="text-sm">
@@ -487,12 +508,18 @@ export default function Tariffs() {
             <DialogTitle>{form.id ? "Edit tariff" : "Add tariff"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-[1fr_100px]">
+            <div className="grid gap-4 sm:grid-cols-[1fr_130px_90px]">
               <div className="space-y-2">
                 <Label htmlFor="t-name">Tariff name *</Label>
                 <Input id="t-name" required value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="Maintenance Charges" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="t-short">Short name</Label>
+                <Input id="t-short" value={form.shortName}
+                  onChange={(e) => setForm({ ...form, shortName: e.target.value })}
+                  placeholder="Maintenance" title="Short label printed on the member schedule, ledger heads and bills" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="t-print">Print No.</Label>
@@ -594,7 +621,7 @@ export default function Tariffs() {
                             numeric: true,
                           }) || a.name.localeCompare(b.name),
                       )
-                      .map((t) => ({ name: t.name, amount: t.amount })),
+                      .map((t) => ({ name: t.name, shortName: t.shortName, amount: t.amount })),
                     (members ?? []).slice(0, 5).map((m) => ({ flatNo: m.flatNo, name: m.name })),
                   )
                 }
@@ -865,7 +892,7 @@ function MemberTariffMatrix(props: {
               {tariffs.map((t) => (
                 <TableHead key={t._id} className="text-right">
                   <span className="block max-w-24 truncate" title={`${t.name} — schedule ${formatMoney(t.amount)}`}>
-                    {t.name}
+                    {t.shortName?.trim() || t.name}
                   </span>
                 </TableHead>
               ))}

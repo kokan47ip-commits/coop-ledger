@@ -1,11 +1,13 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   assertInFy,
+  isSoftwareAdmin,
   nextNumber,
   pad,
+  requireSociety,
   requireUserId,
   societyMemberBinding,
   VOUCHER_PREFIX,
@@ -569,3 +571,138 @@ export const changePassword = mutation({
     return true;
   },
 });
+
+/* ------------------- Office-managed member login passwords ---------------- */
+
+/** Validate the office-set password with the same rule as sign-up. */
+function assertPasswordRules(password: string) {
+  if (password.length < 8 || !/\d/.test(password)) {
+    throw new Error(
+      "Password must be at least 8 characters and contain a number.",
+    );
+  }
+}
+
+/**
+ * Owner/admin: set (or reset) the login password of the account that belongs
+ * to a member's email. Creates the email+password credential when the member
+ * has never signed up — they can then sign in with that email and password
+ * immediately. The password is returned only to the caller (the office keeps
+ * it and shares it with the member privately); it is never stored in clear.
+ */
+export const adminSetMemberPassword = mutation({
+  args: {
+    societyId: v.id("societies"),
+    memberId: v.id("members"),
+    password: v.string(),
+  },
+  handler: async (ctx, { societyId, memberId, password }) => {
+    const society = await requireSociety(ctx, societyId);
+    const callerId = await requireUserId(ctx);
+    if (
+      society.createdBy !== callerId &&
+      !(await isSoftwareAdmin(ctx, callerId))
+    ) {
+      throw new Error(
+        "Only the society owner or a software admin can set member passwords.",
+      );
+    }
+    const member = await ctx.db.get(memberId);
+    if (!member || member.societyId !== societyId) {
+      throw new Error("Member not found in this society.");
+    }
+    const email = (member.email ?? "").toLowerCase().trim();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new Error(
+        "This member has no login email — enter their email in the profile first.",
+      );
+    }
+    assertPasswordRules(password);
+
+    await upsertPasswordCredential(ctx, email, password);
+    return { email };
+  },
+});
+
+/**
+ * Owner/admin: read whether a password login exists for a member's email —
+ * powers the "No password yet / Password set" state in the member profile.
+ */
+export const adminMemberPasswordStatus = query({
+  args: {
+    societyId: v.id("societies"),
+    memberId: v.id("members"),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    const society = await requireSociety(ctx, societyId);
+    const callerId = await requireUserId(ctx);
+    if (
+      society.createdBy !== callerId &&
+      !(await isSoftwareAdmin(ctx, callerId))
+    ) {
+      return { hasPassword: false, hasEmail: false };
+    }
+    const member = await ctx.db.get(memberId);
+    if (!member || member.societyId !== societyId) {
+      return { hasPassword: false, hasEmail: false };
+    }
+    const email = (member.email ?? "").toLowerCase().trim();
+    if (!email) return { hasPassword: false, hasEmail: false };
+    const account = await ctx.db
+      .query("authAccounts")
+      .withIndex("providerAndAccountId", (q) =>
+        q.eq("provider", "password").eq("providerAccountId", email),
+      )
+      .unique();
+    return {
+      hasPassword: !!account?.secret,
+      hasEmail: true,
+    };
+  },
+});
+
+/**
+ * Create or overwrite the password credential row for an email, mirroring
+ * Convex Auth's own Password provider storage (provider "password",
+ * providerAccountId = the lower-cased email, Scrypt-hashed secret). When the
+ * credential already exists its old sessions are invalidated so a reset
+ * password takes effect immediately.
+ */
+async function upsertPasswordCredential(
+  ctx: MutationCtx,
+  email: string,
+  password: string,
+) {
+  const secret = await hashPassword(password);
+  const existing = await ctx.db
+    .query("authAccounts")
+    .withIndex("providerAndAccountId", (q) =>
+      q.eq("provider", "password").eq("providerAccountId", email),
+    )
+    .unique();
+  if (existing) {
+    await ctx.db.patch(existing._id, { secret });
+    // Force re-login everywhere with the new password.
+    const sessions = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", existing.userId))
+      .collect();
+    for (const s of sessions) await ctx.db.delete(s._id);
+    return;
+  }
+  // No credential yet: reuse the existing user row when the email has signed
+  // in some other way (OTP), otherwise create a fresh user + credential —
+  // the same rows the Password provider's sign-up flow would have written.
+  const user = await ctx.db
+    .query("users")
+    .withIndex("email", (q) => q.eq("email", email))
+    .unique();
+  const userId =
+    user?._id ?? (await ctx.db.insert("users", { email, name: email }));
+  await ctx.db.insert("authAccounts", {
+    userId,
+    provider: "password",
+    providerAccountId: email,
+    secret,
+  });
+}
