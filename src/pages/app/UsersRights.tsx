@@ -623,6 +623,9 @@ export default function UsersRights() {
 
       {/* Software administrators — visible only to software admins. */}
       {isAdmin && <SoftwareAdminsSection />}
+
+      {/* Office-side portal diagnosis — answers "why does a member's portal show nothing?" */}
+      {canManage && <PortalDiagnosis canManage={canManage} />}
     </div>
   );
 }
@@ -635,6 +638,113 @@ const MENU_SECTIONS = {
   Data: null,
 } as const;
 type MenuSectionKey = keyof typeof MENU_SECTIONS;
+
+type PortalBindingRow = {
+  email: string | null;
+  grant: { id: Id<"membersAccess">; email: string; memberId: Id<"members"> | null } | null;
+  bound: { name: string; flatNo?: string; wing?: string; code?: string; isActive: boolean; bills: number } | null;
+  emailMatch: { name: string; flatNo?: string; wing?: string; code?: string; isActive: boolean; bills: number } | null;
+  flatMatch: { name: string; flatNo?: string; wing?: string; code?: string; isActive: boolean; bills: number } | null;
+  resolved: { name: string; flatNo?: string; wing?: string; code?: string; isActive: boolean; bills: number } | null;
+  resolvedBy: string | null;
+  activeMemberCount: number;
+  activeMembersWithBills: number;
+  totalBillsOnActiveMembers: number;
+  accountExists: boolean;
+  allEmailGrants: { role: string; memberId: Id<"members"> | null }[];
+  verdict: string[];
+};
+
+const flatLabel = (m: { wing?: string; flatNo?: string; code?: string }) =>
+  [m.wing, m.flatNo].filter(Boolean).join("-") || m.code || "?";
+
+/**
+ * "Member portal shows nothing" triage. The office types the member's login
+ * email and gets exactly where the portal resolver points, where the bills
+ * actually sit, and a concrete fix — without touching the member's data.
+ */
+function PortalDiagnosis({ canManage }: { canManage: boolean }) {
+  const { societyId } = useSociety();
+  const [email, setEmail] = useState("");
+  const [checked, setChecked] = useState<string | null>(null);
+  const result = useQuery(
+    api.access.debugPortalBinding,
+    canManage && societyId && checked ? { societyId, email: checked } : "skip",
+  ) as PortalBindingRow | undefined;
+
+  const runCheck = (e: React.FormEvent) => {
+    e.preventDefault();
+    setChecked(email.trim());
+  };
+
+  return (
+    <section className="mt-10 border-t pt-8">
+      <div className="mb-4 flex flex-col gap-1">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <ShieldCheck className="size-4 text-emerald-600" /> Portal login diagnosis
+        </h3>
+        <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+          If a member says their portal shows no bills or receipts, enter the
+          email they sign in with. This shows which flat the login is linked
+          to, where the bills actually sit, and exactly what to fix.
+        </p>
+      </div>
+      <form onSubmit={runCheck} className="mb-4 flex max-w-md gap-2">
+        <Input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="member-login@example.com"
+        />
+        <Button type="submit" className="shrink-0">
+          <ShieldCheck className="size-4" /> Check
+        </Button>
+      </form>
+
+      {!result ? null : (
+        <div className="max-w-2xl space-y-3 rounded-lg border bg-card p-4 shadow-sm">
+          <div className="grid gap-2 text-xs leading-5">
+            <p>
+              <span className="font-medium">Account:</span>{" "}
+              {result.accountExists
+                ? `${checked} — exists and has signed in (or office set a password)`
+                : `${checked} — no account yet; the member must sign in once, or set their password in Members to create it`}
+            </p>
+            <p>
+              <span className="font-medium">Portal grant:</span>{" "}
+              {result.grant
+                ? `member role, linked to ${result.bound ? flatLabel(result.bound) : "(no flat)"}`
+                : result.allEmailGrants.length > 0
+                  ? `none — this email holds a ${result.allEmailGrants[0].role} grant instead`
+                  : "none for this email"}
+            </p>
+            <p>
+              <span className="font-medium">Portal resolves to:</span>{" "}
+              {result.resolved
+                ? `${result.resolved.name} (flat ${flatLabel(result.resolved)}) — ${result.resolved.bills} bill(s). ${result.resolvedBy ?? ""}`
+                : "nothing — no usable member row for this login"}
+            </p>
+            <p>
+              <span className="font-medium">Bills in society:</span>{" "}
+              {result.totalBillsOnActiveMembers} across {result.activeMembersWithBills} of {result.activeMemberCount} active member(s)
+            </p>
+            {result.emailMatch && result.emailMatch.bills > 0 && result.resolved?.bills === 0 && (
+              <p className="text-amber-600 dark:text-amber-400">
+                A member row carrying this email (flat {flatLabel(result.emailMatch)}) holds {result.emailMatch.bills} bill(s) — re-grant the login onto that flat.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5 border-t pt-3">
+            {result.verdict.map((v, i) => (
+              <p key={i} className="text-xs leading-5 text-muted-foreground">{v}</p>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function SoftwareAdminsSection() {
   const admins = useQuery(api.access.listSoftwareAdmins) as

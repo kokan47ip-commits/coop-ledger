@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import {
+  analyzePortalBinding,
   isSoftwareAdmin,
   requireSociety,
   requireUserId,
@@ -109,6 +110,88 @@ export const myMemberBinding = query({
       flatNo: member.flatNo,
       wing: member.wing,
       code: member.code,
+    };
+  },
+});
+
+/**
+ * Office-side portal diagnosis: for one login email, show which member row
+ * the portal resolves it to, where the bills actually sit, and a concrete fix
+ * suggestion. Owner/software-admin only. Returns counts and flat labels only
+ * — never the society's book data.
+ */
+export const debugPortalBinding = query({
+  args: { societyId: v.id("societies"), email: emailField },
+  handler: async (ctx, { societyId, email }) => {
+    const society = await requireSociety(ctx, societyId);
+    await requireRightsManager(ctx, society);
+    const normalized = email.toLowerCase().trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
+      throw new Error("Enter a valid email address.");
+    }
+
+    // The account row, if the member has signed in (or the office created it
+    // by setting a password). Its id is what real grant rows match on.
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", normalized))
+      .unique();
+    const analysis = await analyzePortalBinding(ctx, society, normalized, user?._id);
+    if (!analysis.email) {
+      return {
+        ...analysis,
+        accountExists: false,
+        allEmailGrants: [] as { role: string; memberId: Id<"members"> | null }[],
+        verdict: ["This login has no email on its account — the portal cannot be linked."],
+      };
+    }
+
+    const grantRows = await ctx.db
+      .query("membersAccess")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const allEmailGrants = grantRows
+      .filter((g) => g.email === normalized)
+      .map((g) => ({ role: g.role, memberId: g.memberId ?? null }));
+
+    // Verdict lines — concrete, office-readable fixes.
+    const verdict: string[] = [];
+    if (!analysis.grant) {
+      verdict.push(
+        allEmailGrants.length > 0
+          ? `A grant exists for this email but with role "${allEmailGrants[0].role}" (not "member"), so the portal is off. Edit that user here and switch the role to Member — picking the flat that has the bills.`
+          : "No portal grant exists for this email. In Members, open this member's row, use the portal-login action and choose role Member with their flat — the grant is created with it.",
+      );
+    } else if (!analysis.grant.memberId) {
+      verdict.push(
+        "The member-role grant has no flat linked to it. Edit the user here, set role Member and pick the flat.",
+      );
+    }
+    if (!user) {
+      verdict.push(
+        `No account exists for ${normalized} yet. The member must sign in once (with a password or an emailed code) before anything can appear — or the office can create the account by setting their password in Members.`,
+      );
+    }
+    if (analysis.totalBillsOnActiveMembers === 0) {
+      verdict.push(
+        "No bills exist on any active member of this society yet — generate bills first (Bill Register → Generate).",
+      );
+    } else if (analysis.resolved && analysis.resolved.bills === 0) {
+      verdict.push(
+        `Bills exist (${analysis.totalBillsOnActiveMembers} across ${analysis.activeMembersWithBills} active member(s)) but none sit on the row this login resolves to (${analysis.resolved.name}). Re-grant the email as Member and pick the flat whose row holds the bills.`,
+      );
+    }
+    if (analysis.resolved && analysis.resolved.bills > 0) {
+      verdict.push(
+        `Binding looks correct: the login resolves to ${analysis.resolved.name} (${[analysis.resolved.wing, analysis.resolved.flatNo].filter(Boolean).join("-") || analysis.resolved.code}) which holds ${analysis.resolved.bills} bill(s). If the member portal still shows nothing, have them log out and sign in again so the session picks up the grant.`,
+      );
+    }
+
+    return {
+      ...analysis,
+      accountExists: !!user,
+      allEmailGrants,
+      verdict,
     };
   },
 });

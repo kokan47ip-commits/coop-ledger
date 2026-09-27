@@ -51,28 +51,77 @@ export async function societyAccess(
   return grant?.role ?? "none";
 }
 
+/** One member row as the portal binding/diagnosis reports it. */
+export type PortalMemberSummary = {
+  memberId: Id<"members">;
+  code?: string;
+  name: string;
+  flatNo?: string;
+  wing?: string;
+  isActive: boolean;
+  bills: number;
+};
+
 /**
- * The flat a "member"-role grant binds this user to in a society, if any.
- * Resolved from the same grant row used by societyAccess.
+ * Everything the portal binding resolver looks at for one login. Powers both
+ * the resolver itself (societyMemberBinding) and the office-side diagnosis
+ * (access.debugPortalBinding), so the two can never drift apart.
  */
-export async function societyMemberBinding(
+export type PortalBindingAnalysis = {
+  email: string | null;
+  grant: {
+    id: Id<"membersAccess">;
+    email: string;
+    memberId: Id<"members"> | null;
+  } | null;
+  bound: PortalMemberSummary | null;
+  emailMatch: PortalMemberSummary | null;
+  flatMatch: PortalMemberSummary | null;
+  resolved: PortalMemberSummary | null;
+  resolvedBy: string | null;
+  activeMemberCount: number;
+  activeMembersWithBills: number;
+  totalBillsOnActiveMembers: number;
+};
+
+/**
+ * Resolve (and explain) which member row a login's "member"-role grant binds
+ * it to. Same logic as before, but every intermediate is reported so the
+ * office can see WHY a portal shows (or doesn't show) bills. Accepts the
+ * login email and, when the account exists, its user id (grant rows match on
+ * either).
+ */
+export async function analyzePortalBinding(
   ctx: QueryCtx,
   society: Doc<"societies">,
-  userId: Id<"users">,
-): Promise<Id<"members"> | null> {
-  const user = await ctx.db.get(userId);
-  const email = user?.email?.toLowerCase().trim() ?? null;
-  if (!email) return null;
+  email: string | null,
+  userId?: Id<"users">,
+): Promise<PortalBindingAnalysis> {
+  if (!email) {
+    return {
+      email: null,
+      grant: null,
+      bound: null,
+      emailMatch: null,
+      flatMatch: null,
+      resolved: null,
+      resolvedBy: null,
+      activeMemberCount: 0,
+      activeMembersWithBills: 0,
+      totalBillsOnActiveMembers: 0,
+    };
+  }
   const grants = await ctx.db
     .query("membersAccess")
     .withIndex("by_society", (q) => q.eq("societyId", society._id))
     .collect();
-  const grant = grants.find(
-    (g) =>
-      (g.userId === userId || g.email === email) &&
-      g.role === "member" &&
-      g.memberId !== undefined,
-  );
+  const grant =
+    grants.find(
+      (g) =>
+        (g.userId === userId || g.email === email) &&
+        g.role === "member" &&
+        g.memberId !== undefined,
+    ) ?? null;
   const boundId = grant?.memberId;
   const members = await ctx.db
     .query("members")
@@ -88,25 +137,33 @@ export async function societyMemberBinding(
   const oldFlat = norm(bound?.flatNo);
   const oldWing = norm(bound?.wing);
   const oldName = norm(bound?.name);
-  const candidates: Doc<"members">[] = [];
-  const push = (m?: Doc<"members"> | null) => {
-    if (m && m.societyId === society._id && !candidates.some((c) => c._id === m._id))
-      candidates.push(m);
+  const candidates: { member: Doc<"members">; matchedBy: string }[] = [];
+  const push = (m: Doc<"members"> | null | undefined, matchedBy: string) => {
+    if (
+      m &&
+      m.societyId === society._id &&
+      !candidates.some((c) => c.member._id === m._id)
+    )
+      candidates.push({ member: m, matchedBy });
   };
-  push(bound);
-  push(active.find((m) => norm(m.email) === email));
+  push(bound, "the portal grant binding");
+  push(
+    active.find((m) => norm(m.email) === email),
+    "the member row carrying the login email",
+  );
   if (bound) {
-    push(active.find((m) => oldCode !== "" && norm(m.code) === oldCode));
+    push(active.find((m) => oldCode !== "" && norm(m.code) === oldCode), "a matching member code");
     push(
       active.find(
         (m) => oldFlat !== "" && norm(m.flatNo) === oldFlat && norm(m.wing) === oldWing,
       ),
+      "a matching flat/wing",
     );
-    push(active.find((m) => oldName !== "" && norm(m.name) === oldName));
+    push(active.find((m) => oldName !== "" && norm(m.name) === oldName), "a matching member name");
   }
 
-  // Bills decide: the right row is the one the register actually billed.
-  const billCount = async (m: Doc<"members">) =>
+  // Bill census over active members (also decides between candidates).
+  const countBills = async (m: Doc<"members">) =>
     (
       await ctx.db
         .query("bills")
@@ -115,14 +172,94 @@ export async function societyMemberBinding(
         )
         .collect()
     ).length;
-  for (const c of candidates) {
-    if (c.isActive && (await billCount(c)) > 0) return c._id;
+  const billsByMember = new Map<Id<"members">, number>();
+  let membersWithBills = 0;
+  let totalBills = 0;
+  for (const m of active) {
+    const n = await countBills(m);
+    if (n > 0) {
+      membersWithBills++;
+      totalBills += n;
+      billsByMember.set(m._id, n);
+    }
   }
-  // No bills anywhere (or none generated yet): keep the bound row when it is
-  // active, else the best active candidate, else the original binding.
-  const boundActive = bound && bound.societyId === society._id && bound.isActive;
-  if (boundActive) return bound!._id;
-  return candidates.find((c) => c.isActive)?._id ?? (bound ? bound._id : null);
+
+  // Bills decide: the right row is the one the register actually billed.
+  const summarize = (m: Doc<"members"> | null | undefined): PortalMemberSummary | null =>
+    m && m.societyId === society._id
+      ? {
+          memberId: m._id,
+          code: m.code,
+          name: m.name,
+          flatNo: m.flatNo,
+          wing: m.wing,
+          isActive: m.isActive,
+          bills: billsByMember.get(m._id) ?? 0,
+        }
+      : null;
+
+  let resolved: { member: Doc<"members">; matchedBy: string } | undefined;
+  let resolvedBy: string | null = null;
+  for (const c of candidates) {
+    if (c.member.isActive && (billsByMember.get(c.member._id) ?? 0) > 0) {
+      resolved = c;
+      resolvedBy = `resolves through ${c.matchedBy} — that row holds the bills`;
+      break;
+    }
+  }
+  if (!resolved) {
+    // No bills anywhere (or none generated yet): keep the bound row when it
+    // is active, else the best active candidate, else the original binding.
+    const boundActive = bound && bound.societyId === society._id && bound.isActive;
+    const activeCandidate = candidates.find((c) => c.member.isActive);
+    if (boundActive) {
+      resolved = { member: bound!, matchedBy: "the active portal grant binding" };
+      resolvedBy = "no bills exist on any active member — kept the grant binding";
+    } else if (activeCandidate) {
+      resolved = activeCandidate;
+      resolvedBy = "no bills exist on any active member — kept the best active candidate";
+    } else if (bound) {
+      resolved = { member: bound, matchedBy: "the original portal grant binding" };
+      resolvedBy = "grant binding row (inactive)";
+    }
+  }
+
+  const emailMatchRow = members.find((m) => norm(m.email) === email) ?? null;
+  const flatMatchRow = bound
+    ? (active.find(
+        (m) => oldFlat !== "" && norm(m.flatNo) === oldFlat && norm(m.wing) === oldWing,
+      ) ?? null)
+    : null;
+
+  return {
+    email,
+    grant: grant
+      ? { id: grant._id, email: grant.email, memberId: grant.memberId ?? null }
+      : null,
+    bound: summarize(bound),
+    emailMatch: summarize(emailMatchRow),
+    flatMatch: summarize(flatMatchRow),
+    resolved: summarize(resolved?.member),
+    resolvedBy,
+    activeMemberCount: active.length,
+    activeMembersWithBills: membersWithBills,
+    totalBillsOnActiveMembers: totalBills,
+  };
+}
+
+/**
+ * The flat a "member"-role grant binds this user to in a society, if any.
+ * Resolved from the same grant row used by societyAccess.
+ */
+export async function societyMemberBinding(
+  ctx: QueryCtx,
+  society: Doc<"societies">,
+  userId: Id<"users">,
+): Promise<Id<"members"> | null> {
+  const user = await ctx.db.get(userId);
+  const email = user?.email?.toLowerCase().trim() ?? null;
+  if (!email) return null;
+  return (await analyzePortalBinding(ctx, society, email, userId)).resolved?.memberId ?? null;
 }
 
 /** True when the signed-in user is a software-level administrator. */
