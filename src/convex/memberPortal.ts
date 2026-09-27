@@ -559,15 +559,39 @@ export const changePassword = mutation({
         q.eq("userId", userId).eq("provider", "password"),
       )
       .unique();
-    if (!account || !account.secret) {
-      throw new Error(
-        "Your account signs in with emailed codes. Use \"Forgot password?\" on the sign-in screen to set a password first.",
-      );
+    if (account?.secret) {
+      // Existing password login: the current password must prove it's them.
+      const ok = await verifyPassword(currentPassword, account.secret);
+      if (!ok) throw new Error("Current password is incorrect.");
+      await ctx.db.patch(account._id, {
+        secret: await hashPassword(newPassword),
+      });
+    } else if (account) {
+      // Password-provider row without a secret (OTP-created): set the first
+      // password — being signed in already proves the account is theirs.
+      if (currentPassword) {
+        throw new Error(
+          "This account has no password yet — leave the current password blank.",
+        );
+      }
+      await ctx.db.patch(account._id, {
+        secret: await hashPassword(newPassword),
+      });
+    } else {
+      // No password credential at all (OTP-only or guest-converted user):
+      // create one under the same account.
+      if (currentPassword) {
+        throw new Error(
+          "This account has no password yet — leave the current password blank.",
+        );
+      }
+      await ctx.db.insert("authAccounts", {
+        userId,
+        provider: "password",
+        providerAccountId: (user.email ?? "").toLowerCase().trim(),
+        secret: await hashPassword(newPassword),
+      });
     }
-    const ok = await verifyPassword(currentPassword, account.secret);
-    if (!ok) throw new Error("Current password is incorrect.");
-
-    await ctx.db.patch(account._id, { secret: await hashPassword(newPassword) });
     return true;
   },
 });
@@ -629,24 +653,7 @@ export const adminSetMemberPassword = mutation({
     // never needs a grant.
     const owner = society.createdBy ? await ctx.db.get(society.createdBy) : null;
     if (owner?.email?.toLowerCase().trim() !== email) {
-      const grants = await ctx.db
-        .query("membersAccess")
-        .withIndex("by_society", (q) => q.eq("societyId", societyId))
-        .collect();
-      const existing = grants.find((g) => g.email === email);
-      if (!existing) {
-        await ctx.db.insert("membersAccess", {
-          societyId,
-          email,
-          role: "member",
-          memberId,
-          userId: credUserId,
-          grantedBy: callerId,
-          createdAt: Date.now(),
-        });
-      } else if (existing.role === "member" && existing.memberId !== memberId) {
-        await ctx.db.patch(existing._id, { memberId });
-      }
+      await upsertPortalGrant(ctx, societyId, email, memberId, callerId, credUserId);
     }
 
     return { email };
@@ -885,6 +892,76 @@ export const setPasswordWithOtp = mutation({
     if (guard) await ctx.db.delete(guard._id);
 
     await upsertPasswordCredential(ctx, normalized, newPassword);
+
+    // Portal binding: mirror the office "set password" flow — any society
+    // whose member row carries this email gets a member grant bound to that
+    // flat, so bills/ledger/payments appear on first login. The email was
+    // just proven via the OTP code, so this is safe to self-serve.
+    await ensurePortalGrantsByEmail(ctx, normalized);
+
     return { email: normalized };
   },
 });
+
+/**
+ * Create (or re-point) the flat-bound "member" portal grant for an email in
+ * one society. Used by both the office-set-password flow and the member's
+ * own OTP-verified password set. Owner emails never need a grant.
+ */
+async function upsertPortalGrant(
+  ctx: MutationCtx,
+  societyId: Id<"societies">,
+  email: string,
+  memberId: Id<"members">,
+  grantedBy: Id<"users">,
+  userId: Id<"users">,
+) {
+  const grants = await ctx.db
+    .query("membersAccess")
+    .withIndex("by_society", (q) => q.eq("societyId", societyId))
+    .collect();
+  const existing = grants.find((g) => g.email === email);
+  if (!existing) {
+    await ctx.db.insert("membersAccess", {
+      societyId,
+      email,
+      role: "member",
+      memberId,
+      userId,
+      grantedBy,
+      createdAt: Date.now(),
+    });
+  } else if (existing.role === "member" && existing.memberId !== memberId) {
+    await ctx.db.patch(existing._id, { memberId });
+  }
+}
+
+/**
+ * Ensure every society that has a member row with this email grants the
+ * login portal access to that flat. Self-serve password setup has no society
+ * context, so the (small) societies table is scanned; each society's members
+ * are read through the by_society index.
+ */
+async function ensurePortalGrantsByEmail(ctx: MutationCtx, email: string) {
+  const societies = await ctx.db.query("societies").collect();
+  for (const society of societies) {
+    if (society.createdBy) {
+      const owner = await ctx.db.get(society.createdBy);
+      if (owner?.email?.toLowerCase().trim() === email) continue;
+    }
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_society", (q) => q.eq("societyId", society._id))
+      .collect();
+    const match = members.find(
+      (m) => (m.email ?? "").toLowerCase().trim() === email,
+    );
+    if (!match) continue;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", email))
+      .unique();
+    if (!user) continue;
+    await upsertPortalGrant(ctx, society._id, email, match._id, user._id, user._id);
+  }
+}

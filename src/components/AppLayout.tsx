@@ -1,6 +1,18 @@
 import { Button } from "@/components/ui/button";
 import { MENU_REGISTRY, PATH_TO_MENU, PORTAL_MENUS, PORTAL_PATHS, type MenuKey } from "@/lib/menus";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { api } from "@/convex/_generated/api";
+import { useMutation } from "convex/react";
+import { toast } from "sonner";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -26,6 +38,7 @@ import {
   Landmark,
   LayoutDashboard,
   Loader2,
+  KeyRound,
   LogIn,
   LogOut,
   Plus,
@@ -204,7 +217,6 @@ export function AppLayout() {
     isLoading,
     isGuest,
     role,
-    canEdit,
     isAdmin,
     allowedMenus,
     memberBinding,
@@ -223,21 +235,25 @@ export function AppLayout() {
   );
 
   // Keep the group holding the current page expanded as the user navigates.
+  // The state update runs outside the synchronous effect body
+  // (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setOpenGroups((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const g of NAV) {
-        if (
-          g.collapsible &&
-          navGroupHasActive(g, location.pathname) &&
-          !next[g.title]
-        ) {
-          next[g.title] = true;
-          changed = true;
+    queueMicrotask(() => {
+      setOpenGroups((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const g of NAV) {
+          if (
+            g.collapsible &&
+            navGroupHasActive(g, location.pathname) &&
+            !next[g.title]
+          ) {
+            next[g.title] = true;
+            changed = true;
+          }
         }
-      }
-      return changed ? next : prev;
+        return changed ? next : prev;
+      });
     });
   }, [location.pathname]);
 
@@ -256,6 +272,31 @@ export function AppLayout() {
   const handleSignOut = async () => {
     await signOut();
     navigate("/");
+  };
+
+  // ---- Own login password (any signed-in account) -------------------------
+  const [pwOpen, setPwOpen] = useState(false);
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+  const changeOwnPassword = useMutation(api.memberPortal.changePassword);
+
+  const saveOwnPassword = async () => {
+    if (!user?.email || !newPw) return;
+    setPwBusy(true);
+    setPwError(null);
+    try {
+      await changeOwnPassword({ currentPassword: curPw, newPassword: newPw });
+      toast.success("Password saved — sign in with your email and this password.");
+      setPwOpen(false);
+      setCurPw("");
+      setNewPw("");
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : "Could not set the password.");
+    } finally {
+      setPwBusy(false);
+    }
   };
 
   const isSetupRoute = location.pathname === "/app/society";
@@ -569,13 +610,75 @@ export function AppLayout() {
           </div>
           <button
             type="button"
+            onClick={() => setPwOpen(true)}
+            className="mt-2 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/70 transition-colors hover:bg-white/10 hover:text-sidebar-foreground"
+          >
+            <KeyRound className="size-4" />
+            Set login password
+          </button>
+          <button
+            type="button"
             onClick={handleSignOut}
-            className="mt-2 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/70 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
+            className="mt-0.5 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/70 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
           >
             <LogOut className="size-4" />
             Logout
           </button>
         </div>
+
+      {/* Own login password: works for password logins (current password
+          required) and for OTP-only logins (no current password needed). */}
+      <Dialog open={pwOpen} onOpenChange={setPwOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set your login password</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              For <span className="font-mono text-foreground">{user?.email}</span>
+              {!user?.email &&
+                " — your account has no email on it, so a password cannot be set."}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cur-pw">Current password</Label>
+              <Input
+                id="cur-pw"
+                type="password"
+                autoComplete="current-password"
+                value={curPw}
+                onChange={(e) => setCurPw(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave blank if you sign in with emailed codes and have no
+                password yet.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-pw">New password</Label>
+              <Input
+                id="new-pw"
+                type="password"
+                autoComplete="new-password"
+                placeholder="8+ characters, at least 1 number"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+              />
+            </div>
+            {pwError && <p className="text-sm text-red-500">{pwError}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPwOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={saveOwnPassword}
+                disabled={pwBusy || !newPw || !user?.email}
+              >
+                {pwBusy ? "Saving…" : "Save password"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
       </aside>
 
       {mobileOpen && (
