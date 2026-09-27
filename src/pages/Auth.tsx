@@ -90,13 +90,15 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       console.error("Sign-in error:", err);
       const msg = err instanceof Error ? err.message : "Sign-in failed.";
       setError(
-        msg.includes("Invalid credentials")
-          ? "Incorrect email or password."
-          : msg.includes("Invalid code")
-            ? "That code is incorrect or has expired."
-            : msg.includes("Account ") && msg.includes("already exists")
-              ? "An account with this email already exists. Sign in instead — or reset the password if you forgot it."
-              : msg,
+        msg.includes("Invalid credentials") || msg.includes("InvalidAccountId") || msg.includes("InvalidSecret")
+          ? "Incorrect email or password. If the society office set this password for you, ask them to re-save it — and check for typos or an extra space."
+          : msg.includes("TooManyFailedAttempts")
+            ? "Too many wrong attempts — sign-in is locked for a while. Ask the society office to re-save your password (this unlocks it), or reset it below."
+            : msg.includes("Invalid code")
+              ? "That code is incorrect or has expired."
+              : msg.includes("Account ") && msg.includes("already exists")
+                ? "An account with this email already exists. Sign in instead — or reset the password if you forgot it."
+                : msg,
       );
       setIsLoading(false);
     }

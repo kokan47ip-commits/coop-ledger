@@ -682,6 +682,13 @@ async function upsertPasswordCredential(
     .unique();
   if (existing) {
     await ctx.db.patch(existing._id, { secret });
+    // Clear any sign-in lockout (10 wrong attempts/hour) so the new password
+    // works immediately — re-saving here is the office's unlock mechanism.
+    const limits = await ctx.db
+      .query("authRateLimits")
+      .withIndex("identifier", (q) => q.eq("identifier", existing._id))
+      .collect();
+    for (const l of limits) await ctx.db.delete(l._id);
     // Force re-login everywhere with the new password.
     const sessions = await ctx.db
       .query("authSessions")
@@ -699,10 +706,16 @@ async function upsertPasswordCredential(
     .unique();
   const userId =
     user?._id ?? (await ctx.db.insert("users", { email, name: email }));
-  await ctx.db.insert("authAccounts", {
+  const accountId = await ctx.db.insert("authAccounts", {
     userId,
     provider: "password",
     providerAccountId: email,
     secret,
   });
+  // Defensive: clear stale lockout rows for this (possibly recreated) account.
+  const staleLimits = await ctx.db
+    .query("authRateLimits")
+    .withIndex("identifier", (q) => q.eq("identifier", accountId))
+    .collect();
+  for (const l of staleLimits) await ctx.db.delete(l._id);
 }
