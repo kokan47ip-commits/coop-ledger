@@ -684,14 +684,16 @@ export const adminMemberPasswordStatus = query({
     }
     const email = (member.email ?? "").toLowerCase().trim();
     if (!email) return { hasPassword: false, hasEmail: false };
-    const account = await ctx.db
+    // collect() + first, not .unique(): a duplicate credential row must not
+    // crash this query (it would break the member form's password dialog).
+    const accounts = await ctx.db
       .query("authAccounts")
       .withIndex("providerAndAccountId", (q) =>
         q.eq("provider", "password").eq("providerAccountId", email),
       )
-      .unique();
+      .collect();
     return {
-      hasPassword: !!account?.secret,
+      hasPassword: accounts.some((a) => !!a.secret),
       hasEmail: true,
     };
   },
@@ -700,10 +702,15 @@ export const adminMemberPasswordStatus = query({
 /**
  * Create or overwrite the password credential row for an email, mirroring
  * Convex Auth's own Password provider storage (provider "password",
- * providerAccountId = the lower-cased email, Scrypt-hashed secret). When the
- * credential already exists its old sessions are invalidated so a reset
- * password takes effect immediately, and any sign-in lockout is cleared —
- * saving a password here is the account's unlock mechanism.
+ * providerAccountId = the lower-cased email, Scrypt-hashed secret), and
+ * repair duplicate credential rows if any exist (a duplicate makes every
+ * sign-in for that email fail with a Server Error). Any sign-in lockout is
+ * cleared — saving a password here is the account's unlock mechanism.
+ *
+ * Deliberately does NOT delete active sessions: the member's browser keeps
+ * exchanging its refresh token in the background, and killing their sessions
+ * mid-flight wedges the auth client (repeated "auth:signIn" Server Errors)
+ * instead of a clean re-login. The new password simply applies at next login.
  */
 async function upsertPasswordCredential(
   ctx: MutationCtx,
@@ -711,12 +718,18 @@ async function upsertPasswordCredential(
   password: string,
 ): Promise<{ userId: Id<"users">; accountId: Id<"authAccounts"> }> {
   const secret = await hashPassword(password);
-  const existing = await ctx.db
+  const rows = await ctx.db
     .query("authAccounts")
     .withIndex("providerAndAccountId", (q) =>
       q.eq("provider", "password").eq("providerAccountId", email),
     )
-    .unique();
+    .collect();
+  const existing =
+    rows.find((r) => r.secret) ?? rows[0] ?? null;
+  // Duplicates break sign-in irrecoverably (.unique() throws) — drop extras.
+  for (const extra of rows) {
+    if (extra._id !== existing?._id) await ctx.db.delete(extra._id);
+  }
   if (existing) {
     await ctx.db.patch(existing._id, { secret });
     // Clear any sign-in lockout (10 wrong attempts/hour) so the new password
@@ -726,21 +739,16 @@ async function upsertPasswordCredential(
       .withIndex("identifier", (q) => q.eq("identifier", existing._id))
       .collect();
     for (const l of limits) await ctx.db.delete(l._id);
-    // Force re-login everywhere with the new password.
-    const sessions = await ctx.db
-      .query("authSessions")
-      .withIndex("userId", (q) => q.eq("userId", existing.userId))
-      .collect();
-    for (const s of sessions) await ctx.db.delete(s._id);
     return { userId: existing.userId, accountId: existing._id };
   }
   // No credential yet: reuse the existing user row when the email has signed
   // in some other way (OTP), otherwise create a fresh user + credential —
   // the same rows the Password provider's sign-up flow would have written.
-  const user = await ctx.db
+  const userRows = await ctx.db
     .query("users")
     .withIndex("email", (q) => q.eq("email", email))
-    .unique();
+    .collect();
+  const user = userRows[0] ?? null;
   const userId =
     user?._id ?? (await ctx.db.insert("users", { email, name: email }));
   const accountId = await ctx.db.insert("authAccounts", {
@@ -765,12 +773,13 @@ async function upsertPasswordCredential(
 export const pwSetupPrepare = internalMutation({
   args: { email: v.string() },
   handler: async (ctx, { email }) => {
-    const account = await ctx.db
+    const accountRows = await ctx.db
       .query("authAccounts")
       .withIndex("providerAndAccountId", (q) =>
         q.eq("provider", "password").eq("providerAccountId", email),
       )
-      .unique();
+      .collect();
+    const account = accountRows[0] ?? null;
     // Replace any live setup code for this email with a fresh one.
     if (account) {
       const stale = await ctx.db
@@ -957,10 +966,11 @@ async function ensurePortalGrantsByEmail(ctx: MutationCtx, email: string) {
       (m) => (m.email ?? "").toLowerCase().trim() === email,
     );
     if (!match) continue;
-    const user = await ctx.db
+    const userRows = await ctx.db
       .query("users")
       .withIndex("email", (q) => q.eq("email", email))
-      .unique();
+      .collect();
+    const user = userRows[0];
     if (!user) continue;
     await upsertPortalGrant(ctx, society._id, email, match._id, user._id, user._id);
   }
