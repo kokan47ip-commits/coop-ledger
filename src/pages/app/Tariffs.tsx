@@ -25,7 +25,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
-import type { Doc, Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { downloadMemberTariffTemplate, parseExcelFile } from "@/lib/excel";

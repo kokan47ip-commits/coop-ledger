@@ -319,7 +319,6 @@ export const removeByPeriod = mutation({
     // Detach allocations from receipts instead of refusing to delete: the
     // receipt remains as a credit (advance) on the member's ledger.
     let deleted = 0;
-    let blocked = 0;
     for (const b of inPeriod) {
       await ctx.db.delete(b._id);
       deleted++;
@@ -330,7 +329,9 @@ export const removeByPeriod = mutation({
         await ctx.db.patch(vch._id, { allocations: allocs.length > 0 ? allocs : undefined });
       }
     }
-    return { deleted, blocked };
+    // `blocked` stays 0 for the register UI: allocations are detached from
+    // receipts instead of ever blocking the delete.
+    return { deleted, blocked: 0 };
   },
 });
 

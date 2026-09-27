@@ -30,7 +30,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { effectiveFyPeriod, formatDate, formatINR, formatPeriod, fyStartISO, todayISO } from "@/lib/format";
+import { effectiveFyPeriod, formatDate, formatINR, fyStartISO, todayISO } from "@/lib/format";
 import { BookText, Copy, Download, FileText, HandCoins, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
@@ -183,7 +183,8 @@ export default function Members() {
     };
     if (kind === "pdf") exportPDF(meta, [table], `member-ledger-${m.code}.pdf`);
     else exportWord(meta, [table], `member-ledger-${m.code}.doc`);
-    setExportTarget(null);
+    // Reset outside the synchronous effect body (react-hooks/set-state-in-effect).
+    queueMicrotask(() => setExportTarget(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTarget, ledger]);
 

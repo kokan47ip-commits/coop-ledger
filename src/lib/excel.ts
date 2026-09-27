@@ -192,11 +192,6 @@ export function downloadMemberTariffTemplate(
 ) {
   // Template columns print the short name when set — the upload matcher
   // matches them back to the head (exact on either name, then containment).
-  const cols = [
-    "Flat No",
-    "Name of Member",
-    ...tariffs.map((t) => t.shortName?.trim() || t.name),
-  ];
   const rows: Record<string, unknown>[] =
     sampleMembers.length > 0
       ? sampleMembers.map((m, i) => {
