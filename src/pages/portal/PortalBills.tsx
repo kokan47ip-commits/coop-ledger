@@ -44,6 +44,9 @@ export default function PortalBills() {
         debug.bound
           ? `This login is linked to flat ${debug.bound.flat ?? "?"} (${debug.bound.isActive ? "active" : "inactive member row"}) which has ${debug.bound.bills} bill(s).`
           : "No flat is linked to this login (no member-portal grant, or its flat no longer matches any member).",
+        debug.resolved
+          ? `This session currently resolves to ${debug.resolved.name} (flat ${debug.resolved.flat}) — ${debug.resolved.bills} bill(s). ${debug.resolvedBy ?? ""}`
+          : "This session does not resolve to any flat right now.",
         debug.emailMatch
           ? `A member row carrying this email (${debug.emailMatch.flat}) holds ${debug.emailMatch.bills} bill(s).`
           : "",
@@ -133,6 +136,17 @@ export default function PortalBills() {
   }
   if (!bills || !society) {
     return <Skeleton className="h-64 w-full" />;
+  }
+  if (bills.length === 0) {
+    // The binding works but resolved to a member row with no bills — surface
+    // what the live session resolved to (and where the bills actually sit)
+    // so the office can fix the grant without guesswork.
+    return (
+      <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300">
+        <p className="font-medium">No bills are showing for this login.</p>
+        {debugText && <p className="text-xs leading-5">{debugText}</p>}
+      </div>
+    );
   }
 
   return (

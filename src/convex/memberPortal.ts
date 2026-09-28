@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  analyzePortalBinding,
   assertInFy,
   isSoftwareAdmin,
   nextNumber,
@@ -154,9 +155,11 @@ export const debugMyBinding = query({
   args: { societyId: v.id("societies") },
   handler: async (ctx, { societyId }) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) return { email: null as string | null, grants: [], bound: null, emailMatch: null, activeMembers: 0, billsOnActiveMembers: 0 };
+    if (!userId)
+      return { email: null as string | null, grants: [], bound: null, emailMatch: null, resolved: null, resolvedBy: null as string | null, activeMembers: 0, billsOnActiveMembers: 0 };
     const society = await ctx.db.get(societyId);
-    if (!society) return { email: null as string | null, grants: [], bound: null, emailMatch: null, activeMembers: 0, billsOnActiveMembers: 0 };
+    if (!society)
+      return { email: null as string | null, grants: [], bound: null, emailMatch: null, resolved: null, resolvedBy: null as string | null, activeMembers: 0, billsOnActiveMembers: 0 };
     const user = await ctx.db.get(userId);
     const email = user?.email?.toLowerCase().trim() ?? null;
     const grants = await ctx.db
@@ -205,11 +208,27 @@ export const debugMyBinding = query({
       : null;
     let billsOnActiveMembers = 0;
     for (const m of active) billsOnActiveMembers += await countBills(m._id);
+    // What the live session actually resolves to (bills decide between
+    // candidates). The office-side diagnosis runs the same resolution from
+    // the other direction, so comparing the two pinpoints any
+    // session-vs-data mismatch.
+    const analysis = await analyzePortalBinding(ctx, society, email, userId);
     return {
       email,
       grants: myGrants,
       bound,
       emailMatch,
+      resolved: analysis.resolved
+        ? {
+            name: analysis.resolved.name,
+            flat:
+              [analysis.resolved.wing, analysis.resolved.flatNo]
+                .filter(Boolean)
+                .join("-") || analysis.resolved.code,
+            bills: analysis.resolved.bills,
+          }
+        : null,
+      resolvedBy: analysis.resolvedBy,
       activeMembers: active.length,
       billsOnActiveMembers,
     };
