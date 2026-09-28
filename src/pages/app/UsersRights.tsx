@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { MENU_REGISTRY } from "@/lib/menus";
-import { Pencil, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Users } from "lucide-react";
+import { KeyRound, Pencil, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -623,6 +623,7 @@ export default function UsersRights() {
 
       {/* Software administrators — visible only to software admins. */}
       {isAdmin && <SoftwareAdminsSection />}
+      {isAdmin && <AdminResetPasswordSection />}
 
       {/* Office-side portal diagnosis — answers "why does a member's portal show nothing?" */}
       {canManage && <PortalDiagnosis canManage={canManage} />}
@@ -742,6 +743,75 @@ function PortalDiagnosis({ canManage }: { canManage: boolean }) {
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+function AdminResetPasswordSection() {
+  const adminSetPassword = useMutation(api.users.adminSetPassword);
+  const [email, setEmail] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !newPw) return;
+    if (
+      !confirm(
+        `Set a new password for ${email}? They will sign in with this password immediately.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await adminSetPassword({ email, newPassword: newPw });
+      toast.success(
+        `Password reset — ${email} can now sign in with the new password.`,
+      );
+      setEmail("");
+      setNewPw("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-10 border-t pt-8">
+      <div className="mb-4 flex flex-col gap-1">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <KeyRound className="size-4 text-violet-600" /> Reset any account's
+          password
+        </h3>
+        <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+          Locked out, or a member's sign-in isn't accepting their password? As a
+          software admin you can set a fresh password for any account by email —
+          no current password needed. 8+ characters with at least 1 number.
+        </p>
+      </div>
+      <form onSubmit={submit} className="flex max-w-lg flex-wrap gap-2">
+        <Input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="user@example.com"
+          className="min-w-56 flex-1"
+        />
+        <Input
+          type="text"
+          required
+          value={newPw}
+          onChange={(e) => setNewPw(e.target.value)}
+          placeholder="New password (8+ chars, 1 number)"
+          className="min-w-56 flex-1"
+        />
+        <Button type="submit" disabled={busy} className="shrink-0">
+          <KeyRound className="size-4" />
+          {busy ? "Resetting…" : "Reset password"}
+        </Button>
+      </form>
     </section>
   );
 }
