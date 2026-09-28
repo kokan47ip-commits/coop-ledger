@@ -66,7 +66,25 @@ export const myInfo = query({
         )
         .collect(),
     ]);
-    const totalBilled = bills.reduce((s, b) => s + b.total, 0);
+    // A bill that restates the opening balance ("arrears carried") must not
+    // be billed twice — the member's opening balance is already counted. This
+    // mirrors computeMemberLedger / myLedger, so the dashboard's outstanding
+    // always equals the ledger's closing balance.
+    const receivableId =
+      society.receivableAccountId ??
+      (await ctx.db
+        .query("accounts")
+        .withIndex("by_society", (q) => q.eq("societyId", bind.societyId))
+        .collect()
+        .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
+    const totalBilled = bills.reduce(
+      (s, b) =>
+        s +
+        b.lines
+          .filter((l) => !(receivableId && !l.tariffId && l.accountId === receivableId))
+          .reduce((t, l) => t + l.amount, 0),
+      0,
+    );
     const totalPaid = receipts
       .filter((r) => r.type === "member_receipt")
       .reduce((s, r) => s + r.total, 0);

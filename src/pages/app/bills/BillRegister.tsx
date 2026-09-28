@@ -31,13 +31,13 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
-import { billPdf, billWord, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
+import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { BookText, Download, FileText, HandCoins, Mail, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
 type Bill = Doc<"bills">;
@@ -74,6 +74,7 @@ export default function BillRegister() {
   const updateLines = useMutation(api.bills.updateLines);
   const removeBill = useMutation(api.bills.remove);
   const createVoucher = useMutation(api.vouchers.create);
+  const sendDocs = useAction(api.emailer.sendDocs);
   const signatures = useCommitteeSignatures();
   const navigate = useNavigate();
 
@@ -104,6 +105,10 @@ export default function BillRegister() {
   const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  // Email bills: scope (ticked rows vs all filtered) and send state.
+  const [mailOpen, setMailOpen] = useState(false);
+  const [mailScope, setMailScope] = useState<"selected" | "filtered">("selected");
+  const [mailing, setMailing] = useState(false);
   const hasEdits = Object.keys(edits).length > 0;
 
   // Bill generation inputs
@@ -279,8 +284,9 @@ export default function BillRegister() {
   };
 
   /** Single-bill export in the legacy Shama-I format. */
-  const exportSingle = (b: Bill, kind: "pdf" | "word") => {
-    if (!society) return;    const m = memberOf(b.memberId);
+  const buildBillData = (b: Bill): LegacyBillData | null => {
+    if (!society) return null;
+    const m = memberOf(b.memberId);
     const arrearsFromBills = (bills ?? [])
       .filter((x) => x.memberId === b.memberId && x.period < b.period)
       .reduce((s, x) => s + (x.total - x.paidAmount), 0);
@@ -291,7 +297,7 @@ export default function BillRegister() {
     const currentCharges = (b.lines ?? [])
       .filter((l) => !isArrearsLine(l.name))
       .reduce((s, l) => s + l.amount, 0);
-    const data: LegacyBillData = {
+    return {
       society: {
         name: society.name,
         address: [society.address, society.city, society.state, society.pincode]
@@ -313,6 +319,12 @@ export default function BillRegister() {
       totalDue: currentCharges + arrears,
       paidAmount: b.paidAmount,
     };
+  };
+
+  const exportSingle = (b: Bill, kind: "pdf" | "word") => {
+    const data = buildBillData(b);
+    if (!data) return;
+    const m = memberOf(b.memberId);
     const name = m ? `${m.code}-${b.billNo}` : b.billNo;
     if (kind === "pdf") billPdf(data, `${name}.pdf`);
     else billWord(data, `${name}.doc`);
@@ -613,6 +625,54 @@ export default function BillRegister() {
     }
   };
 
+  // ---- Email bills (single / selected / whole filtered month) ------------
+  const mailTargets = mailScope === "selected" ? rows.filter((b) => selected.has(b._id)) : rows;
+  const mailSkips = mailTargets.filter((b) => {
+    const email = memberOf(b.memberId)?.email?.trim() ?? "";
+    return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+  });
+  const mailableCount = mailTargets.length - mailSkips.length;
+
+  const sendBillEmails = async () => {
+    if (!societyId || !society) return;
+    const messages = mailTargets
+      .map((b) => {
+        const m = memberOf(b.memberId);
+        const to = m?.email?.trim() ?? "";
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return null;
+        const data = buildBillData(b);
+        if (!data) return null;
+        return {
+          to,
+          subject: `Maintenance Bill ${periodLabelLong(b.period)} — ${society.name}`,
+          html: `<p>Dear ${data.memberName},</p><p>Please find attached the maintenance bill for <b>${periodLabelLong(b.period)}</b> (Bill No. ${data.billNo}, Total Due Rs. ${data.totalDue.toFixed(2)}).</p><p>This is a computer-generated mail from the society office.</p>`,
+          attachments: [
+            {
+              filename: `${m ? `${m.code}-` : ""}${b.billNo}.pdf`,
+              contentBase64: bytesToBase64(billPdfBytes(data)),
+            },
+          ],
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    setMailing(true);
+    try {
+      const res = await sendDocs({ societyId, messages });
+      const ok = res.results.filter((r) => r.ok).length;
+      const failed = res.results.filter((r) => !r.ok);
+      if (failed.length > 0) {
+        toast.error(`Emailed ${ok} bill(s); ${failed.length} failed. ${failed[0]?.error ?? ""}`);
+      } else {
+        toast.success(`Emailed ${ok} bill(s).`);
+      }
+      setMailOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to email bills");
+    } finally {
+      setMailing(false);
+    }
+  };
+
   const receivableMissing =
     society && !society.receivableAccountId &&
     (accounts ?? []).some((a) => a.kind === "receivable");
@@ -803,6 +863,16 @@ export default function BillRegister() {
           <Button variant="outline" size="sm" onClick={() => doExport("print")}>
             <Printer className="size-4" /> Print
           </Button>
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={rows.length === 0}
+              onClick={() => setMailOpen(true)}
+            >
+              <Mail className="size-4" /> Email
+            </Button>
+          )}
         </div>
       </div>
 
@@ -988,6 +1058,67 @@ export default function BillRegister() {
           </Button>
         </div>
       )}
+
+      {/* Email bills dialog: selected or whole filtered month */}
+      <Dialog open={mailOpen} onOpenChange={setMailOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Email bills — {formatPeriod(periodFilter)}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Send to</Label>
+              <Select
+                value={mailScope}
+                onValueChange={(v) => setMailScope(v as "selected" | "filtered")}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="selected">
+                    Selected bills ({rows.filter((b) => selected.has(b._id)).length})
+                  </SelectItem>
+                  <SelectItem value="filtered">All filtered bills ({rows.length})</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                One email per member with their bill attached — a single bill,
+                a ticked selection, or the whole filtered month in one go.
+              </p>
+            </div>
+            <div className="rounded-md border bg-accent/30 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Bills to email</span>
+                <span className="tabular-nums">{mailableCount}</span>
+              </div>
+              {mailSkips.length > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">No email on member profile</span>
+                  <span className="tabular-nums">{mailSkips.length}</span>
+                </div>
+              )}
+            </div>
+            {mailableCount === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                None of these members have an email address — add emails in the
+                member profiles first.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Each PDF uses the same legacy bill format as the download
+                buttons. Members without an email are skipped.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setMailOpen(false)} disabled={mailing}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={sendBillEmails} disabled={mailing || mailableCount === 0}>
+              {mailing ? "Sending…" : `Email ${mailableCount} bill${mailableCount === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Quick payment dialog for a single bill */}
       <Dialog open={payOpen} onOpenChange={setPayOpen}>

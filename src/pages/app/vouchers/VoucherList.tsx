@@ -1,6 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -30,14 +37,17 @@ import {
   type TableSpec,
 } from "@/lib/export";
 import {
+  bytesToBase64,
   periodLabelLong,
   printReceiptWindows,
   receiptPdf,
+  receiptPdfBytes,
   receiptPrint,
   receiptWord,
   receiptsPdfBatch,
   receiptsWordBatch,
   voucherPdf,
+  voucherPdfBytes,
   voucherPrint,
   voucherWord,
   voucherTitleFor,
@@ -50,6 +60,7 @@ import {
   CalendarRange,
   Download,
   FileText,
+  Mail,
   Pencil,
   Printer,
   Receipt as ReceiptIcon,
@@ -58,7 +69,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
 type Voucher = Doc<"vouchers">;
@@ -120,6 +131,7 @@ export function VoucherList({
     societyId && receiptMode === "receipt" ? { societyId } : "skip",
   );
   const remove = useMutation(api.vouchers.remove);
+  const sendDocs = useAction(api.emailer.sendDocs);
   const signatures = useCommitteeSignatures();
   const [typeFilter, setTypeFilter] = useState("all");
   const [from, setFrom] = useState("");
@@ -128,6 +140,9 @@ export function VoucherList({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** Pack two receipt boxes per A4 page when printing / exporting receipts. */
   const [twoUp, setTwoUp] = useState(true);
+  // Email receipts/vouchers for the ticked rows.
+  const [mailOpen, setMailOpen] = useState(false);
+  const [mailing, setMailing] = useState(false);
 
   const filtered = useMemo(() => {
     let list = [...(vouchers ?? [])].sort((a, b) =>
@@ -284,6 +299,80 @@ export function VoucherList({
   const isReceiptRow = (v: Voucher) =>
     v.type === "member_receipt" || v.type === "other_receipt";
 
+  /**
+   * Email each ticked row to its member as a PDF attachment — the legacy
+   * receipt document for receipt rows, the voucher document otherwise.
+   */
+  const sendVoucherEmails = async () => {
+    if (!societyId || !society) return;
+    const messages = selectedRows
+      .map((v) => {
+        const mem = members?.find((m) => m._id === v.memberId);
+        const to = mem?.email?.trim() ?? "";
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return null;
+        if (isReceiptRow(v)) {
+          const d = buildReceiptDataFor(v);
+          if (!d) return null;
+          return {
+            to,
+            subject: `Payment Receipt ${d.receiptNo} — ${society.name}`,
+            html: `<p>Dear ${d.memberName},</p><p>Thank you for your payment of <b>Rs. ${d.amount.toFixed(2)}</b> (${d.purpose}). The receipt is attached.</p><p>This is a computer-generated mail from the society office.</p>`,
+            attachments: [
+              { filename: `receipt-${v.voucherNo}.pdf`, contentBase64: bytesToBase64(receiptPdfBytes(d)) },
+            ],
+          };
+        }
+        const member = members?.find((m) => m._id === v.memberId);
+        const data: VoucherDocData = {
+          society: {
+            name: society.name,
+            address: [society.address, society.city, society.state, society.pincode]
+              .filter(Boolean)
+              .join(", "),
+            registrationNo: society.registrationNo,
+          },
+          title: voucherTitleFor(v.type),
+          voucherNo: v.voucherNo,
+          voucherDate: v.date,
+          bookCode: fixedType ?? v.type,
+          party: v.mode || member?.name,
+          mode: v.type === "member_receipt" ? v.mode : undefined,
+          chequeNo: v.reference,
+          bankName: (v.narration ?? "").match(/(?:— )?Bank: (.+)$/)?.[1]?.trim(),
+          narration: v.narration ?? undefined,
+          amount: v.total,
+          lines: voucherLines(v),
+        };
+        return {
+          to,
+          subject: `${data.title} ${v.voucherNo} — ${society.name}`,
+          html: `<p>Dear ${member?.name ?? "Member"},</p><p>${data.title} ${v.voucherNo} dated ${formatDate(v.date)} for <b>Rs. ${v.total.toFixed(2)}</b> is attached.</p><p>This is a computer-generated mail from the society office.</p>`,
+          attachments: [
+            { filename: `${v.voucherNo}.pdf`, contentBase64: bytesToBase64(voucherPdfBytes(data)) },
+          ],
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    const skipped = selectedRows.length - messages.length;
+    setMailing(true);
+    try {
+      const res = await sendDocs({ societyId, messages });
+      const ok = res.results.filter((r) => r.ok).length;
+      const failed = res.results.filter((r) => !r.ok);
+      const skipNote = skipped > 0 ? ` · ${skipped} row(s) skipped (no member email)` : "";
+      if (failed.length > 0) {
+        toast.error(`Emailed ${ok}; ${failed.length} failed. ${failed[0]?.error ?? ""}${skipNote}`);
+      } else {
+        toast.success(`Emailed ${ok} document(s).${skipNote}`);
+      }
+      setMailOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to email");
+    } finally {
+      setMailing(false);
+    }
+  };
+
   /** Single-voucher / single-receipt row action. */
   const rowPrint = (v: Voucher, kind: "pdf" | "word" | "print") => {
     if (isReceiptRow(v)) {
@@ -421,6 +510,10 @@ export function VoucherList({
         </Button>
         {receiptMode === "receipt" && (
           <>
+            <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+              onClick={() => setMailOpen(true)}>
+              <Mail className="size-4" /> Email
+            </Button>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
               <Checkbox checked={twoUp} onCheckedChange={(c) => setTwoUp(c === true)} />
@@ -531,6 +624,45 @@ export function VoucherList({
           </Table>
         </div>
       )}
+
+      {/* Email ticked receipts/vouchers to their members */}
+      <Dialog open={mailOpen} onOpenChange={setMailOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Email {receiptNoun.toLowerCase()} — {selectedRows.length} selected</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border bg-accent/30 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Rows to email</span>
+                <span className="tabular-nums">{selectedRows.length}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">No email on member profile</span>
+                <span className="tabular-nums">
+                  {selectedRows.filter((v) => {
+                    const email = members?.find((m) => m._id === v.memberId)?.email?.trim() ?? "";
+                    return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+                  }).length}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each member receives their own document as a PDF, in the same
+              legacy format as the download buttons. Rows whose member has no
+              email address are skipped.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setMailOpen(false)} disabled={mailing}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={sendVoucherEmails} disabled={mailing || selectedRows.length === 0}>
+              {mailing ? "Sending…" : `Email ${selectedRows.length} document${selectedRows.length === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import {
   analyzePortalBinding,
   isSoftwareAdmin,
@@ -587,5 +587,19 @@ export const bindPendingGrants = mutation({
       }
     }
     return bound + claimedSocieties;
+  },
+});
+
+/**
+ * Authorization gate for the email-PDF action (actions run on Node and cannot
+ * call query-only helpers directly): only the society owner or an invited
+ * editor may email documents to members. Returns the society name so the
+ * action can set a proper display name on the sender.
+ */
+export const assertCanEmail = internalQuery({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    const society = await requireSociety(ctx, societyId);
+    return { name: society.name };
   },
 });

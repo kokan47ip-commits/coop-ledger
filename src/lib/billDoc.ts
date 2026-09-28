@@ -95,6 +95,24 @@ function drawSocietyHeader(doc: jsPDF, s: SocietyHeader, y: number): number {
 
 /** Bordered legacy bill: header box, particulars, totals, notes, signature. */
 export function billPdf(data: LegacyBillData, filename: string) {
+  downloadBytes(billPdfBytes(data), filename, "application/pdf");
+}
+
+/** Trigger a browser download for in-memory bytes. */
+function downloadBytes(bytes: Uint8Array, filename: string, mime: string) {
+  const blob = new Blob([bytes as BlobPart], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** `billPdf` without the download — the caller mails or stores the bytes. */
+export function billPdfBytes(data: LegacyBillData): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
@@ -105,7 +123,6 @@ export function billPdf(data: LegacyBillData, filename: string) {
   let cy = drawSocietyHeader(doc, data.society, boxTop + 20);
   cy += 6;
 
-  // Bill-for line inside the same box
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.text(`Bill for the Month of ${data.periodLabel}`, W / 2, cy, { align: "center" });
@@ -115,7 +132,6 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.line(x, cy, x + w, cy);
   cy += 16;
 
-  // Bill meta rows
   const rightCol = x + w * 0.62;
   const boldName = (s: string) => s;
   doc.setFontSize(10);
@@ -145,7 +161,6 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.text(formatDate(data.dueDate), rightCol + 60, cy);
   cy += 8;
 
-  // Particulars header band
   const particularsTop = cy;
   const amountX = x + w - 120;
   doc.line(x, cy, x + w, cy);
@@ -161,15 +176,12 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   data.lines.forEach((l, i) => {
-    // Lines carry the tariff's printing serial no.; lines without one fall
-    // back to positional numbering.
     const no = l.serial ?? String(i + 1);
     doc.text(`${no}. ${l.name.toUpperCase()}`, x + 14, cy);
     doc.text(money(l.amount), x + w - 10, cy, { align: "right" });
     cy += 15;
   });
 
-  // Totals block (bottom-aligned above the notes band)
   const totalsTop = H - 240;
   const labelX = x + w * 0.42;
   const valX = x + w - 10;
@@ -189,7 +201,6 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.text(money(data.totalDue), valX, ty, { align: "right" });
   doc.setFont("helvetica", "normal");
 
-  // Bottom band: notes + For society / signature
   const bottomTop = totalsTop + 96;
   doc.line(x, bottomTop, x + w, bottomTop);
   const notesX = x + w * 0.5;
@@ -212,17 +223,15 @@ export function billPdf(data: LegacyBillData, filename: string) {
   doc.setFontSize(8);
   doc.text("SECRETARY", x + w - 8, bottomTop + 78, { align: "right" });
 
-  // Tear line
   doc.setDrawColor(120);
   doc.setLineDashPattern([6, 4], 0);
   doc.line(x, bottomTop + 120, x + w, bottomTop + 120);
   doc.setLineDashPattern([], 0);
 
-  doc.save(filename);
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
 }
 
-/** Draws one bordered legacy receipt box with its top edge at `y`. Returns the
- * bottom edge of the box, so callers can stack copies or add tear lines. */
+/** One bordered receipt box drawn at (x, y); returns the box's bottom y. */
 function drawReceiptBox(doc: jsPDF, data: LegacyReceiptData, x: number, y: number, w: number): number {
   const boxTop = y;
   drawSocietyHeader(doc, data.society, boxTop + 22);
@@ -308,8 +317,8 @@ function drawReceiptBox(doc: jsPDF, data: LegacyReceiptData, x: number, y: numbe
   return ly + 70;
 }
 
-/** Bordered legacy receipt with amount box and tear line. */
-export function receiptPdf(data: LegacyReceiptData, filename: string) {
+/** Bordered legacy receipt byte producer for emailing — no download. */
+export function receiptPdfBytes(data: LegacyReceiptData): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const x = 40;
@@ -320,7 +329,13 @@ export function receiptPdf(data: LegacyReceiptData, filename: string) {
   doc.setLineDashPattern([6, 4], 0);
   doc.line(x, bottom + 30, x + w, bottom + 30);
   doc.setLineDashPattern([], 0);
-  doc.save(filename);
+
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+/** Bordered legacy receipt with amount box and tear line. */
+export function receiptPdf(data: LegacyReceiptData, filename: string) {
+  downloadBytes(receiptPdfBytes(data), filename, "application/pdf");
 }
 
 export type ReceiptBatchItem = { data: LegacyReceiptData; copyLabel?: string };
@@ -330,6 +345,11 @@ export type ReceiptBatchItem = { data: LegacyReceiptData; copyLabel?: string };
  * boxes separated by a dashed cut line; otherwise one receipt per page.
  */
 export function receiptsPdfBatch(items: ReceiptBatchItem[], filename: string, twoUp = false) {
+  downloadBytes(receiptsPdfBatchBytes(items, twoUp), filename, "application/pdf");
+}
+
+/** `receiptsPdfBatch` without the download — the caller mails the bytes. */
+export function receiptsPdfBatchBytes(items: ReceiptBatchItem[], twoUp = false): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const x = 40;
@@ -359,7 +379,21 @@ export function receiptsPdfBatch(items: ReceiptBatchItem[], filename: string, tw
     );
     slot++;
   }
-  doc.save(filename);
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+/** Base64 of bytes, chunked so String.fromCharCode stays off the call limit. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x2000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    let chunk = "";
+    for (let j = i; j < Math.min(i + chunkSize, bytes.length); j++) {
+      chunk += String.fromCharCode(bytes[j] ?? 0);
+    }
+    binary += chunk;
+  }
+  return btoa(binary);
 }
 
 /* ------------------------------------------------------------------ */
@@ -619,7 +653,8 @@ function voucherLinesTable(data: VoucherDocData): { head: string[]; rows: string
   return { head, rows, totDr, totCr };
 }
 
-export function voucherPdf(data: VoucherDocData, filename: string) {
+/** `voucherPdf` without the download — the caller mails or stores the bytes. */
+export function voucherPdfBytes(data: VoucherDocData): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const x = 40;
@@ -733,7 +768,12 @@ export function voucherPdf(data: VoucherDocData, filename: string) {
 
   doc.setLineWidth(0.8);
   doc.rect(x, boxTop, w, sigY + 66 - boxTop);
-  doc.save(filename);
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+/** Bordered legacy voucher with lines table and signature block. */
+export function voucherPdf(data: VoucherDocData, filename: string) {
+  downloadBytes(voucherPdfBytes(data), filename, "application/pdf");
 }
 
 function voucherHtml(data: VoucherDocData): string {
