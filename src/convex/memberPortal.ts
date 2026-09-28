@@ -1,5 +1,5 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -480,12 +480,12 @@ export const submitPayment = mutation({
   handler: async (ctx, { societyId, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
     const bind = await portalBinding(ctx, societyId);
     if (!bind) {
-      throw new Error(
+      throw new ConvexError(
         "Your login is not linked to a flat in this society — payment declined.",
       );
     }
     const society = await ctx.db.get(societyId);
-    if (!society) throw new Error("Society not found.");
+    if (!society) throw new ConvexError("Society not found.");
 
     // FY guard: outside-the-year entries are declined, not saved.
     assertInFy(society, date, "Payment");
@@ -493,7 +493,7 @@ export const submitPayment = mutation({
     // Validate the bank/cash account belongs to this society.
     const account = await ctx.db.get(bankCashAccountId);
     if (!account || account.societyId !== societyId || account.kind !== "bank_cash") {
-      throw new Error("Choose a valid cash/bank account for the payment.");
+      throw new ConvexError("Choose a valid cash/bank account for the payment.");
     }
 
     // Validate every allocated bill belongs to MY flat and the amounts are
@@ -510,16 +510,16 @@ export const submitPayment = mutation({
     for (const a of allocations) {
       const bill = mine.get(a.billId);
       if (!bill) {
-        throw new Error("A selected bill does not belong to your flat — payment declined.");
+        throw new ConvexError("A selected bill does not belong to your flat — payment declined.");
       }
-      if (a.amount <= 0) throw new Error("Allocation amounts must be positive.");
+      if (a.amount <= 0) throw new ConvexError("Allocation amounts must be positive.");
       const balance = bill.total - bill.paidAmount;
       if (a.amount > balance + 0.005) {
-        throw new Error(
+        throw new ConvexError(
           `Allocation to ${bill.billNo} exceeds its balance of ${balance.toFixed(2)}.`,
         );
       }
-      if (seen.has(a.billId)) throw new Error("Duplicate bill allocation.");
+      if (seen.has(a.billId)) throw new ConvexError("Duplicate bill allocation.");
       seen.add(a.billId);
       total += a.amount;
     }
@@ -527,14 +527,14 @@ export const submitPayment = mutation({
     // credited to the member's ledger (receivable) and settles future bills.
     if (amount !== undefined && amount > 0) {
       if (amount + 0.005 < total) {
-        throw new Error(
+        throw new ConvexError(
           "The allocated bill amounts exceed the payment amount — reduce the allocations.",
         );
       }
       total = Math.round(amount * 100) / 100;
     }
     if (total <= 0) {
-      throw new Error(
+      throw new ConvexError(
         "Enter an amount to pay — with no bills selected the payment is kept as an advance.",
       );
     }
@@ -549,7 +549,7 @@ export const submitPayment = mutation({
         .collect()
         .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
     if (!receivableId) {
-      throw new Error("No Members Receivable account found — ask the society office to configure one.");
+      throw new ConvexError("No Members Receivable account found — ask the society office to configure one.");
     }
     const n = await nextNumber(ctx, `${societyId}:voucher:member_receipt`);
     const voucherId = await ctx.db.insert("vouchers", {
@@ -586,10 +586,10 @@ export const updateMyContact = mutation({
   args: { societyId: v.id("societies"), phone: v.string() },
   handler: async (ctx, { societyId, phone }) => {
     const bind = await portalBinding(ctx, societyId);
-    if (!bind) throw new Error("Your login is not linked to a flat in this society.");
+    if (!bind) throw new ConvexError("Your login is not linked to a flat in this society.");
     const trimmed = phone.trim();
     if (!/^[\d\s+\-()]{5,20}$/.test(trimmed)) {
-      throw new Error("Enter a valid phone number.");
+      throw new ConvexError("Enter a valid phone number.");
     }
     await ctx.db.patch(bind.memberId, { phone: trimmed });
   },
@@ -609,34 +609,63 @@ export const changePassword = mutation({
     const userId = await requireUserId(ctx);
     const user = await ctx.db.get(userId);
     if (!user?.email) {
-      throw new Error("Your account has no email — password change is not available.");
+      throw new ConvexError("Your account has no email — password change is not available.");
     }
     if (newPassword.length < 8 || !/\d/.test(newPassword)) {
-      throw new Error("New password must be at least 8 characters and contain a number.");
+      throw new ConvexError("New password must be at least 8 characters and contain a number.");
     }
     if (newPassword === currentPassword) {
-      throw new Error("New password must be different from the current password.");
+      throw new ConvexError("New password must be different from the current password.");
     }
 
-    // Find the password-provider credential row for this user.
-    const account = await ctx.db
+    // Password-provider credential rows for this user. Collect rather than
+    // .unique(): duplicate rows can exist from historical auth migrations and
+    // a hard unique() throw would surface as an opaque server error.
+    const allRows = await ctx.db
       .query("authAccounts")
       .withIndex("userIdAndProvider", (q) =>
         q.eq("userId", userId).eq("provider", "password"),
       )
-      .unique();
+      .collect();
+    // Keep the newest row — it is the one sign-in actually verifies against.
+    const account =
+      allRows.length > 0
+        ? allRows.reduce((a, b) => (a._creationTime >= b._creationTime ? a : b))
+        : null;
+    if (allRows.length > 1) {
+      // Remove stale duplicates so future lookups stay unambiguous.
+      for (const row of allRows) {
+        if (row._id !== account!._id) await ctx.db.delete(row._id);
+      }
+    }
+
     if (account?.secret) {
       // Existing password login: the current password must prove it's them.
-      const ok = await verifyPassword(currentPassword, account.secret);
-      if (!ok) throw new Error("Current password is incorrect.");
-      await ctx.db.patch(account._id, {
-        secret: await hashPassword(newPassword),
-      });
+      let ok = false;
+      try {
+        ok = await verifyPassword(currentPassword, account.secret);
+      } catch {
+        // Unreadable/stale hash format: cannot verify against it. Prove
+        // identity via a fresh email sign-in instead.
+        throw new ConvexError(
+          "The saved password record is unreadable — sign in with a one-time emailed code (or use Forgot password?), then set your password leaving 'current password' blank.",
+        );
+      }
+      if (!ok) throw new ConvexError("Current password is incorrect.");
+      try {
+        await ctx.db.patch(account._id, {
+          secret: await hashPassword(newPassword),
+        });
+      } catch {
+        throw new ConvexError(
+          "Could not save the new password (hashing failed). Please try again.",
+        );
+      }
     } else if (account) {
       // Password-provider row without a secret (OTP-created): set the first
       // password — being signed in already proves the account is theirs.
       if (currentPassword) {
-        throw new Error(
+        throw new ConvexError(
           "This account has no password yet — leave the current password blank.",
         );
       }
@@ -647,16 +676,23 @@ export const changePassword = mutation({
       // No password credential at all (OTP-only or guest-converted user):
       // create one under the same account.
       if (currentPassword) {
-        throw new Error(
+        throw new ConvexError(
           "This account has no password yet — leave the current password blank.",
         );
       }
-      await ctx.db.insert("authAccounts", {
-        userId,
-        provider: "password",
-        providerAccountId: (user.email ?? "").toLowerCase().trim(),
-        secret: await hashPassword(newPassword),
-      });
+      try {
+        await ctx.db.insert("authAccounts", {
+          userId,
+          provider: "password",
+          providerAccountId: (user.email ?? "").toLowerCase().trim(),
+          secret: await hashPassword(newPassword),
+        });
+      } catch (err) {
+        console.error("changePassword: authAccounts insert failed", err);
+        throw new ConvexError(
+          "Could not create a password record for this account. Note the exact on-screen error and try again.",
+        );
+      }
     }
     return true;
   },
@@ -667,7 +703,7 @@ export const changePassword = mutation({
 /** Validate the office-set password with the same rule as sign-up. */
 function assertPasswordRules(password: string) {
   if (password.length < 8 || !/\d/.test(password)) {
-    throw new Error(
+    throw new ConvexError(
       "Password must be at least 8 characters and contain a number.",
     );
   }
@@ -693,17 +729,17 @@ export const adminSetMemberPassword = mutation({
       society.createdBy !== callerId &&
       !(await isSoftwareAdmin(ctx, callerId))
     ) {
-      throw new Error(
+      throw new ConvexError(
         "Only the society owner or a software admin can set member passwords.",
       );
     }
     const member = await ctx.db.get(memberId);
     if (!member || member.societyId !== societyId) {
-      throw new Error("Member not found in this society.");
+      throw new ConvexError("Member not found in this society.");
     }
     const email = (member.email ?? "").toLowerCase().trim();
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      throw new Error(
+      throw new ConvexError(
         "This member has no login email — enter their email in the profile first.",
       );
     }
@@ -911,7 +947,7 @@ export const setPasswordWithOtp = mutation({
   handler: async (ctx, { email, code, newPassword }) => {
     const normalized = email.toLowerCase().trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
-      throw new Error("Enter a valid email address.");
+      throw new ConvexError("Enter a valid email address.");
     }
     assertPasswordRules(newPassword);
 
@@ -922,7 +958,7 @@ export const setPasswordWithOtp = mutation({
       .withIndex("identifier", (q) => q.eq("identifier", guardId))
       .unique();
     if (guard && guard.attemptsLeft < 1) {
-      throw new Error(
+      throw new ConvexError(
         "Too many wrong codes — request a new code in a few minutes.",
       );
     }
@@ -959,7 +995,7 @@ export const setPasswordWithOtp = mutation({
           lastAttemptTime: Date.now(),
         });
       }
-      throw new Error(
+      throw new ConvexError(
         "That code is incorrect or has expired. Request a new code and try again.",
       );
     }
