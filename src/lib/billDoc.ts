@@ -777,7 +777,6 @@ export function voucherPdf(data: VoucherDocData, filename: string) {
 }
 
 function voucherHtml(data: VoucherDocData): string {
-  const { rows } = voucherLinesTable(data);
   const partyLabel = data.title.startsWith("Payment")
     ? "Paid to"
     : data.title.startsWith("Receipt")

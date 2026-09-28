@@ -55,12 +55,13 @@ import {
   type VoucherDocData,
 } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { formatDate, formatINR, formatMoney, monthRangeISO, VOUCHER_TYPE_LABEL } from "@/lib/format";
+import { formatDate, formatINR, monthRangeISO, VOUCHER_TYPE_LABEL } from "@/lib/format";
 import {
   CalendarRange,
   Download,
   FileText,
   Mail,
+  MessageCircle,
   Pencil,
   Printer,
   Receipt as ReceiptIcon,
@@ -103,7 +104,6 @@ const EDIT_ROUTE: Record<string, string> = {
 export function VoucherList({
   title,
   fixedType,
-  description,
   renderReceipt,
   receiptMode = "voucher",
   receiptNoun = "Vouchers",
@@ -132,6 +132,7 @@ export function VoucherList({
   );
   const remove = useMutation(api.vouchers.remove);
   const sendDocs = useAction(api.emailer.sendDocs);
+  const sendWhatsappDocs = useAction(api.whatsapp.sendWhatsapp);
   const signatures = useCommitteeSignatures();
   const [typeFilter, setTypeFilter] = useState("all");
   const [from, setFrom] = useState("");
@@ -143,6 +144,9 @@ export function VoucherList({
   // Email receipts/vouchers for the ticked rows.
   const [mailOpen, setMailOpen] = useState(false);
   const [mailing, setMailing] = useState(false);
+  // WhatsApp receipts/vouchers for the ticked rows.
+  const [waOpen, setWaOpen] = useState(false);
+  const [waSending, setWaSending] = useState(false);
 
   const filtered = useMemo(() => {
     let list = [...(vouchers ?? [])].sort((a, b) =>
@@ -298,6 +302,77 @@ export function VoucherList({
   /** Rows that document as a RECEIPT (member/other receipts) rather than a voucher. */
   const isReceiptRow = (v: Voucher) =>
     v.type === "member_receipt" || v.type === "other_receipt";
+
+  /**
+   * WhatsApp each ticked row to its member as a PDF — the legacy receipt
+   * document for receipt rows, the voucher document otherwise.
+   */
+  const sendVoucherWhatsapp = async () => {
+    if (!societyId || !society) return;
+    const messages = selectedRows
+      .map((v) => {
+        const mem = members?.find((m) => m._id === v.memberId);
+        const phone = mem?.phone?.trim() ?? "";
+        if (phone.replace(/\D/g, "").length < 10) return null;
+        const docLabel = isReceiptRow(v)
+          ? `Payment Receipt ${v.voucherNo.replace(/^[A-Z]+-/, "")}`
+          : `${voucherTitleFor(v.type)} ${v.voucherNo}`;
+        return {
+          phone,
+          name: mem?.name ?? "Member",
+          docLabel,
+          filename: isReceiptRow(v) ? `receipt-${v.voucherNo}.pdf` : `${v.voucherNo}.pdf`,
+          contentBase64: isReceiptRow(v)
+            ? (() => {
+                const d = buildReceiptDataFor(v);
+                return d ? bytesToBase64(receiptPdfBytes(d)) : "";
+              })()
+            : (() => {
+                const member = members?.find((m) => m._id === v.memberId);
+                const data: VoucherDocData = {
+                  society: {
+                    name: society.name,
+                    address: [society.address, society.city, society.state, society.pincode]
+                      .filter(Boolean)
+                      .join(", "),
+                    registrationNo: society.registrationNo,
+                  },
+                  title: voucherTitleFor(v.type),
+                  voucherNo: v.voucherNo,
+                  voucherDate: v.date,
+                  bookCode: fixedType ?? v.type,
+                  party: v.mode || member?.name,
+                  mode: v.type === "member_receipt" ? v.mode : undefined,
+                  chequeNo: v.reference,
+                  bankName: (v.narration ?? "").match(/(?:— )?Bank: (.+)$/)?.[1]?.trim(),
+                  narration: v.narration ?? undefined,
+                  amount: v.total,
+                  lines: voucherLines(v),
+                };
+                return bytesToBase64(voucherPdfBytes(data));
+              })(),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null && x.contentBase64 !== "");
+    const skipped = selectedRows.length - messages.length;
+    setWaSending(true);
+    try {
+      const res = await sendWhatsappDocs({ societyId, messages });
+      const ok = res.results.filter((r) => r.ok).length;
+      const failed = res.results.filter((r) => !r.ok);
+      const skipNote = skipped > 0 ? ` · ${skipped} row(s) skipped (no member phone)` : "";
+      if (failed.length > 0) {
+        toast.error(`Sent ${ok}; ${failed.length} failed. ${failed[0]?.error ?? ""}${skipNote}`);
+      } else {
+        toast.success(`Sent ${ok} WhatsApp message(s).${skipNote}`);
+      }
+      setWaOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send WhatsApp messages");
+    } finally {
+      setWaSending(false);
+    }
+  };
 
   /**
    * Email each ticked row to its member as a PDF attachment — the legacy
@@ -514,6 +589,10 @@ export function VoucherList({
               onClick={() => setMailOpen(true)}>
               <Mail className="size-4" /> Email
             </Button>
+            <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+              onClick={() => setWaOpen(true)}>
+              <MessageCircle className="size-4" /> WhatsApp
+            </Button>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
               <Checkbox checked={twoUp} onCheckedChange={(c) => setTwoUp(c === true)} />
@@ -659,6 +738,45 @@ export function VoucherList({
             </Button>
             <Button type="button" onClick={sendVoucherEmails} disabled={mailing || selectedRows.length === 0}>
               {mailing ? "Sending…" : `Email ${selectedRows.length} document${selectedRows.length === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* WhatsApp ticked receipts/vouchers to their members */}
+      <Dialog open={waOpen} onOpenChange={setWaOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>WhatsApp {receiptNoun.toLowerCase()} — {selectedRows.length} selected</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border bg-accent/30 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Rows to send</span>
+                <span className="tabular-nums">{selectedRows.length}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">No phone on member profile</span>
+                <span className="tabular-nums">
+                  {selectedRows.filter((v) => {
+                    const phone = members?.find((m) => m._id === v.memberId)?.phone?.trim() ?? "";
+                    return phone.replace(/\D/g, "").length < 10;
+                  }).length}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each member receives their own document as a PDF on WhatsApp,
+              sent through the society's WhatsApp Business number. Rows whose
+              member has no phone number are skipped.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setWaOpen(false)} disabled={waSending}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={sendVoucherWhatsapp} disabled={waSending || selectedRows.length === 0}>
+              {waSending ? "Sending…" : `Send to ${selectedRows.length} member${selectedRows.length === 1 ? "" : "s"}`}
             </Button>
           </DialogFooter>
         </DialogContent>

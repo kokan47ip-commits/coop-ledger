@@ -684,6 +684,50 @@ export default function BillRegister() {
     }
   };
 
+  // ---- WhatsApp bills (single / selected / whole filtered month) ---------
+  const waTargets = waScope === "selected" ? rows.filter((b) => selected.has(b._id)) : rows;
+  const waSkips = waTargets.filter((b) => {
+    const phone = memberOf(b.memberId)?.phone?.trim() ?? "";
+    return phone.replace(/\D/g, "").length < 10;
+  });
+  const waCount = waTargets.length - waSkips.length;
+
+  const sendBillWhatsapp = async () => {
+    if (!societyId || !society) return;
+    const messages = waTargets
+      .map((b) => {
+        const m = memberOf(b.memberId);
+        const phone = m?.phone?.trim() ?? "";
+        if (phone.replace(/\D/g, "").length < 10) return null;
+        const data = buildBillData(b);
+        if (!data) return null;
+        return {
+          phone,
+          name: data.memberName,
+          docLabel: `Maintenance Bill ${periodLabelLong(b.period)} — Bill No. ${data.billNo}`,
+          filename: `${m ? `${m.code}-` : ""}${b.billNo}.pdf`,
+          contentBase64: bytesToBase64(billPdfBytes(data)),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    setWaSending(true);
+    try {
+      const res = await sendWhatsappDocs({ societyId, messages });
+      const ok = res.results.filter((r) => r.ok).length;
+      const failed = res.results.filter((r) => !r.ok);
+      if (failed.length > 0) {
+        toast.error(`Sent ${ok} WhatsApp message(s); ${failed.length} failed. ${failed[0]?.error ?? ""}`);
+      } else {
+        toast.success(`Sent ${ok} WhatsApp message(s).`);
+      }
+      setWaOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send WhatsApp messages");
+    } finally {
+      setWaSending(false);
+    }
+  };
+
   const receivableMissing =
     society && !society.receivableAccountId &&
     (accounts ?? []).some((a) => a.kind === "receivable");
@@ -875,14 +919,24 @@ export default function BillRegister() {
             <Printer className="size-4" /> Print
           </Button>
           {canEdit && !hasEdits && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={rows.length === 0}
-              onClick={() => setMailOpen(true)}
-            >
-              <Mail className="size-4" /> Email
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={rows.length === 0}
+                onClick={() => setMailOpen(true)}
+              >
+                <Mail className="size-4" /> Email
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={rows.length === 0}
+                onClick={() => setWaOpen(true)}
+              >
+                <MessageCircle className="size-4" /> WhatsApp
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -1069,6 +1123,67 @@ export default function BillRegister() {
           </Button>
         </div>
       )}
+
+      {/* WhatsApp bills dialog: selected or whole filtered month */}
+      <Dialog open={waOpen} onOpenChange={setWaOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>WhatsApp bills — {formatPeriod(periodFilter)}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Send to</Label>
+              <Select
+                value={waScope}
+                onValueChange={(v) => setWaScope(v as "selected" | "filtered")}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="selected">
+                    Selected bills ({rows.filter((b) => selected.has(b._id)).length})
+                  </SelectItem>
+                  <SelectItem value="filtered">All filtered bills ({rows.length})</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                One WhatsApp message per member with their bill PDF — ticked
+                rows or the whole filtered month in one go.
+              </p>
+            </div>
+            <div className="rounded-md border bg-accent/30 p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Bills to send</span>
+                <span className="tabular-nums">{waCount}</span>
+              </div>
+              {waSkips.length > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">No phone on member profile</span>
+                  <span className="tabular-nums">{waSkips.length}</span>
+                </div>
+              )}
+            </div>
+            {waCount === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                None of these members have a phone number — add phones in the
+                member profiles first.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Sent through your society's WhatsApp Business number. Members
+                without a phone number are skipped.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setWaOpen(false)} disabled={waSending}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={sendBillWhatsapp} disabled={waSending || waCount === 0}>
+              {waSending ? "Sending…" : `Send to ${waCount} member${waCount === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Email bills dialog: selected or whole filtered month */}
       <Dialog open={mailOpen} onOpenChange={setMailOpen}>
