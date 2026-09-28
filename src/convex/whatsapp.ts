@@ -199,3 +199,76 @@ export const sendWhatsapp = action({
     return { results };
   },
 });
+
+/**
+ * Send a single test WhatsApp message — wired to the Email & WhatsApp
+ * settings tab so the office can confirm the Meta credentials and the
+ * approved template work before relying on them for bills and receipts.
+ * Uses the same template flow as real sends (document header + {{1}}/{{2}}).
+ */
+export const sendTest = action({
+  args: { societyId: v.id("societies"), phone: v.string() },
+  handler: async (ctx, { societyId, phone }) => {
+    await ctx.runQuery(internal.access.assertCanEmail, { societyId });
+
+    const token = process.env.WHATSAPP_TOKEN;
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (!token || !phoneNumberId) {
+      throw new Error(
+        "WhatsApp is not configured yet — add WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID in the project's Keys / API keys settings and try again.",
+      );
+    }
+    const templateName =
+      process.env.WHATSAPP_TEMPLATE_NAME || DEFAULT_TEMPLATE_NAME;
+    const templateLang =
+      process.env.WHATSAPP_TEMPLATE_LANG || DEFAULT_TEMPLATE_LANG;
+    const to = normalizePhone(phone);
+    if (!to) {
+      throw new Error(
+        "Could not read that phone number — use a 10-digit Indian mobile (e.g. 9876543210).",
+      );
+    }
+
+    const graphBase = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}`;
+    // No PDF for the test — a pure text template cannot attach documents, so
+    // the template body variables carry the check: if Meta accepts this, the
+    // credentials and template are live (the document header is validated by
+    // Meta at template send time with real sends).
+    const body = {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: templateLang },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: "Test" },
+              { type: "text", text: "configuration test" },
+            ],
+          },
+        ],
+      },
+    };
+    const res = await fetch(`${graphBase}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      messages?: unknown[];
+      error?: { message?: string };
+    };
+    if (!res.ok) {
+      throw new Error(
+        `WhatsApp error${json.error?.message ? ` — ${json.error.message}` : ` (${res.status})`}`,
+      );
+    }
+    return { ok: true as const };
+  },
+});

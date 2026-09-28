@@ -40,6 +40,7 @@ import {
   Loader2,
   KeyRound,
   LogIn,
+  MessageCircle,
   LogOut,
   Plus,
   Receipt,
@@ -119,6 +120,13 @@ const NAV: NavGroup[] = [
       { to: "/app/users", label: "Users & Rights", icon: <ShieldCheck className="size-4" /> },
     ],
   },
+  {
+    title: "Settings",
+    icon: <MessageCircle className="size-4" />,
+    items: [
+      { to: "/app/messaging-settings", label: "Email & WhatsApp", icon: <MessageCircle className="size-4" /> },
+    ],
+  },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -141,6 +149,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/uploads": "Excel Uploads",
   "/app/transaction-import": "Transaction Import",
   "/app/users": "Users & Rights",
+  "/app/messaging-settings": "Email & WhatsApp",
 };
 
 function navGroupHasActive(group: NavGroup, pathname: string) {

@@ -109,3 +109,46 @@ export const sendDocs = action({
     return { results };
   },
 });
+
+/**
+ * Send a single plain-text test email — wired to the Email & WhatsApp
+ * settings tab so the office can confirm the RESEND_API_KEY works before
+ * relying on it for bills and receipts.
+ */
+export const sendTest = action({
+  args: { societyId: v.id("societies"), to: v.string() },
+  handler: async (ctx, { societyId, to }) => {
+    const society = await ctx.runQuery(internal.access.assertCanEmail, {
+      societyId,
+    });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())) {
+      throw new Error("Enter a valid email address for the test send.");
+    }
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "Email is not configured yet — add the RESEND_API_KEY in the project's Keys / API keys settings and try again.",
+      );
+    }
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `${society.name} <onboarding@resend.dev>`,
+        to: [to.trim()],
+        subject: `Test email — ${society.name}`,
+        html: `<p>This is a test email from <strong>${society.name}</strong> (Imamm Accounting Solutions).</p><p>If you received this, email delivery is configured correctly and bills/receipts will arrive from this address.</p>`,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `Resend error ${res.status}${text ? ` — ${text.slice(0, 200)}` : ""}`,
+      );
+    }
+    return { ok: true as const };
+  },
+});

@@ -35,6 +35,12 @@ const schema = defineSchema(
     // ---- Housing society accounting ----
 
     societies: defineTable({
+      /** Outbound messaging preferences (Email & WhatsApp settings tab). */
+      messagingReplyTo: v.optional(v.string()),
+      messagingWhatsappMode: v.optional(
+        v.union(v.literal("template"), v.literal("session")),
+      ),
+      messagingSenderName: v.optional(v.string()),
       name: v.string(),
       registrationNo: v.optional(v.string()),
       registrationDate: v.optional(v.string()), // date of registration with the registrar

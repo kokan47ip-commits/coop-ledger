@@ -78,6 +78,9 @@ const ReceiptPayment = lazyPage(() => import("./pages/app/reports/ReceiptPayment
 const Uploads = lazyPage(() => import("./pages/app/Uploads.tsx"));
 const TransactionImport = lazyPage(() => import("./pages/app/TransactionImport.tsx"));
 const UsersRights = lazyPage(() => import("./pages/app/UsersRights.tsx"));
+const MessagingSettings = lazyPage(
+  () => import("./pages/app/MessagingSettings.tsx"),
+);
 const PortalHome = lazyPage(() => import("./pages/portal/PortalHome.tsx"));
 const PortalLedger = lazyPage(() => import("./pages/portal/PortalLedger.tsx"));
 const PortalBills = lazyPage(() => import("./pages/portal/PortalBills.tsx"));
@@ -236,6 +239,10 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="uploads" element={<Uploads />} />
                 <Route path="transaction-import" element={<TransactionImport />} />
                 <Route path="users" element={<UsersRights />} />
+                <Route
+                  path="messaging-settings"
+                  element={<MessagingSettings />}
+                />
               </Route>
               {/* Member self-service portal (flat-bound logins) */}
               <Route
