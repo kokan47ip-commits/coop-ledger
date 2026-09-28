@@ -34,7 +34,7 @@ import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } f
 import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Mail, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { BookText, Download, FileText, HandCoins, Mail, MessageCircle, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -75,6 +75,7 @@ export default function BillRegister() {
   const removeBill = useMutation(api.bills.remove);
   const createVoucher = useMutation(api.vouchers.create);
   const sendDocs = useAction(api.emailer.sendDocs);
+  const sendWhatsappDocs = useAction(api.whatsapp.sendWhatsapp);
   const signatures = useCommitteeSignatures();
   const navigate = useNavigate();
 
@@ -109,6 +110,10 @@ export default function BillRegister() {
   const [mailOpen, setMailOpen] = useState(false);
   const [mailScope, setMailScope] = useState<"selected" | "filtered">("selected");
   const [mailing, setMailing] = useState(false);
+  // WhatsApp bills: same scoping as email.
+  const [waOpen, setWaOpen] = useState(false);
+  const [waScope, setWaScope] = useState<"selected" | "filtered">("selected");
+  const [waSending, setWaSending] = useState(false);
   const hasEdits = Object.keys(edits).length > 0;
 
   // Bill generation inputs
