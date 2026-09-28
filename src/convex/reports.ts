@@ -366,13 +366,24 @@ export function computeMemberLedger(
     });
   }
 
-  rows.sort((a, b) =>
-    a.date === b.date
-      ? a.voucherNo.localeCompare(b.voucherNo)
-      : a.date.localeCompare(b.date),
-  );
+  // The opening balance is the ledger's starting point, so its row always
+  // comes first — sorting by date alone would tie it with day-one bills and
+  // lose the voucherNo tie-break to them ("101/04" sorts before "OPENING").
+  const ordered = [
+    ...rows.filter((r) => r.voucherNo === "OPENING"),
+    ...rows
+      .filter((r) => r.voucherNo !== "OPENING")
+      .sort((a, b) =>
+        a.date === b.date
+          ? a.voucherNo.localeCompare(b.voucherNo)
+          : a.date.localeCompare(b.date),
+      ),
+  ];
+  // The running balance already starts from the member's opening balance, so
+  // the OPENING row itself must not add its amount a second time.
   let running = member.openingBalance;
-  const reweighted = rows.map((r) => {
+  const reweighted = ordered.map((r) => {
+    if (r.voucherNo === "OPENING") return { ...r, balance: running };
     running += r.debit - r.credit;
     return { ...r, balance: running };
   });
