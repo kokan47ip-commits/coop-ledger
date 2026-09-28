@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -12,6 +13,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import { IconTile, PageHeader } from "@/components/PageParts";
 import {
   receiptPdf,
   receiptPrint,
@@ -19,11 +21,29 @@ import {
   type LegacyReceiptData,
 } from "@/lib/billDoc";
 import { formatDate, formatMoney } from "@/lib/format";
-import { Download, FileText, Printer } from "lucide-react";
+import {
+  Banknote,
+  CreditCard,
+  Download,
+  FileText,
+  Printer,
+  Smartphone,
+  Landmark,
+} from "lucide-react";
 import { useQuery } from "convex/react";
 import { toast } from "sonner";
 
 type Voucher = Doc<"vouchers">;
+
+const MODE_ICON: Record<
+  string,
+  { icon: typeof Banknote; tone: "emerald" | "sky" | "violet" | "amber" }
+> = {
+  cash: { icon: Banknote, tone: "emerald" },
+  bank: { icon: Landmark, tone: "sky" },
+  upi: { icon: Smartphone, tone: "violet" },
+  cheque: { icon: CreditCard, tone: "amber" },
+};
 
 export default function PortalReceipts() {
   const { societyId, society, memberBinding } = useSociety();
@@ -102,15 +122,16 @@ export default function PortalReceipts() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Receipts for payments received against your flat. Download any receipt
-        as PDF or Word, or print it.
-      </p>
-      <div className="rounded-lg border">
+      <PageHeader
+        title="My Receipts"
+        description="Receipts for payments received against your flat. Download any receipt as PDF or Word, or print it."
+      />
+      <Card className="py-0 shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
+        <CardContent className="px-0">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Receipt No.</TableHead>
+              <TableHead className="pl-4">Receipt No.</TableHead>
               <TableHead>Date</TableHead>
               <TableHead>Purpose</TableHead>
               <TableHead>Mode</TableHead>
@@ -119,9 +140,19 @@ export default function PortalReceipts() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {receipts.map((v) => (
-              <TableRow key={v._id}>
-                <TableCell className="font-medium">{v.voucherNo}</TableCell>
+            {receipts.map((v) => {
+              const mi = v.mode ? MODE_ICON[v.mode] : undefined;
+              const ModeIcon = mi?.icon;
+              return (
+              <TableRow key={v._id} className="group">
+                <TableCell className="pl-4 font-medium">
+                  <span className="flex items-center gap-2">
+                    <IconTile tone="emerald" size="sm">
+                      <FileText />
+                    </IconTile>
+                    {v.voucherNo}
+                  </span>
+                </TableCell>
                 <TableCell>{formatDate(v.date)}</TableCell>
                 <TableCell>
                   {(v.allocations ?? []).length > 0
@@ -130,7 +161,8 @@ export default function PortalReceipts() {
                 </TableCell>
                 <TableCell>
                   {v.mode ? (
-                    <Badge variant="outline" className="capitalize">
+                    <Badge variant="outline" className="gap-1.5 capitalize">
+                      {ModeIcon ? <ModeIcon className="size-3" /> : null}
                       {v.mode}
                     </Badge>
                   ) : (
@@ -174,7 +206,8 @@ export default function PortalReceipts() {
                   </div>
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
             {receipts.length === 0 && (
               <TableRow>
                 <TableCell
@@ -187,7 +220,8 @@ export default function PortalReceipts() {
             )}
           </TableBody>
         </Table>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

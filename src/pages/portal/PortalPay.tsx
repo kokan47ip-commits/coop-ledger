@@ -22,10 +22,20 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import { IconTile, PageHeader } from "@/components/PageParts";
 import { effectiveFyPeriod, formatMoney, todayISO } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, Landmark, Send } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  AlertCircle,
+  Banknote,
+  CalendarClock,
+  Landmark,
+  PiggyBank,
+  Send,
+  TriangleAlert,
+  WalletMinimal,
+} from "lucide-react";
+import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -54,7 +64,7 @@ export default function PortalPay() {
   ) as PayAccount[] | null | undefined;
 
   const [allocs, setAllocs] = useState<Record<string, string>>({});
-  const [accountId, setAccountId] = useState<string>("");
+  const [accountIdChoice, setAccountId] = useState<string>("");
   const [mode, setMode] = useState<string>("bank");
   const [reference, setReference] = useState("");
   const [narration, setNarration] = useState("");
@@ -64,11 +74,10 @@ export default function PortalPay() {
 
   // Pre-select the society's first cash/bank account so the member only has
   // to change it when paying somewhere other than the default account.
-  useEffect(() => {
-    if (!accountId && accounts && accounts.length > 0) {
-      setAccountId(accounts[0]._id);
-    }
-  }, [accounts, accountId]);
+  // Derived (not effect-synced): falls back to the first account until the
+  // member picks one explicitly.
+  const accountId =
+    accountIdChoice || (accounts && accounts.length > 0 ? accounts[0]._id : "");
 
   // The payment is dated today; if today sits outside the society's current
   // books period the server would decline it — warn before they type anything.
@@ -148,9 +157,15 @@ export default function PortalPay() {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Make a Payment"
+        description="Pay your maintenance dues against open bills — or pay ahead as an advance."
+      />
       {booksClosed && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
-          <Landmark className="mt-0.5 size-4 shrink-0" />
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-500/30 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-200">
+          <IconTile tone="amber">
+            <TriangleAlert />
+          </IconTile>
           <p>
             The society's current books period is <strong>{fy.from}</strong> to{" "}
             <strong>{fy.to}</strong>, which does not include today. Payments
@@ -159,8 +174,10 @@ export default function PortalPay() {
         </div>
       )}
       {noAccounts && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
-          <Landmark className="mt-0.5 size-4 shrink-0" />
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-500/30 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-200">
+          <IconTile tone="amber">
+            <TriangleAlert />
+          </IconTile>
           <p>
             The society has not marked any account as a cash/bank account yet.
             Once the office adds one (Chart of Accounts → kind "Bank / Cash"),
@@ -169,9 +186,12 @@ export default function PortalPay() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-3">
+      <Card className="shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
+        <CardContent className="flex flex-wrap items-end gap-3">
         <div className="w-56">
-          <Label className="text-xs text-muted-foreground">Paying into</Label>
+          <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Landmark className="size-3.5" /> Paying into
+          </Label>
           <Select value={accountId} onValueChange={setAccountId}>
             <SelectTrigger className="mt-1">
               <SelectValue placeholder="Cash / bank account" />
@@ -186,7 +206,9 @@ export default function PortalPay() {
           </Select>
         </div>
         <div className="w-40">
-          <Label className="text-xs text-muted-foreground">Mode</Label>
+          <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <WalletMinimal className="size-3.5" /> Mode
+          </Label>
           <Select value={mode} onValueChange={setMode}>
             <SelectTrigger className="mt-1">
               <SelectValue />
@@ -211,7 +233,9 @@ export default function PortalPay() {
           />
         </div>
         <div className="min-w-56 flex-1">
-          <Label className="text-xs text-muted-foreground">Note (optional)</Label>
+          <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Banknote className="size-3.5" /> Note (optional)
+          </Label>
           <Input
             value={narration}
             onChange={(e) => setNarration(e.target.value)}
@@ -219,12 +243,18 @@ export default function PortalPay() {
             className="mt-1"
           />
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Advance payment — when there are no dues (or paying ahead of them) */}
-      <Card>
+      <Card className="border-teal-500/20 bg-teal-500/[0.03] shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">No dues right now? Pay in advance</CardTitle>
+          <CardTitle className="flex items-center gap-2.5 text-base">
+            <IconTile tone="teal">
+              <PiggyBank />
+            </IconTile>
+            No dues right now? Pay in advance
+          </CardTitle>
           <CardDescription>
             The amount is credited to your flat's ledger and adjusted against
             future maintenance bills by the society office.
@@ -232,7 +262,9 @@ export default function PortalPay() {
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <div className="w-48">
-            <Label className="text-xs text-muted-foreground">Advance amount (₹)</Label>
+            <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <PiggyBank className="size-3.5" /> Advance amount (₹)
+            </Label>
             <Input
               type="text"
               inputMode="decimal"
@@ -345,9 +377,15 @@ export default function PortalPay() {
         </Table>
       </div>
 
-      <Card>
+      <Card className="overflow-hidden py-0 shadow-lg shadow-primary/[0.06]">
+        <div className="brand-gradient h-1 w-full" />
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Submit payment</CardTitle>
+          <CardTitle className="flex items-center gap-2.5 text-base">
+            <IconTile tone="indigo">
+              <Send />
+            </IconTile>
+            Submit payment
+          </CardTitle>
           <CardDescription>
             Dated today; allocations cannot exceed each bill's balance. The
             society office sees your payment immediately.
@@ -355,10 +393,10 @@ export default function PortalPay() {
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-4">
           <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Total payment
+            <p className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+              <CalendarClock className="size-3.5" /> Total payment
             </p>
-            <p className="text-2xl font-semibold tabular-nums">
+            <p className="mt-0.5 text-3xl font-semibold tabular-nums tracking-tight text-primary">
               {formatMoney(total)}
             </p>
           </div>

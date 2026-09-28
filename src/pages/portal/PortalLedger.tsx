@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,17 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
+import { IconTile, PageHeader } from "@/components/PageParts";
 import { ReportPreview } from "@/components/ReportPreview";
 import {
   exportPDF,
@@ -29,6 +22,15 @@ import {
   type TableSpec,
 } from "@/lib/export";
 import { effectiveFyPeriod, formatDate, formatMoney, monthRangeISO } from "@/lib/format";
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  CalendarRange,
+  FileDown,
+  FileText,
+  Printer,
+  Scale,
+} from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -180,9 +182,16 @@ export default function PortalLedger() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end gap-3">
+      <PageHeader
+        title="My Ledger"
+        description="Your flat's complete account — every bill and receipt, with a running balance."
+      />
+      <Card className="shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
+        <CardContent className="flex flex-wrap items-end gap-3">
         <div className="w-40">
-          <Label className="text-xs text-muted-foreground">Month</Label>
+          <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CalendarRange className="size-3.5" /> Month
+          </Label>
           <Select value={month} onValueChange={applyMonth}>
             <SelectTrigger size="sm" className="mt-1">
               <SelectValue placeholder="Whole year" />
@@ -236,16 +245,57 @@ export default function PortalLedger() {
           Detailed entries
         </label>
         <div className="ml-auto flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-violet-700 hover:bg-violet-500/10 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            onClick={() => doExport("pdf")}
+          >
+            <FileText className="size-4" />
             PDF
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-sky-700 hover:bg-sky-500/10 hover:text-sky-800 dark:text-sky-300 dark:hover:text-sky-200"
+            onClick={() => doExport("word")}
+          >
+            <FileDown className="size-4" />
             Word
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-indigo-700 hover:bg-indigo-500/10 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200"
+            onClick={() => doExport("print")}
+          >
+            <Printer className="size-4" />
             Print
           </Button>
         </div>
+        </CardContent>
+      </Card>
+
+      {/* Period summary chips */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <SummaryChip
+          label="Total debit"
+          value={drCr(totDr)}
+          tone="violet"
+          icon={<ArrowUpCircle />}
+        />
+        <SummaryChip
+          label="Total credit"
+          value={drCr(totCr)}
+          tone="emerald"
+          icon={<ArrowDownCircle />}
+        />
+        <SummaryChip
+          label="Closing balance"
+          value={drCr(closing)}
+          tone={closing > 0.005 ? "rose" : "emerald"}
+          icon={<Scale />}
+        />
       </div>
 
       <ReportPreview
@@ -303,6 +353,40 @@ export default function PortalLedger() {
           </table>
         </div>
       </ReportPreview>
+    </div>
+  );
+}
+
+function SummaryChip({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: string;
+  tone: "violet" | "emerald" | "rose";
+  icon: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-3 rounded-xl border px-4 py-3 shadow-sm ${
+        tone === "rose"
+          ? "border-rose-500/25 bg-rose-500/[0.06]"
+          : tone === "emerald"
+            ? "border-emerald-500/25 bg-emerald-500/[0.06]"
+            : "border-violet-500/25 bg-violet-500/[0.06]"
+      }`}
+    >
+      <IconTile tone={tone === "rose" ? "rose" : tone === "emerald" ? "emerald" : "violet"}>
+        {icon}
+      </IconTile>
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
+        <p className="text-sm font-semibold tabular-nums">{value}</p>
+      </div>
     </div>
   );
 }

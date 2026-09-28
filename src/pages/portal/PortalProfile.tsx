@@ -11,9 +11,16 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
+import { IconTile, PageHeader } from "@/components/PageParts";
 import { useAuth } from "@/hooks/use-auth";
-import { KeyRound, Save, UserCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  BadgeCheck,
+  KeyRound,
+  Phone,
+  Save,
+  UserCircle,
+} from "lucide-react";
+import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -28,16 +35,15 @@ export default function PortalProfile() {
   const updateContact = useMutation(api.memberPortal.updateMyContact);
   const changePassword = useMutation(api.memberPortal.changePassword);
 
-  const [phone, setPhone] = useState("");
+  const [phoneDraft, setPhone] = useState<string | null>(null);
   const [savingContact, setSavingContact] = useState(false);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [savingPw, setSavingPw] = useState(false);
 
-  useEffect(() => {
-    if (info?.member.phone) setPhone(info.member.phone);
-  }, [info?.member.phone]);
+  // Derived: the saved phone wins until the member types a new value.
+  const phone = phoneDraft ?? info?.member.phone ?? "";
 
   const saveContact = async () => {
     setSavingContact(true);
@@ -86,12 +92,20 @@ export default function PortalProfile() {
     info.member.code;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="space-y-6">
+      <PageHeader
+        title="My Profile"
+        description="Your registered details and login security."
+      />
+      <div className="grid gap-6 lg:grid-cols-2">
       {/* Profile / flat details */}
-      <Card>
+      <Card className="shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <UserCircle className="size-4 text-primary" /> My details
+          <CardTitle className="flex items-center gap-2.5 text-base">
+            <IconTile tone="sky">
+              <UserCircle />
+            </IconTile>
+            My details
           </CardTitle>
           <CardDescription>
             Registered details of your flat as maintained by the society office.
@@ -148,24 +162,35 @@ export default function PortalProfile() {
           </dl>
 
           <div className="space-y-2 border-t pt-4">
-            <Label htmlFor="phone">Contact number</Label>
+            <Label
+              htmlFor="phone"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              <Phone className="size-3.5" /> Contact number
+            </Label>
             <div className="flex gap-2">
-              <Input
-                id="phone"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="Your phone number"
-              />
+              <div className="relative flex-1">
+                <Phone className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
+                <Input
+                  id="phone"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Your phone number"
+                  className="pl-9"
+                />
+              </div>
               <Button
                 variant="outline"
                 onClick={saveContact}
                 disabled={savingContact || phone === (info.member.phone ?? "")}
+                className="shrink-0 border-teal-500/40 text-teal-700 hover:bg-teal-500/10 hover:text-teal-800 dark:text-teal-300 dark:hover:text-teal-200"
               >
-                <Save className="mr-2 size-4" />
+                <Save className="size-4" />
                 {savingContact ? "Saving..." : "Save"}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <BadgeCheck className="size-3.5 text-emerald-500" />
               Login email: {info.member.email ?? user?.email} (managed by the
               society office)
             </p>
@@ -174,10 +199,13 @@ export default function PortalProfile() {
       </Card>
 
       {/* Change password */}
-      <Card>
+      <Card className="shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <KeyRound className="size-4 text-primary" /> Change password
+          <CardTitle className="flex items-center gap-2.5 text-base">
+            <IconTile tone="amber">
+              <KeyRound />
+            </IconTile>
+            Change password
           </CardTitle>
           <CardDescription>
             Use at least 8 characters with one number. Password sign-ins only —
@@ -225,11 +253,14 @@ export default function PortalProfile() {
               !confirmPw ||
               newPw !== confirmPw
             }
+            className="gap-2 bg-gradient-to-r from-primary to-violet-500 shadow-md shadow-primary/25"
           >
+            <KeyRound className="size-4" />
             {savingPw ? "Updating..." : "Update password"}
           </Button>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

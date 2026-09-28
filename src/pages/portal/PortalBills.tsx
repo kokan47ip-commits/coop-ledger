@@ -1,5 +1,9 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -12,6 +16,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import { IconTile, PageHeader } from "@/components/PageParts";
 import {
   billPdf,
   billPrint,
@@ -20,7 +25,13 @@ import {
   type LegacyBillData,
 } from "@/lib/billDoc";
 import { formatDate, formatMoney } from "@/lib/format";
-import { Download, FileText, Printer } from "lucide-react";
+import {
+  CalendarRange,
+  Download,
+  FileText,
+  Printer,
+  TriangleAlert,
+} from "lucide-react";
 import { useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -128,9 +139,14 @@ export default function PortalBills() {
 
   if (bills === null) {
     return (
-      <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300">
+      <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 p-4 text-sm text-amber-800 shadow-sm dark:border-amber-500/30 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-300">
+        <IconTile tone="amber">
+          <TriangleAlert />
+        </IconTile>
+        <div className="space-y-1">
         <p className="font-medium">Your login is not linked to a flat in this society.</p>
         {debugText && <p className="text-xs leading-5">{debugText}</p>}
+        </div>
       </div>
     );
   }
@@ -142,24 +158,30 @@ export default function PortalBills() {
     // what the live session resolved to (and where the bills actually sit)
     // so the office can fix the grant without guesswork.
     return (
-      <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300">
+      <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 p-4 text-sm text-amber-800 shadow-sm dark:border-amber-500/30 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-300">
+        <IconTile tone="amber">
+          <TriangleAlert />
+        </IconTile>
+        <div className="space-y-1">
         <p className="font-medium">No bills are showing for this login.</p>
         {debugText && <p className="text-xs leading-5">{debugText}</p>}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        All maintenance bills raised for your flat. Download any bill as PDF or
-        Word, or print it directly.
-      </p>
-      <div className="rounded-lg border">
+      <PageHeader
+        title="My Bills"
+        description="All maintenance bills raised for your flat. Download any bill as PDF or Word, or print it directly."
+      />
+      <Card className="py-0 shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
+        <CardContent className="px-0">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Bill No.</TableHead>
+              <TableHead className="pl-4">Bill No.</TableHead>
               <TableHead>Period</TableHead>
               <TableHead>Issued</TableHead>
               <TableHead>Due</TableHead>
@@ -171,9 +193,21 @@ export default function PortalBills() {
           </TableHeader>
           <TableBody>
             {bills.map((b) => (
-              <TableRow key={b._id}>
-                <TableCell className="font-medium">{b.billNo}</TableCell>
-                <TableCell>{periodLabelLong(b.period)}</TableCell>
+              <TableRow key={b._id} className="group">
+                <TableCell className="pl-4 font-medium">
+                  <span className="flex items-center gap-2">
+                    <IconTile tone="violet" size="sm">
+                      <FileText />
+                    </IconTile>
+                    {b.billNo}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <CalendarRange className="size-3.5" />
+                    {periodLabelLong(b.period)}
+                  </span>
+                </TableCell>
                 <TableCell>{formatDate(b.issueDate)}</TableCell>
                 <TableCell>{formatDate(b.dueDate)}</TableCell>
                 <TableCell className="text-right tabular-nums">
@@ -190,6 +224,13 @@ export default function PortalBills() {
                         : b.status === "partial"
                           ? "secondary"
                           : "destructive"
+                    }
+                    className={
+                      b.status === "paid"
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : b.status === "partial"
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:border-amber-500/30 dark:text-amber-300"
+                          : ""
                     }
                   >
                     {b.status === "paid"
@@ -241,7 +282,8 @@ export default function PortalBills() {
             )}
           </TableBody>
         </Table>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
