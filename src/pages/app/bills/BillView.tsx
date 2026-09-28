@@ -15,6 +15,7 @@ export default function BillView() {
   const { societyId, society } = useSociety();
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip");
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip");
+  const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip");
 
   const bill = bills?.find((b) => b._id === billId);
   const m = members?.find((x) => x._id === bill?.memberId);
@@ -62,7 +63,13 @@ export default function BillView() {
     flatNo: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
     lines: (bill.lines ?? [])
       .filter((l) => !isArrearsLine(l.name))
-      .map((l) => ({ name: l.name, amount: l.amount, serial: l.printNo })),
+      // Print the tariff's full head name — bills saved before full-name
+      // printing carry the short name on the line itself.
+      .map((l) => ({
+        name: (l.tariffId && tariffs?.find((t) => t._id === l.tariffId)?.name) || l.name,
+        amount: l.amount,
+        serial: l.printNo,
+      })),
     total: currentCharges,
     arrears,
     totalDue: currentCharges + arrears,

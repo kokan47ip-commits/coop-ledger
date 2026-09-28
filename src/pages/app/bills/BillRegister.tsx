@@ -313,7 +313,13 @@ export default function BillRegister() {
       flatNo: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
       lines: (b.lines ?? [])
         .filter((l) => !isArrearsLine(l.name))
-        .map((l) => ({ name: l.name, amount: l.amount, serial: l.printNo })),
+        // Full head names on printed/emailed bills — resolve short names
+        // saved before full-name printing through the tariff schedule.
+        .map((l) => ({
+          name: (l.tariffId && tariffs?.find((t) => t._id === l.tariffId)?.name) || l.name,
+          amount: l.amount,
+          serial: l.printNo,
+        })),
       total: currentCharges,
       arrears,
       totalDue: currentCharges + arrears,
@@ -863,7 +869,7 @@ export default function BillRegister() {
           <Button variant="outline" size="sm" onClick={() => doExport("print")}>
             <Printer className="size-4" /> Print
           </Button>
-          {canEdit && (
+          {canEdit && !hasEdits && (
             <Button
               variant="outline"
               size="sm"

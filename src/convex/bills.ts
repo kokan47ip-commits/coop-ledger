@@ -195,8 +195,9 @@ export const generate = mutation({
           return {
             tariffId: t._id,
             accountId: t.accountId,
-            // Print label: short name when set, else the full head name.
-            name: t.shortName?.trim() || t.name,
+            // Print label: always the full head name (short names stay for
+            // register columns only).
+            name: t.name,
             amount: base,
             printNo: t.printNo,
           };
@@ -387,10 +388,10 @@ export const updateLines = mutation({
       const t = l.tariffId
         ? allTariffs.find((x) => x._id === l.tariffId)
         : undefined;
-      // Re-stamp both print order and the short-name print label so grid edits
-      // follow the tariff schedule, not the generation-time wording.
+      // Re-stamp print order and the full head name so grid edits follow the
+      // tariff schedule, not the generation-time wording.
       return t
-        ? { ...l, printNo: t.printNo, name: t.shortName?.trim() || t.name }
+        ? { ...l, printNo: t.printNo, name: t.name }
         : l;
     });
     await ctx.db.patch(id, { lines: [...arrearsLines, ...stamped], total, status });

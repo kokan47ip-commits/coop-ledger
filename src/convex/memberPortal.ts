@@ -131,17 +131,35 @@ export const myBills = query({
   handler: async (ctx, { societyId }) => {
     const bind = await portalBinding(ctx, societyId);
     if (!bind) return null;
-    const bills = await ctx.db
-      .query("bills")
-      .withIndex("by_society_member", (q) =>
-        q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
-      )
-      .collect();
-    return bills.sort((a, b) =>
-      a.period === b.period
-        ? b.billNo.localeCompare(a.billNo)
-        : b.period.localeCompare(a.period),
-    );
+    const [bills, tariffs] = await Promise.all([
+      ctx.db
+        .query("bills")
+        .withIndex("by_society_member", (q) =>
+          q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
+        )
+        .collect(),
+      ctx.db
+        .query("tariffs")
+        .withIndex("by_society", (q) => q.eq("societyId", bind.societyId))
+        .collect(),
+    ]);
+    // Bills generated before full-name printing carry short head names —
+    // resolve them to the tariff's full name for the portal and downloads.
+    const fullName = new Map(tariffs.map((t) => [t._id, t.name] as const));
+    return bills
+      .map((b) => ({
+        ...b,
+        lines: b.lines.map((l) =>
+          l.tariffId && fullName.has(l.tariffId)
+            ? { ...l, name: fullName.get(l.tariffId) ?? l.name }
+            : l,
+        ),
+      }))
+      .sort((a, b) =>
+        a.period === b.period
+          ? b.billNo.localeCompare(a.billNo)
+          : b.period.localeCompare(a.period),
+      );
   },
 });
 
