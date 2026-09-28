@@ -67,6 +67,20 @@ export const adminSetPassword = mutation({
       );
     }
     const secret = await hashPassword(newPassword);
+    // The Password provider signs in by providerAccountId (the email) with a
+    // .unique() lookup — duplicates there break sign-in irrecoverably. So the
+    // canonical check is by EMAIL first: any password credential row for this
+    // email that points at a DIFFERENT user row is stale and must go.
+    const byEmail = await ctx.db
+      .query("authAccounts")
+      .withIndex("providerAndAccountId", (q) =>
+        q.eq("provider", "password").eq("providerAccountId", normalized),
+      )
+      .collect();
+    for (const stale of byEmail) {
+      if (stale.userId !== target._id) await ctx.db.delete(stale._id);
+    }
+    // Then dedupe rows owned by the target user itself (keep the newest).
     const rows = await ctx.db
       .query("authAccounts")
       .withIndex("userIdAndProvider", (q) =>
@@ -81,13 +95,24 @@ export const adminSetPassword = mutation({
         if (row._id !== newest._id) await ctx.db.delete(row._id);
       }
       await ctx.db.patch(newest._id, { secret });
+      // Clear any sign-in lockout so the fresh password works immediately.
+      const limits = await ctx.db
+        .query("authRateLimits")
+        .withIndex("identifier", (q) => q.eq("identifier", newest._id))
+        .collect();
+      for (const l of limits) await ctx.db.delete(l._id);
     } else {
-      await ctx.db.insert("authAccounts", {
+      const accountId = await ctx.db.insert("authAccounts", {
         userId: target._id,
         provider: "password",
         providerAccountId: normalized,
         secret,
       });
+      const limits = await ctx.db
+        .query("authRateLimits")
+        .withIndex("identifier", (q) => q.eq("identifier", accountId))
+        .collect();
+      for (const l of limits) await ctx.db.delete(l._id);
     }
     return true;
   },

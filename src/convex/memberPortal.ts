@@ -681,10 +681,23 @@ export const changePassword = mutation({
         );
       }
       try {
+        // Email-first dedupe: a password credential for this email pointing
+        // at another user row would create a sign-in-breaking duplicate if
+        // left in place (the Password provider looks up by email, .unique()).
+        const email = (user.email ?? "").toLowerCase().trim();
+        const byEmail = await ctx.db
+          .query("authAccounts")
+          .withIndex("providerAndAccountId", (q) =>
+            q.eq("provider", "password").eq("providerAccountId", email),
+          )
+          .collect();
+        for (const stale of byEmail) {
+          if (stale.userId !== userId) await ctx.db.delete(stale._id);
+        }
         await ctx.db.insert("authAccounts", {
           userId,
           provider: "password",
-          providerAccountId: (user.email ?? "").toLowerCase().trim(),
+          providerAccountId: email,
           secret: await hashPassword(newPassword),
         });
       } catch (err) {
