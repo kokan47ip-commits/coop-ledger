@@ -61,11 +61,14 @@ export const sendDocs = action({
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       throw new Error(
-        "Email is not configured yet — add the RESEND_API_KEY in the project's Keys / API keys settings and try again.",
+        "Email is not configured yet — add the RESEND_API_KEY in the project's Keys / API keys settings tab and try again.",
       );
     }
 
-    const from = `${society.name} <onboarding@resend.dev>`;
+    // Display name honours the society's settings-tab override; reply-to is
+    // attached when the office saved one.
+    const from = `${society.senderName?.trim() || society.name} <onboarding@resend.dev>`;
+    const replyToHeader = society.replyTo?.trim() || undefined;
 
     const results: { to: string; ok: boolean; error?: string }[] = [];
     for (const msg of messages) {
@@ -78,6 +81,7 @@ export const sendDocs = action({
           },
           body: JSON.stringify({
             from,
+            ...(replyToHeader ? { reply_to: replyToHeader } : {}),
             to: [msg.to],
             subject: msg.subject,
             html: msg.html,
@@ -137,7 +141,10 @@ export const sendTest = action({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: `${society.name} <onboarding@resend.dev>`,
+        from: `${society.senderName?.trim() || society.name} <onboarding@resend.dev>`,
+        ...(society.replyTo?.trim()
+          ? { reply_to: society.replyTo.trim() }
+          : {}),
         to: [to.trim()],
         subject: `Test email — ${society.name}`,
         html: `<p>This is a test email from <strong>${society.name}</strong> (Imamm Accounting Solutions).</p><p>If you received this, email delivery is configured correctly and bills/receipts will arrive from this address.</p>`,

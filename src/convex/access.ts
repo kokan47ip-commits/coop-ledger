@@ -600,6 +600,13 @@ export const assertCanEmail = internalQuery({
   args: { societyId: v.id("societies") },
   handler: async (ctx, { societyId }) => {
     const society = await requireSociety(ctx, societyId);
-    return { name: society.name };
+    // Safe preference fields only — no secrets. The senders use these to
+    // honour the society's Email & WhatsApp settings-tab choices.
+    return {
+      name: society.name,
+      replyTo: society.messagingReplyTo,
+      senderName: society.messagingSenderName,
+      whatsappMode: society.messagingWhatsappMode,
+    };
   },
 });

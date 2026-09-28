@@ -69,8 +69,11 @@ export const sendWhatsapp = action({
   },
   handler: async (ctx, { societyId, messages, mode }) => {
     // Owner/editor only — member logins and outsiders are rejected here.
-    await ctx.runQuery(internal.access.assertCanEmail, { societyId });
-
+    // The saved WhatsApp mode preference is the default for every send.
+    const society = await ctx.runQuery(internal.access.assertCanEmail, {
+      societyId,
+    });
+    const effectiveMode = mode ?? society.whatsappMode ?? "template";
     if (messages.length === 0) {
       throw new Error("Nothing to send — no members were selected.");
     }
@@ -91,7 +94,7 @@ export const sendWhatsapp = action({
       process.env.WHATSAPP_TEMPLATE_NAME || DEFAULT_TEMPLATE_NAME;
     const templateLang =
       process.env.WHATSAPP_TEMPLATE_LANG || DEFAULT_TEMPLATE_LANG;
-    const sendMode = mode ?? "template";
+    const sendMode = effectiveMode;
 
     const graphBase = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}`;
     const results: { to: string; ok: boolean; error?: string }[] = [];
