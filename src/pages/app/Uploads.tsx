@@ -334,7 +334,7 @@ function UploadCard({
                   {preview.missing.length > 1 ? "them" : "it"} to the file and re-select it.
                 </div>
               )}
-              <div className="max-h-[50vh] overflow-auto rounded-lg border">
+              <div className="panel max-h-[50vh] overflow-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">

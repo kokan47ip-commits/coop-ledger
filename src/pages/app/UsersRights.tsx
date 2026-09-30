@@ -249,7 +249,7 @@ export default function UsersRights() {
           the assigned email address.
         </EmptyHint>
       ) : (
-        <div className="rounded-lg border">
+        <div className="panel">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

@@ -946,7 +946,7 @@ export default function BillRegister() {
           No bills for {formatPeriod(periodFilter)}. Generate them above, then use Refresh.
         </EmptyHint>
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <div className="panel overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

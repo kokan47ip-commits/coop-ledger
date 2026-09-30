@@ -323,7 +323,7 @@ export default function Tariffs() {
             Active total per {""}
             flat: <span className="font-medium text-foreground">{formatINR(totalPerFlat)}</span>
           </div>
-          <div className="rounded-lg border">
+          <div className="panel">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -882,7 +882,7 @@ function MemberTariffMatrix(props: {
         </Button>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="panel overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">

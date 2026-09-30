@@ -17,7 +17,7 @@ export function ReportPreview({
   onPrint?: () => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border shadow-sm">
+    <div className="panel overflow-hidden">
       {/* Toolbar strip */}
       <div className="flex items-center justify-between gap-2 border-b bg-muted/60 px-3 py-1.5">
         <span className="rounded-t border border-b-0 bg-background px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">

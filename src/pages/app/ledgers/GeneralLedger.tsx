@@ -296,7 +296,7 @@ export default function GeneralLedger() {
 
         <TabsContent value="ledger" className="mt-6">
           {/* ---- Ledger selection panel (legacy layout) ---- */}
-          <div className="rounded-lg border">
+          <div className="panel">
             <div className="border-b bg-muted/50 px-4 py-2 text-sm font-medium">Ledger</div>
             <div className="grid gap-6 p-4 lg:grid-cols-[1fr_320px]">
               {/* Left: checkbox list */}
@@ -525,7 +525,7 @@ export default function GeneralLedger() {
           {!trialBalance ? null : trialBalance.length === 0 ? (
             <EmptyHint>No account activity in this period.</EmptyHint>
           ) : (
-            <div className="rounded-lg border">
+            <div className="panel">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">

@@ -407,7 +407,7 @@ export default function Members() {
           No members yet. Add members manually or use Excel upload.
         </EmptyHint>
       ) : (
-        <div className="rounded-lg border">
+        <div className="panel">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

@@ -325,7 +325,7 @@ export default function MemberReceipt() {
       {!canEdit ? (
         <ViewerBlock what="receipt entries" />
       ) : (
-      <form onSubmit={editId ? submitEdit : submit} className="mb-10 rounded-lg border">
+      <form onSubmit={editId ? submitEdit : submit} className="panel mb-10">
         {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
         <div className="grid gap-3 border-b p-3 sm:grid-cols-4">
           <div className="space-y-2">
@@ -568,7 +568,7 @@ export default function MemberReceipt() {
 
       {/* Settlement preview */}
       {!editId && selectedMember && outstandingBills.length > 0 && (
-        <div className="mb-6 -mt-4 rounded-lg border p-4">
+        <div className="panel mb-6 -mt-4 p-4">
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Automatic settlement preview (oldest first)
           </p>
@@ -591,7 +591,7 @@ export default function MemberReceipt() {
         </div>
       )}
       {!editId && selectedMember && outstandingBills.length === 0 && (
-        <div className="mb-6 -mt-4 rounded-lg border p-4">
+        <div className="panel mb-6 -mt-4 p-4">
           <p className="text-sm text-muted-foreground">
             No outstanding bills for {selectedMember.name} — the receipt will still credit their account.
           </p>

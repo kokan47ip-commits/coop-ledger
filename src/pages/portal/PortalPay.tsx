@@ -282,7 +282,7 @@ export default function PortalPay() {
         </CardContent>
       </Card>
 
-      <div className="rounded-lg border">
+      <div className="panel">
         <Table>
           <TableHeader>
             <TableRow>

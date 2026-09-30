@@ -516,7 +516,7 @@ export function VoucherList({
   return (
     <div>
       {/* Filters: date-wise / month-wise */}
-      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border p-4">
+      <div className="panel mb-4 flex flex-wrap items-end gap-3 p-4">
         <div className="space-y-1">
           <Label htmlFor="vl-from" className="text-xs text-muted-foreground">From</Label>
           <Input id="vl-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)}
@@ -605,7 +605,7 @@ export function VoucherList({
       {!vouchers ? null : filtered.length === 0 ? (
         <EmptyHint>No vouchers match the current filters.</EmptyHint>
       ) : (
-        <div className="rounded-lg border">
+        <div className="panel">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

@@ -491,7 +491,7 @@ export default function SocietyProfile() {
                 <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Current assignments
                 </h3>
-                <div className="rounded-lg border">
+                <div className="panel">
                   <ul className="divide-y">
                     {ROLES.map((r) => {
                       const id = form[r.key];

@@ -193,7 +193,7 @@ export default function CashBook() {
       ) : (
         <div className="space-y-8">
           {(sections ?? []).map((s) => (
-            <div key={s.accountId} className="rounded-lg border">
+            <div key={s.accountId} className="panel">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3">
                 <p className="text-sm font-semibold tracking-wide">
                   {s.code}&ensp;{s.name.toUpperCase()}

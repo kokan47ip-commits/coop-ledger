@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
-import { PageHeader, StatCard } from "@/components/PageParts";
+import { IconTile, PageHeader, StatCard } from "@/components/PageParts";
 import { effectiveFyPeriod, formatDate, formatINR, VOUCHER_TYPE_LABEL } from "@/lib/format";
 import {
   ArrowRight,
@@ -118,7 +118,7 @@ export default function Dashboard() {
               No transactions posted yet. Begin with a member receipt or generate the month's bills.
             </div>
           ) : (
-            <div className="rounded-lg border">
+            <div className="panel">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -157,37 +157,43 @@ export default function Dashboard() {
             {[
               {
                 to: "/app/member-receipt",
-                icon: <Receipt className="size-4" />,
+                icon: <Receipt />,
+                tone: "emerald" as const,
                 title: "Post a member receipt",
                 desc: "Collections settle outstanding bills automatically",
               },
               {
                 to: "/app/bills",
-                icon: <FileSpreadsheet className="size-4" />,
+                icon: <FileSpreadsheet />,
+                tone: "indigo" as const,
                 title: "Raise the month's bills",
                 desc: "Generated from the active tariff schedule",
               },
               {
                 to: "/app/uploads",
-                icon: <ArrowUpRight className="size-4" />,
+                icon: <ArrowUpRight />,
+                tone: "violet" as const,
                 title: "Import client registers",
                 desc: "Members, tariffs, receipts and payments via Excel",
               },
               {
                 to: "/app/income-expenditure",
-                icon: <TrendingUp className="size-4" />,
+                icon: <TrendingUp />,
+                tone: "sky" as const,
                 title: "Income & Expenditure",
                 desc: "Surplus for the financial year, exportable",
               },
               {
                 to: "/app/members",
-                icon: <Users className="size-4" />,
+                icon: <Users />,
+                tone: "fuchsia" as const,
                 title: "Maintain the member register",
                 desc: "Codes, flats, contacts and opening balances",
               },
               {
                 to: "/app/receipt-payment",
-                icon: <Wallet className="size-4" />,
+                icon: <Wallet />,
+                tone: "amber" as const,
                 title: "Receipt & Payment",
                 desc: "Cash-book summary with closing balance",
               },
@@ -195,11 +201,11 @@ export default function Dashboard() {
               <Link
                 key={a.to}
                 to={a.to}
-                className="group flex items-start gap-4 rounded-lg border p-4 transition-colors hover:bg-accent/40"
+                className="group panel flex items-start gap-4 p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30"
               >
-                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border text-muted-foreground group-hover:text-foreground">
+                <IconTile tone={a.tone} size="sm" className="mt-0.5">
                   {a.icon}
-                </span>
+                </IconTile>
                 <span>
                   <span className="block text-sm font-medium">{a.title}</span>
                   <span className="block text-xs text-muted-foreground">{a.desc}</span>

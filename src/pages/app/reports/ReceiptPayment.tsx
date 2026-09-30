@@ -111,7 +111,7 @@ export default function ReceiptPayment() {
       </div>
 
       {!rp ? null : (
-        <div className="overflow-hidden rounded-lg border">
+        <div className="panel overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-accent/40 text-xs font-semibold uppercase tracking-[0.14em]">

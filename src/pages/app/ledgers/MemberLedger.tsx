@@ -307,7 +307,7 @@ export default function MemberLedger() {
       />
 
       {/* ---- Ledger selection panel (legacy layout) ---- */}
-      <div className="rounded-lg border">
+      <div className="panel">
         <div className="border-b bg-muted/50 px-4 py-2 text-sm font-medium">Ledger</div>
         <div className="grid gap-6 p-4 lg:grid-cols-[1fr_320px]">
           {/* Left: checkbox member list */}

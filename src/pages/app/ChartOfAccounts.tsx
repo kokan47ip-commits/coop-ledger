@@ -223,7 +223,7 @@ export default function ChartOfAccounts() {
                     <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                       {g.label} · <span className="tabular-nums">{g.rows.length}</span>
                     </h3>
-                    <div className="rounded-lg border">
+                    <div className="panel">
                       <Table>
                         <TableHeader>
                           <TableRow className="hover:bg-transparent">
@@ -341,7 +341,7 @@ export default function ChartOfAccounts() {
                     <h3 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                       {t.label} · <span className="tabular-nums">{rows.length}</span>
                     </h3>
-                    <div className="rounded-lg border">
+                    <div className="panel">
                       <Table>
                         <TableHeader>
                           <TableRow className="hover:bg-transparent">

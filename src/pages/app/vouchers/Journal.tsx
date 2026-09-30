@@ -253,7 +253,7 @@ export default function Journal() {
       {!canEdit ? (
         <ViewerBlock what="journal entries" />
       ) : (
-      <form onSubmit={submit} className="mb-10 rounded-lg border">
+      <form onSubmit={submit} className="panel mb-10">
         {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
         <div className="grid gap-4 border-b p-4 sm:grid-cols-4">
           <div className="space-y-2">

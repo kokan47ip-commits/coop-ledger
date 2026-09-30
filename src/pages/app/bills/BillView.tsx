@@ -97,34 +97,53 @@ export default function BillView() {
           </Link>
         </Button>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("pdf")}
+            className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+          >
             <Download className="size-4" /> PDF
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("word")}
+            className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+          >
             <FileText className="size-4" /> Word
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("print")}
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+          >
             <Printer className="size-4" /> Print
           </Button>
         </div>
       </div>
 
-      {/* On-screen legacy bill */}
-      <div className="rounded-lg border border-foreground/40">
-        <div className="px-6 pt-6 pb-2 text-center">
-          <h2 className="text-base font-bold uppercase tracking-tight">{society.name}</h2>
-          {society.registrationNo && <p className="mt-1 text-xs">{society.registrationNo}</p>}
-          <p className="mt-1 text-xs">
+      {/* On-screen bill — mirrors the printed PDF layout */}
+      <div className="doc-sheet">
+        <div className="bg-[#312e81] px-6 py-5 text-center text-white">
+          <h2 className="text-lg font-bold uppercase tracking-wide">{society.name}</h2>
+          {society.registrationNo && (
+            <p className="mt-1 text-xs text-indigo-200">{society.registrationNo}</p>
+          )}
+          <p className="mt-1 text-xs text-indigo-200">
             {[society.address, society.city, society.state, society.pincode]
               .filter(Boolean)
               .join(", ")}
           </p>
-          <p className="mt-2 border-y border-foreground/40 py-1.5 text-sm font-bold">
-            Bill for the Month of {periodLabelLong(bill.period)}
-          </p>
         </div>
+        <div className="h-[3px] bg-[#b45309]" />
 
-        <div className="grid grid-cols-2 gap-x-10 px-6 py-3 text-sm">
+        <p className="bg-indigo-50 py-2.5 text-center text-sm font-bold tracking-[0.06em] text-[#312e81]">
+          BILL FOR THE MONTH OF {periodLabelLong(bill.period).toUpperCase()}
+        </p>
+
+        <div className="grid grid-cols-2 gap-x-10 border-b border-slate-200 bg-slate-50 px-6 py-4 text-sm">
           <div className="space-y-1.5">
             <p>
               <span className="text-muted-foreground">Bill No:</span>{" "}
@@ -157,54 +176,56 @@ export default function BillView() {
           </div>
         </div>
 
-        <table className="w-full border-t border-foreground/40 text-sm">
+        <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-foreground/40">
-              <th className="px-6 py-1.5 text-left font-bold tracking-[0.2em]">PARTICULARS</th>
-              <th className="px-4 py-1.5 text-right font-bold tracking-[0.2em]">AMOUNT</th>
+            <tr className="bg-[#312e81] text-white">
+              <th className="px-6 py-2 text-left font-bold tracking-[0.2em]">PARTICULARS</th>
+              <th className="px-6 py-2 text-right font-bold tracking-[0.2em]">AMOUNT</th>
             </tr>
           </thead>
           <tbody>
             {data.lines.map((l, i) => (
-              <tr key={i}>
-                <td className="px-6 py-1">
+              <tr key={i} className={i % 2 === 1 ? "bg-slate-50" : undefined}>
+                <td className="border-b border-indigo-50 px-6 py-2">
                   {i + 1}. {l.name.toUpperCase()}
                 </td>
-                <td className="px-4 py-1 text-right tabular-nums">{fmt(l.amount)}</td>
+                <td className="border-b border-indigo-50 px-6 py-2 text-right tabular-nums">
+                  {fmt(l.amount)}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
 
-        <div className="grid grid-cols-[1fr_190px] border-t border-foreground/40 text-sm">
-          <div className="border-r border-foreground/40 px-6 py-3">
+        <div className="grid grid-cols-[1fr_210px] border-t border-slate-300 text-sm">
+          <div className="px-6 py-4 text-xs italic leading-5 text-slate-500">
             Rupees: {amountInWords(data.totalDue)} Only
           </div>
-          <div>
-            <div className="flex justify-between px-4 py-1">
-              <span className="text-muted-foreground">Total:</span>
+          <div className="border-l border-slate-200">
+            <div className="flex justify-between border-b border-slate-200 px-4 py-2">
+              <span className="text-slate-500">Total:</span>
               <span className="tabular-nums">{fmt(data.total)}</span>
             </div>
-            <div className="flex justify-between px-4 py-1">
-              <span className="text-muted-foreground">Arrears</span>
+            <div className="flex justify-between border-b border-slate-200 px-4 py-2">
+              <span className="text-slate-500">Arrears:</span>
               <span className="tabular-nums">{fmt(data.arrears)}</span>
             </div>
-            <div className="flex justify-between border-t border-foreground/40 px-4 py-1.5 font-bold">
+            <div className="flex justify-between bg-[#312e81] px-4 py-2.5 font-bold text-white">
               <span>Total Due:</span>
               <span className="tabular-nums">{fmt(data.totalDue)}</span>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 border-t border-foreground/40 text-[11px]">
-          <div className="space-y-1 border-r border-foreground/40 px-6 py-3 text-muted-foreground">
+        <div className="grid grid-cols-2 border-t border-slate-300 bg-slate-50 text-[11px]">
+          <div className="space-y-1.5 border-r border-slate-200 px-6 py-4 text-slate-500">
             <p>PLEASE PAY BY CROSSED A/C. PAYEE CHEQUE ONLY.</p>
             <p>THIS BILL IS PAYABLE ON OR BEFORE LAST DAY OF THE MONTH</p>
             <p>LATEFEES @18% WILL BE CHARGED ON OVERDUE MONTH</p>
           </div>
-          <div className="px-6 py-3 text-right">
-            <p className="text-xs font-bold">For {society.name}</p>
-            <p className="mt-10 text-[11px] tracking-wide">SECRETARY</p>
+          <div className="px-6 py-4 text-right">
+            <p className="text-xs font-bold text-[#312e81]">For {society.name}</p>
+            <p className="mt-10 text-[11px] tracking-wide text-slate-500">SECRETARY</p>
           </div>
         </div>
       </div>

@@ -162,7 +162,7 @@ const navLinkCls = ({ isActive }: { isActive: boolean }) =>
   cn(
     "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-all",
     isActive
-      ? "bg-gradient-to-r from-primary to-violet-500 font-medium text-white shadow-lg shadow-indigo-950/40 ring-1 ring-white/20 ring-inset"
+      ? "bg-gradient-to-r from-primary via-indigo-500 to-violet-500 font-medium text-white shadow-lg shadow-indigo-950/50 ring-1 ring-white/25 ring-inset"
       : "text-sidebar-foreground/65 hover:bg-white/[0.07] hover:text-sidebar-foreground",
   );
 
@@ -502,7 +502,9 @@ export function AppLayout() {
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-primary/40 via-primary/10 to-transparent" />
+        <div className="brand-gradient-deep pointer-events-none absolute inset-0 opacity-90" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-gradient-to-b from-primary/45 via-primary/10 to-transparent" />
+        <div className="brand-gradient-gold pointer-events-none absolute inset-x-0 top-0 h-[3px] opacity-90" />
         <div className="relative flex h-16 items-center border-b border-white/10 px-3">
           <SocietySwitcher />
         </div>
@@ -700,6 +702,7 @@ export function AppLayout() {
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border/70 bg-background/80 px-4 backdrop-blur-xl lg:px-8">
+          <div className="brand-gradient pointer-events-none absolute inset-x-0 top-0 h-[3px] opacity-90" />
           <Button
             variant="ghost"
             size="icon"

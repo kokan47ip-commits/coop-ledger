@@ -348,7 +348,7 @@ export function LedgerVoucherForm({
   return !canEdit ? (
     <ViewerBlock what="voucher entries" />
   ) : (
-    <form onSubmit={submit} className="mb-10 rounded-lg border">
+    <form onSubmit={submit} className="panel mb-10">
       {/* Voucher header — Book Code / Voucher Date / Last Voucher No / Voucher No */}
       <div className="grid gap-3 border-b p-3 sm:grid-cols-4">
         <div className="space-y-2">

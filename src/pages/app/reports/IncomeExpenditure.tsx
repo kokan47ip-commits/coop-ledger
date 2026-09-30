@@ -109,7 +109,7 @@ export default function IncomeExpenditure() {
       </div>
 
       {!ie ? null : (
-        <div className="overflow-hidden rounded-lg border">
+        <div className="panel overflow-hidden">
           <table className="w-full text-sm">
             <tbody>
               <tr className="border-b bg-accent/40">
