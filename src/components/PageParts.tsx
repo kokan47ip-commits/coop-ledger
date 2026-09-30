@@ -107,6 +107,49 @@ export function StatCard({
   );
 }
 
+/**
+ * Letterhead band drawn above a report sheet — full-bleed indigo header, gold
+ * rule and a tinted title bar. Mirrors what PDF / Word / Print produce, so the
+ * on-screen preview and the printed page read as the same document.
+ *
+ * Defaults to bleeding out of the padded "paper" used by ReportPreview; pass
+ * `className="mx-0 mt-0"` when the sheet has no padding of its own.
+ */
+export function ReportLetterhead({
+  name,
+  address,
+  registrationNo,
+  title,
+  subtitle,
+  className,
+}: {
+  name: string;
+  address?: string;
+  registrationNo?: string;
+  title: string;
+  subtitle?: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("-mx-10 -mt-8 mb-7", className)}>
+      <div className="bg-[#312e81] px-6 py-5 text-center text-white">
+        <p className="text-base font-bold tracking-tight">{name.toUpperCase()}</p>
+        {address && <p className="mt-1 text-[11px] text-indigo-200">{address}</p>}
+        {registrationNo && (
+          <p className="mt-0.5 text-[11px] text-indigo-200">Reg. No: {registrationNo}</p>
+        )}
+      </div>
+      <div className="h-[3px] bg-[#b45309]" />
+      <p className="bg-indigo-50 py-2 text-center text-[13px] font-bold tracking-[0.06em] text-[#312e81] uppercase">
+        {title}
+      </p>
+      {subtitle && (
+        <p className="pt-3 text-center text-[11px] text-slate-500">{subtitle}</p>
+      )}
+    </div>
+  );
+}
+
 export function EmptyHint({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-lg border border-dashed border-primary/30 bg-primary/[0.035] p-10 text-center text-sm text-muted-foreground">

@@ -559,27 +559,33 @@ export function VoucherList({
       {/* Export bar: date-wise/month-wise list + selection-wise */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => doExport("pdf")}
+          className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
           title={receiptMode === "receipt" ? "Receipt register for the filtered list" : undefined}>
           <Download className="size-4" /> {receiptMode === "receipt" ? "Register PDF" : `PDF ${dateFiltersActive ? "(filtered)" : ""}`}
         </Button>
         <Button variant="outline" size="sm" onClick={() => doExport("word")}
+          className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
           title={receiptMode === "receipt" ? "Receipt register for the filtered list" : undefined}>
           <FileText className="size-4" /> {receiptMode === "receipt" ? "Register Word" : "Word"}
         </Button>
         <Button variant="outline" size="sm" onClick={() => doExport("print")}
+          className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
           title={receiptMode === "receipt" ? "Receipt register for the filtered list" : undefined}>
           <Printer className="size-4" /> {receiptMode === "receipt" ? "Register Print" : "Print"}
         </Button>
         <span className="mx-1 h-5 w-px bg-border" aria-hidden />
         <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+          className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
           onClick={() => doExportSelected("pdf")}>
           <CalendarRange className="size-4" /> {receiptNoun} PDF ({selectedRows.length})
         </Button>
         <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+          className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
           onClick={() => doExportSelected("word")}>
           <FileText className="size-4" /> {receiptNoun} Word
         </Button>
         <Button variant="outline" size="sm" disabled={selectedRows.length === 0}
+          className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
           onClick={() => doExportSelected("print")}>
           <Printer className="size-4" /> {receiptNoun} Print
         </Button>

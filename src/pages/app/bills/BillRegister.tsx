@@ -749,7 +749,7 @@ export default function BillRegister() {
       )}
 
       {/* View Bills filter bar */}
-      <div className="mb-8 rounded-lg border p-5">
+      <div className="panel mb-8 p-5">
         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-8">
           <div className="space-y-2">
             <Label htmlFor="vb-period">Billing period</Label>
@@ -800,7 +800,7 @@ export default function BillRegister() {
 
       {/* Generate box */}
       {canEdit ? (
-      <div className="mb-8 rounded-lg border p-5">
+      <div className="panel mb-8 p-5">
         <div className="mb-4 flex items-center gap-2">
           <Plus className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-medium">Generate bills</h3>
@@ -909,13 +909,28 @@ export default function BillRegister() {
               <Trash2 className="size-4" /> {deletingMonth ? "Deleting…" : "Delete month"}
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("pdf")}
+            className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+          >
             <Download className="size-4" /> PDF
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("word")}
+            className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+          >
             <FileText className="size-4" /> Word
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("print")}
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+          >
             <Printer className="size-4" /> Print
           </Button>
           {canEdit && !hasEdits && (
@@ -1102,7 +1117,7 @@ export default function BillRegister() {
 
       {/* Save / Delete / Exit bar (legacy View Bills layout) */}
       {(hasEdits || selected.size > 0) && (
-        <div className="mt-6 flex flex-wrap items-center justify-end gap-2 rounded-lg border p-4">
+        <div className="panel mt-6 flex flex-wrap items-center justify-end gap-2 p-4">
           {hasEdits && (
             <>
               <Button onClick={saveEdits} disabled={saving} className="rounded-lg">

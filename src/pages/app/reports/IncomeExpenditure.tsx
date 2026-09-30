@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
-import { PageHeader } from "@/components/PageParts";
+import { PageHeader, ReportLetterhead } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate } from "@/lib/format";
@@ -86,7 +86,7 @@ export default function IncomeExpenditure() {
         description="Revenue and operating expenses for the selected period with the resulting surplus or deficit."
       />
 
-      <div className="mb-8 grid gap-4 rounded-lg border p-5 sm:grid-cols-3">
+      <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
         <div className="space-y-2">
           <Label htmlFor="ie-from">From</Label>
           <Input id="ie-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -96,13 +96,28 @@ export default function IncomeExpenditure() {
           <Input id="ie-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
         <div className="flex items-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("pdf")}
+            className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+          >
             <Download className="size-4" /> PDF
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("word")}
+            className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+          >
             <FileText className="size-4" /> Word
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("print")}
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+          >
             <Printer className="size-4" /> Print
           </Button>
         </div>
@@ -110,9 +125,21 @@ export default function IncomeExpenditure() {
 
       {!ie ? null : (
         <div className="panel overflow-hidden">
+          <ReportLetterhead
+            className="mx-0 mt-0"
+            name={society?.name ?? ""}
+            address={
+              [society?.address, society?.city, society?.state, society?.pincode]
+                .filter(Boolean)
+                .join(", ") || undefined
+            }
+            registrationNo={society?.registrationNo}
+            title="Income & Expenditure"
+            subtitle={`For the period ${formatDate(from)} to ${formatDate(to)}`}
+          />
           <table className="w-full text-sm">
             <tbody>
-              <tr className="border-b bg-accent/40">
+              <tr className="border-b bg-indigo-50 text-[#312e81]">
                 <td colSpan={2} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em]">Income</td>
                 <td />
                 <td className="w-44" />
@@ -130,7 +157,7 @@ export default function IncomeExpenditure() {
                   </td>
                 </tr>
               ))}
-              <tr className="border-b-2 border-foreground/50 font-medium">
+              <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
                 <td />
                 <td />
                 <td className="px-0 py-2.5">Total Income</td>
@@ -139,7 +166,7 @@ export default function IncomeExpenditure() {
                 </td>
               </tr>
 
-              <tr className="border-b bg-accent/40">
+              <tr className="border-b bg-indigo-50 text-[#312e81]">
                 <td colSpan={2} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em]">Expenditure</td>
                 <td />
                 <td />
@@ -157,7 +184,7 @@ export default function IncomeExpenditure() {
                   </td>
                 </tr>
               ))}
-              <tr className="border-b-2 border-foreground/50 font-medium">
+              <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
                 <td />
                 <td />
                 <td className="px-0 py-2.5">Total Expenditure</td>
@@ -166,7 +193,7 @@ export default function IncomeExpenditure() {
                 </td>
               </tr>
 
-              <tr className="bg-accent/30 text-base font-semibold">
+              <tr className="bg-[#312e81] text-base font-semibold text-white">
                 <td />
                 <td />
                 <td className="px-0 py-4">

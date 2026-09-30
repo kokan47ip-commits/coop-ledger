@@ -15,7 +15,7 @@ import { ReportPreview } from "@/components/ReportPreview";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
+import { EmptyHint, PageHeader, ReportLetterhead, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatMoney, monthRangeISO } from "@/lib/format";
@@ -380,13 +380,28 @@ export default function GeneralLedger() {
             </div>
             {/* Action bar */}
             <div className="flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3">
-              <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => doExport("print")}
+                className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+              >
                 Print
               </Button>
-              <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => doExport("pdf")}
+                className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+              >
                 PDF
               </Button>
-              <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => doExport("word")}
+                className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+              >
                 Word
               </Button>
               <Button
@@ -413,16 +428,17 @@ export default function GeneralLedger() {
               <EmptyHint>Loading ledgers…</EmptyHint>
             ) : (
               <ReportPreview title="Main Report" onPrint={() => doExport("print")}>
-                <div className="text-center">
-                  <p className="text-base font-bold tracking-tight">{society.name.toUpperCase()}</p>
-                  {([society.address, society.city, society.state, society.pincode].filter(Boolean).join(", ") || null) && (
-                    <p className="text-[11px] text-slate-600">
-                      {[society.address, society.city, society.state, society.pincode].filter(Boolean).join(", ")}
-                    </p>
-                  )}
-                  <p className="mt-3 text-sm font-bold underline underline-offset-4">ACCOUNT LEDGER</p>
-                  <p className="text-[11px] text-slate-600">For the period {formatDate(from)} to {formatDate(to)}</p>
-                </div>
+                <ReportLetterhead
+                  name={society.name}
+                  address={
+                    [society.address, society.city, society.state, society.pincode]
+                      .filter(Boolean)
+                      .join(", ") || undefined
+                  }
+                  registrationNo={society.registrationNo}
+                  title="Account Ledger"
+                  subtitle={`For the period ${formatDate(from)} to ${formatDate(to)}`}
+                />
 
                 <div className="mt-6 space-y-8">
                   {sections.map((s, si) => (
@@ -430,7 +446,7 @@ export default function GeneralLedger() {
                       <p className="text-[13px] font-bold">{s.title}</p>
                       <table className="mt-2 w-full border-collapse text-[12px]">
                         <thead>
-                          <tr className="border-y border-slate-800 text-left">
+                          <tr className="bg-[#312e81] text-left text-white [&>th]:pl-2">
                             <th className="w-20 py-1.5 pr-2 font-bold">Date</th>
                             <th className="w-24 py-1.5 pr-2 font-bold">Voucher No</th>
                             <th className="py-1.5 pr-2 font-bold">Narration</th>
@@ -477,7 +493,7 @@ export default function GeneralLedger() {
                               </td>
                             </tr>
                           )}
-                          <tr className="border-t border-slate-800">
+                          <tr className="bg-indigo-50/70 text-[#312e81]">
                             <td colSpan={3} className="py-1 pr-2 font-semibold">
                               {s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd"}
                             </td>
@@ -511,13 +527,28 @@ export default function GeneralLedger() {
               {(trialBalance ?? []).length} ledger accounts with activity
             </p>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => doExportTrial("pdf")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => doExportTrial("pdf")}
+                className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+              >
                 PDF
               </Button>
-              <Button variant="outline" size="sm" onClick={() => doExportTrial("word")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => doExportTrial("word")}
+                className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+              >
                 Word
               </Button>
-              <Button variant="outline" size="sm" onClick={() => doExportTrial("print")}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => doExportTrial("print")}
+                className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+              >
                 Print
               </Button>
             </div>

@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
-import { PageHeader } from "@/components/PageParts";
+import { PageHeader, ReportLetterhead } from "@/components/PageParts";
 import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate } from "@/lib/format";
@@ -88,7 +88,7 @@ export default function ReceiptPayment() {
         description="Cash-basis summary of money in and money out through bank and cash accounts, including opening and closing balances."
       />
 
-      <div className="mb-8 grid gap-4 rounded-lg border p-5 sm:grid-cols-3">
+      <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
         <div className="space-y-2">
           <Label htmlFor="rp-from">From</Label>
           <Input id="rp-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -98,13 +98,28 @@ export default function ReceiptPayment() {
           <Input id="rp-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
         <div className="flex items-end justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("pdf")}
+            className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+          >
             <Download className="size-4" /> PDF
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("word")}
+            className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+          >
             <FileText className="size-4" /> Word
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("print")}
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+          >
             <Printer className="size-4" /> Print
           </Button>
         </div>
@@ -112,9 +127,21 @@ export default function ReceiptPayment() {
 
       {!rp ? null : (
         <div className="panel overflow-hidden">
+          <ReportLetterhead
+            className="mx-0 mt-0"
+            name={society?.name ?? ""}
+            address={
+              [society?.address, society?.city, society?.state, society?.pincode]
+                .filter(Boolean)
+                .join(", ") || undefined
+            }
+            registrationNo={society?.registrationNo}
+            title="Receipt & Payment"
+            subtitle={`For the period ${formatDate(from)} to ${formatDate(to)}`}
+          />
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-accent/40 text-xs font-semibold uppercase tracking-[0.14em]">
+              <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
                 <td className="px-5 py-2.5">Receipts</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
                 <td className="w-48 px-5 py-2.5 text-right">Amount (₹)</td>
@@ -124,7 +151,7 @@ export default function ReceiptPayment() {
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b bg-accent/30">
+              <tr className="border-b bg-slate-50">
                 <td className="px-5 py-2.5 font-medium">Opening cash & bank balance</td>
                 <td />
                 <td className="px-5 py-2.5 text-right tabular-nums">{money(rp.openingCash)}</td>
@@ -142,7 +169,7 @@ export default function ReceiptPayment() {
                   <td className="border-l" />
                 </tr>
               ))}
-              <tr className="border-b-2 border-foreground/40 font-medium">
+              <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
                 <td className="px-5 py-2.5">Total receipts</td>
                 <td />
                 <td className="px-5 py-2.5 text-right tabular-nums">{money(rp.totalIn)}</td>
@@ -160,7 +187,7 @@ export default function ReceiptPayment() {
                   <td className="border-l px-5 py-2.5 text-right tabular-nums">{money(r.amount)}</td>
                 </tr>
               ))}
-              <tr className="border-b-2 border-foreground/40 font-medium">
+              <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
                 <td />
                 <td />
                 <td />
@@ -168,7 +195,7 @@ export default function ReceiptPayment() {
                 <td />
                 <td className="border-l px-5 py-2.5 text-right tabular-nums">{money(rp.totalOut)}</td>
               </tr>
-              <tr className="border-t bg-accent/30 text-base font-semibold">
+              <tr className="bg-[#312e81] text-base font-semibold text-white">
                 <td className="px-5 py-4">Closing cash & bank balance</td>
                 <td />
                 <td className="px-5 py-4 text-right tabular-nums">{money(rp.closingCash)}</td>

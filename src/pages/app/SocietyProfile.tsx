@@ -420,7 +420,7 @@ export default function SocietyProfile() {
                 <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Effective period
                 </h3>
-                <div className="grid gap-4 rounded-lg border p-5 sm:grid-cols-3">
+                <div className="panel grid gap-4 p-5 sm:grid-cols-3">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Financial year</p>
                     <p className="mt-1.5 text-lg font-semibold tracking-tight tabular-nums">

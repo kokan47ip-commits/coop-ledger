@@ -146,7 +146,7 @@ export default function CashBook() {
         description="Day book for every cash and bank account — receipts as To, payments as By, with opening balance, running Dr/Cr balance and cheque references."
       />
 
-      <div className="mb-6 grid gap-4 rounded-lg border p-5 sm:grid-cols-4">
+      <div className="panel mb-6 grid gap-4 p-5 sm:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="cb-from">From</Label>
           <Input id="cb-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -176,13 +176,28 @@ export default function CashBook() {
             : `${sections.length} ${sections.length === 1 ? "account" : "accounts"} · receipts ${formatMoney(grandDebit)} · payments ${formatMoney(grandCredit)}`}
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => doExport("pdf")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("pdf")}
+            className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+          >
             <Download className="size-4" /> PDF
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("word")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("word")}
+            className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
+          >
             <FileText className="size-4" /> Word
           </Button>
-          <Button variant="outline" size="sm" onClick={() => doExport("print")}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("print")}
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+          >
             <Printer className="size-4" /> Print
           </Button>
         </div>

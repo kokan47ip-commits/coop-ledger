@@ -369,7 +369,7 @@ export default function UsersRights() {
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
             {!editing && (
-              <div className="grid grid-cols-2 gap-2 rounded-lg border p-1">
+              <div className="panel grid grid-cols-2 gap-2 p-1">
                 <button
                   type="button"
                   onClick={() => setMode("member")}
@@ -557,7 +557,7 @@ export default function UsersRights() {
             all menus (except administration). Changes apply the next time they
             load a page.
           </p>
-          <div className="max-h-[50vh] space-y-4 overflow-y-auto rounded-lg border p-4">
+          <div className="panel max-h-[50vh] space-y-4 overflow-y-auto p-4">
             {(Object.keys(MENU_SECTIONS) as MenuSectionKey[]).map((section) => (
               <div key={section}>
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">

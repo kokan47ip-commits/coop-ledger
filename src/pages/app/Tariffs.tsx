@@ -844,7 +844,7 @@ function MemberTariffMatrix(props: {
   return (
     <div>
       {/* Filter bar, matching the legacy Tariff Schedule View */}
-      <div className="mb-6 grid gap-4 rounded-lg border p-5 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="panel mb-6 grid gap-4 p-5 sm:grid-cols-3 lg:grid-cols-5">
         <div className="space-y-2">
           <Label htmlFor="mx-building">Building</Label>
           <Input id="mx-building" value={building} onChange={(e) => setBuilding(e.target.value)} />
