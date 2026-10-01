@@ -5,6 +5,7 @@ import {
   BarChart3,
   BookOpen,
   Building2,
+  ClipboardCheck,
   FileInput,
   FileSpreadsheet,
   FileText,
@@ -33,6 +34,7 @@ export type MenuKey =
   | "member-receipt"
   | "other-receipt"
   | "payment"
+  | "payment-approvals"
   | "journal"
   | "bills"
   | "member-ledger"
@@ -80,6 +82,7 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "member-receipt", label: "Member Receipt", section: "Transactions", path: "/app/member-receipt", icon: Receipt },
   { key: "other-receipt", label: "Other Receipt", section: "Transactions", path: "/app/other-receipt", icon: Banknote },
   { key: "payment", label: "Payment", section: "Transactions", path: "/app/payment", icon: ArrowLeftRight },
+  { key: "payment-approvals", label: "Payment Approvals", section: "Transactions", path: "/app/payment-approvals", icon: ClipboardCheck },
   { key: "journal", label: "Journal", section: "Transactions", path: "/app/journal", icon: FileText },
   { key: "bills", label: "Bill Register", section: "Transactions", path: "/app/bills", icon: FileSpreadsheet },
   { key: "member-ledger", label: "Member Ledger", section: "Reports", path: "/app/member-ledger", icon: Users },

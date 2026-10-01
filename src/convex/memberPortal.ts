@@ -6,7 +6,6 @@ import {
   analyzePortalBinding,
   assertInFy,
   isSoftwareAdmin,
-  postMemberReceipt,
   requireSociety,
   requireUserId,
   societyMemberBinding,
@@ -496,9 +495,10 @@ export const myPayAccounts = query({
 });
 
 /**
- * Submit a payment against my flat: records a member receipt (dated today,
- * inside the FY) and allocates it across the chosen bills. The allocation
- * total is the amount charged.
+ * Submit a payment against my flat. Cash / cheque / bank-transfer entries are
+ * NOT posted to the books — they land in the office's pending-for-passing
+ * queue and become a member-receipt voucher only after an authorised office
+ * login approves them.
  */
 export const submitPayment = mutation({
   args: {
@@ -509,7 +509,7 @@ export const submitPayment = mutation({
     reference: v.optional(v.string()),
     narration: v.optional(v.string()),
     allocations: v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
-    /** Advance: pay without selecting bills — credited to the member's ledger. */
+    /** Advance: pay without selecting bills — credited on approval. */
     amount: v.optional(v.number()),
   },
   handler: async (ctx, { societyId, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
@@ -550,24 +550,50 @@ export const submitPayment = mutation({
       );
     }
 
-    // Post the receipt: Dr Bank/Cash, Cr Members Receivable (same posting the
-    // society's Member Receipt voucher produces), then apply allocations.
-    const { voucherId, voucherNo } = await postMemberReceipt(ctx, {
-      society,
+    const userId = await requireUserId(ctx);
+    const advanceAmount = Math.round((total - allocations.reduce((s, a) => s + a.amount, 0)) * 100) / 100;
+    const submissionId = await ctx.db.insert("paymentSubmissions", {
+      societyId,
       memberId: bind.memberId,
+      createdById: userId,
       date,
+      mode: mode ?? "bank",
       bankCashAccountId,
-      mode,
-      reference,
-      narration:
-        narration ??
-        (allocations.length > 0
-          ? `Online payment by member for ${allocations.length} bill(s)`
-          : "Advance payment by member"),
+      reference: reference?.trim() || undefined,
+      memberNote: narration?.trim() || undefined,
+      amount: total,
+      advanceAmount,
       allocations,
-      total,
+      status: "pending" as const,
+      createdAt: Date.now(),
     });
-    return { voucherId, voucherNo, total };
+    return { submissionId, status: "pending" as const, total };
+  },
+});
+
+/** My recent manual (cash/cheque/bank) payment submissions, newest first. */
+export const mySubmissions = query({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    const bind = await portalBinding(ctx, societyId);
+    if (!bind) return null;
+    const rows = await ctx.db
+      .query("paymentSubmissions")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
+      )
+      .order("desc")
+      .take(8);
+    return rows.map((r) => ({
+      _id: r._id,
+      amount: r.amount,
+      mode: r.mode,
+      date: r.date,
+      status: r.status,
+      voucherNo: r.voucherNo ?? null,
+      reviewNote: r.reviewNote ?? null,
+      createdAt: r.createdAt,
+    }));
   },
 });
 

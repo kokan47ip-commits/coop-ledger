@@ -267,6 +267,49 @@ const schema = defineSchema(
       .index("by_society_member", ["societyId", "memberId"])
       .index("by_provider_order", ["providerOrderId"]),
 
+    /**
+     * A payment/entry the member entered at the portal by cash, cheque or
+     * bank transfer. Never posts to the books by itself: it waits in the
+     * office queue until an authorised office login (owner/editor — the
+     * secretary, treasurer, chairman or accountant) passes it, which creates
+     * the member-receipt voucher and applies the bill allocations.
+     */
+    paymentSubmissions: defineTable({
+      societyId: v.id("societies"),
+      memberId: v.id("members"),
+      /** Portal login that submitted the entry. */
+      createdById: v.id("users"),
+      /** Date the member says the payment was made ("YYYY-MM-DD"). */
+      date: v.string(),
+      /** cash | cheque | bank (portal payment mode for manual entries). */
+      mode: v.string(),
+      /** Cash/bank account the member said the payment went into. */
+      bankCashAccountId: v.id("accounts"),
+      reference: v.optional(v.string()),
+      memberNote: v.optional(v.string()),
+      amount: v.number(), // rupees, two decimals
+      /** Advance part: amount above the selected bill allocations. */
+      advanceAmount: v.number(),
+      allocations: v.array(
+        v.object({ billId: v.id("bills"), amount: v.number() }),
+      ),
+      /** pending → awaiting office approval; posted → voucher created;
+       *  rejected → office declined, visible to the member with a reason. */
+      status: v.union(
+        v.literal("pending"),
+        v.literal("posted"),
+        v.literal("rejected"),
+      ),
+      voucherId: v.optional(v.id("vouchers")),
+      voucherNo: v.optional(v.string()),
+      reviewedById: v.optional(v.id("users")),
+      reviewedAt: v.optional(v.number()),
+      reviewNote: v.optional(v.string()),
+      createdAt: v.number(),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_member", ["societyId", "memberId"]),
+
     // Per-society user rights. The society creator is the implicit "owner";
     // rows here grant "editor" (entry rights), "viewer" (read-only) or
     // "member" (flat-bound portal) access to other signed-in users, matched

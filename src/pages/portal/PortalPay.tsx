@@ -36,6 +36,7 @@ import {
   Banknote,
   CalendarClock,
   CircleOff,
+  Clock,
   Landmark,
   Loader2,
   PiggyBank,
@@ -73,6 +74,17 @@ type VoucherDoc = {
 };
 
 type BillRow = { _id: Id<"bills">; period: string };
+
+type SubmissionRow = {
+  _id: Id<"paymentSubmissions">;
+  amount: number;
+  mode: string;
+  date: string;
+  status: "pending" | "posted" | "rejected";
+  voucherNo: string | null;
+  reviewNote: string | null;
+  createdAt: number;
+};
 
 type UpiPaymentRow = {
   _id: Id<"upiPayments">;
@@ -156,6 +168,13 @@ export default function PortalPay() {
 
   const submitPayment = useMutation(api.memberPortal.submitPayment);
 
+  // My recent manual (cash/cheque/bank) submissions and their office-approval
+  // status — a pending entry is not in the books until the office passes it.
+  const submissions = useQuery(
+    api.memberPortal.mySubmissions,
+    societyId ? { societyId } : "skip",
+  ) as SubmissionRow[] | null | undefined;
+
   // ---- Online UPI payments (GPay / PhonePe / Paytm via the gateway) ----
   const gateway = useQuery(api.payments.gatewayStatus);
   const gatewayReady = gateway?.ready === true;
@@ -238,8 +257,8 @@ export default function PortalPay() {
       });
       toast.success(
         parsedAllocs.length === 0
-          ? `Advance payment recorded — receipt ${res.voucherNo} for ${formatMoney(res.total)}.`
-          : `Payment recorded — receipt ${res.voucherNo} for ${formatMoney(res.total)}.`,
+          ? `Advance of ${formatMoney(res.total)} submitted — it will be credited once the society office passes the entry.`
+          : `Payment of ${formatMoney(res.total)} submitted — sent for the society office's approval.`,
       );
       setAllocs({});
       setAdvance("");
@@ -722,12 +741,12 @@ export default function PortalPay() {
             <IconTile tone="indigo">
               <Send />
             </IconTile>
-            Submit payment
+            Submit payment entry
           </CardTitle>
           <CardDescription>
             Record a payment already made (cash, cheque or bank transfer),
-            dated today. Allocations cannot exceed each bill's balance and the
-            society office sees your entry immediately.
+            dated today. The entry goes to the society office for approval —
+            it is posted to your ledger and bills only after they pass it.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-4">
@@ -752,10 +771,64 @@ export default function PortalPay() {
             onClick={submit}
           >
             <Send className="mr-2 size-4" />
-            {submitting ? "Submitting..." : "Submit payment"}
+            {submitting ? "Submitting..." : "Submit for approval"}
           </Button>
         </CardContent>
       </Card>
+
+      {/* Office-approval status of my manual submissions */}
+      {submissions && submissions.length > 0 && (
+        <Card className="overflow-hidden py-0 shadow-lg shadow-primary/[0.06]">
+          <div className="brand-gradient h-1 w-full" />
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2.5 text-base">
+              <IconTile tone="amber">
+                <Clock />
+              </IconTile>
+              My payment entries
+            </CardTitle>
+            <CardDescription>
+              Cash, cheque and bank entries you submitted, with the office's
+              approval status.
+            </CardDescription>
+          </CardHeader>
+          <div className="border-t border-border/60 px-6 py-3">
+            <ul className="space-y-1.5">
+              {submissions.slice(0, 6).map((s) => (
+                <li
+                  key={s._id}
+                  className="flex flex-wrap items-center gap-2 text-sm"
+                >
+                  {s.status === "pending" ? (
+                    <Badge className="gap-1 border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                      <Clock className="size-3" /> Pending office approval
+                    </Badge>
+                  ) : s.status === "posted" ? (
+                    <Badge className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                      <BadgeCheck className="size-3" /> Passed · {s.voucherNo}
+                    </Badge>
+                  ) : (
+                    <Badge className="gap-1 border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+                      <CircleOff className="size-3" /> Rejected
+                    </Badge>
+                  )}
+                  <span className="font-medium tabular-nums">
+                    {formatMoney(s.amount)}
+                  </span>
+                  <span className="text-xs capitalize text-muted-foreground">
+                    {s.mode} · {s.date}
+                  </span>
+                  {s.status === "rejected" && s.reviewNote && (
+                    <span className="text-xs text-rose-700 dark:text-rose-300">
+                      — {s.reviewNote}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

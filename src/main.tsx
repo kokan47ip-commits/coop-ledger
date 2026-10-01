@@ -68,6 +68,9 @@ const BillView = lazyPage(() => import("./pages/app/bills/BillView.tsx"));
 const MemberReceipt = lazyPage(() => import("./pages/app/vouchers/MemberReceipt.tsx"));
 const OtherReceipt = lazyPage(() => import("./pages/app/vouchers/OtherReceipt.tsx"));
 const Payment = lazyPage(() => import("./pages/app/vouchers/Payment.tsx"));
+const PaymentApprovals = lazyPage(
+  () => import("./pages/app/PaymentApprovals.tsx"),
+);
 const Journal = lazyPage(() => import("./pages/app/vouchers/Journal.tsx"));
 const MemberLedger = lazyPage(() => import("./pages/app/ledgers/MemberLedger.tsx"));
 const GeneralLedger = lazyPage(() => import("./pages/app/ledgers/GeneralLedger.tsx"));
@@ -229,6 +232,10 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="member-receipt" element={<MemberReceipt />} />
                 <Route path="other-receipt" element={<OtherReceipt />} />
                 <Route path="payment" element={<Payment />} />
+                <Route
+                  path="payment-approvals"
+                  element={<PaymentApprovals />}
+                />
                 <Route path="journal" element={<Journal />} />
                 <Route path="member-ledger" element={<MemberLedger />} />
                 <Route path="general-ledger" element={<GeneralLedger />} />
