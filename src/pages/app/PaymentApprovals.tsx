@@ -346,7 +346,7 @@ export default function PaymentApprovals() {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Entry date</span>
+                <span className="text-muted-foreground">Voucher will be dated</span>
                 <span>{formatDate(approving.date)}</span>
               </div>
               {approving.memberNote && (

@@ -163,6 +163,7 @@ export default function PortalPay() {
   const [accountIdChoice, setAccountId] = useState<string>("");
   const [mode, setMode] = useState<string>("bank");
   const [reference, setReference] = useState("");
+  const [payDate, setPayDate] = useState<string>(todayISO());
   const [narration, setNarration] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -200,6 +201,10 @@ export default function PortalPay() {
   // books period the server would decline it — warn before they type anything.
   const today = todayISO();
   const fy = effectiveFyPeriod(society);
+  // The member states when they actually paid (cheque date, cash handover).
+  // The voucher keeps that date when the office passes it — and entries dated
+  // outside the books period are declined up front, never parked.
+  const dateOutsideFy = !!society && (payDate < fy.from || payDate > fy.to);
   const booksClosed = !!society && (today < fy.from || today > fy.to);
   const noAccounts = accounts !== undefined && accounts !== null && accounts.length === 0;
 
@@ -231,7 +236,9 @@ export default function PortalPay() {
   /** Why the submit button is disabled — shown next to it so it's never a mystery. */
   const blockedReason: string | null = booksClosed
     ? "The society's current books period does not include today's date — payments are paused. Please contact the society office."
-    : noAccounts
+    : dateOutsideFy
+      ? "The payment date is outside the society's current books period — pick a date between the period's start and end."
+      : noAccounts
       ? "No cash/bank account is available for payments yet — please contact the society office."
       : !accountId
         ? "Select the cash/bank account you are paying into."
@@ -247,7 +254,7 @@ export default function PortalPay() {
     try {
       const res = await submitPayment({
         societyId,
-        date: today,
+        date: payDate,
         bankCashAccountId: accountId as Id<"accounts">,
         mode,
         reference: reference.trim() || undefined,
@@ -481,6 +488,19 @@ export default function PortalPay() {
               <SelectItem value="cheque">Cheque</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="w-40">
+          <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CalendarClock className="size-3.5" /> Payment date
+          </Label>
+          <Input
+            type="date"
+            value={payDate}
+            min={fy.from}
+            max={fy.to}
+            onChange={(e) => setPayDate(e.target.value || todayISO())}
+            className="mt-1"
+          />
         </div>
         <div className="w-44">
           <Label className="text-xs text-muted-foreground">
