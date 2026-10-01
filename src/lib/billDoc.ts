@@ -343,7 +343,7 @@ export function billPdfBytes(data: LegacyBillData): Uint8Array {
     });
     ink(doc, MUTED);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.2);
+    doc.setFontSize(7.6);
   }
   let ny = footerTop + 19;
   for (const note of FOOTER_NOTES) {

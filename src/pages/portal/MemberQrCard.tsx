@@ -12,6 +12,11 @@ import { formatMoney } from "@/lib/format";
 import { Download, Printer, QrCode } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
+/** Minimal HTML escape for the print window (names/VPA are user-controlled). */
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 /**
  * The member's personal UPI QR. Every member of a society pays into the same
  * society UPI ID (VPA); the QR is dynamic per member because the payee note
@@ -90,13 +95,13 @@ export default function MemberQrCard({
     const w = window.open("", "_blank", "width=440,height=600");
     if (!w) return;
     w.document.write(
-      `<!doctype html><html><head><title>UPI QR — ${flatLabel}</title>` +
+      `<!doctype html><html><head><title>UPI QR — ${esc(flatLabel)}</title>` +
         `<style>body{font-family:system-ui,sans-serif;text-align:center;padding:32px;color:#111827}` +
         `h1{font-size:18px;margin:0 0 4px}p{margin:4px 0;font-size:13px;color:#4b5563}` +
         `img{margin:16px 0;width:280px;height:280px}</style></head><body>` +
-        `<h1>${societyName}</h1><p>${memberName} · Flat ${flatLabel}</p>` +
-        `<img src="${img}" alt="UPI QR for ${flatLabel}" />` +
-        `<p>Scan with any UPI app to pay maintenance</p><p>UPI ID: ${vpa}</p>` +
+        `<h1>${esc(societyName)}</h1><p>${esc(memberName)} · Flat ${esc(flatLabel)}</p>` +
+        `<img src="${img}" alt="UPI QR for ${esc(flatLabel)}" />` +
+        `<p>Scan with any UPI app to pay maintenance</p><p>UPI ID: ${esc(vpa)}</p>` +
         `</body></html>`,
     );
     w.document.close();

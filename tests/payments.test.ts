@@ -720,3 +720,95 @@ describe("societyFyPeriod", () => {
     expect(period.to).toBe("2026-03-31");
   });
 });
+
+/* ------------------------ UPI QR payload construction ---------------------- */
+
+import {
+  amountUpiUri,
+  memberUpiUri,
+  qrMatrix,
+} from "../src/lib/upiQr";
+
+describe("memberUpiUri", () => {
+  test("carries payee, society name and cu=INR", () => {
+    const uri = memberUpiUri({
+      payeeName: "Green Meadows CHS",
+      vpa: "greenmeadowschs@hdfcbank",
+      flat: "A-101",
+      code: "M001",
+    });
+    expect(uri.startsWith("upi://pay?")).toBe(true);
+    expect(uri).toContain("pa=greenmeadowschs%40hdfcbank"); // @ is percent-encoded
+    expect(uri).toContain("pn=Green+Meadows+CHS");
+    expect(uri).toContain("cu=INR");
+  });
+
+  test("embeds a sanitized flat tag in the payee note", () => {
+    const uri = memberUpiUri({
+      payeeName: "S",
+      vpa: "s@bank",
+      flat: "a-101 / b",
+      code: "M001",
+    });
+    expect(uri).toContain("tn=Maint+A101B"); // separators stripped, uppercased
+  });
+
+  test("falls back to the member code when no flat is set, caps the tag at 12 chars", () => {
+    const uri = memberUpiUri({
+      payeeName: "S",
+      vpa: "s@bank",
+      flat: undefined,
+      code: "MEMBER00012345",
+    });
+    expect(uri).toContain("tn=Maint+MEMBER00012"); // 12-char cap
+  });
+
+  test("note is just Maint when neither flat nor code is provided", () => {
+    const uri = memberUpiUri({ payeeName: "S", vpa: "s@bank" });
+    expect(uri).toContain("tn=Maint&");
+  });
+});
+
+describe("amountUpiUri", () => {
+  test("appends the amount with two decimals", () => {
+    const base = memberUpiUri({ payeeName: "S", vpa: "s@bank", flat: "A-1" });
+    const uri = amountUpiUri(base, 1234.5);
+    expect(uri).toContain("&am=1234.50");
+  });
+
+  test("rounds to two decimals", () => {
+    const uri = amountUpiUri("upi://pay?pa=x", 1234.567);
+    expect(uri.endsWith("am=1234.57")).toBe(true);
+  });
+
+  test("appends with ? when the base has no query", () => {
+    expect(amountUpiUri("upi://pay", 10).endsWith("?am=10.00")).toBe(true);
+  });
+});
+
+describe("qrMatrix", () => {
+  test("produces a square boolean grid with finder-pattern corners", () => {
+    const payload = memberUpiUri({ payeeName: "S", vpa: "s@bank", flat: "A-1" });
+    const m = qrMatrix(payload);
+    expect(m.length).toBeGreaterThanOrEqual(21); // minimum QR version 1
+    expect(m.every((row) => row.length === m.length)).toBe(true);
+    // Finder patterns: three corners carry a dark 7x7 ring — the very corner
+    // cell must be dark and the cell just outside the 7x7 ring light.
+    expect(m[0][0]).toBe(true);
+    expect(m[6][6]).toBe(true);
+    expect(m[0][7]).toBe(false);
+    expect(m[7][0]).toBe(false);
+  });
+
+  test("is deterministic for the same payload", () => {
+    const a = qrMatrix("upi://pay?pa=demo");
+    const b = qrMatrix("upi://pay?pa=demo");
+    expect(a).toEqual(b);
+  });
+
+  test("changes with the payload (per-member URIs produce distinct codes)", () => {
+    const a = qrMatrix(memberUpiUri({ payeeName: "S", vpa: "s@bank", flat: "A-1" }));
+    const b = qrMatrix(memberUpiUri({ payeeName: "S", vpa: "s@bank", flat: "B-2" }));
+    expect(a).not.toEqual(b);
+  });
+});
