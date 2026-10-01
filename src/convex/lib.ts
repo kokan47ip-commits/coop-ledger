@@ -399,6 +399,30 @@ export async function applyAllocationToBill(
   });
 }
 
+/**
+ * Clamp wanted bill allocations to each bill's remaining balance at posting
+ * time. Balances may have moved since the amounts were entered; whatever no
+ * longer fits is dropped here and stays as advance credit on the member's
+ * ledger instead of over-settling a bill. Bills that no longer exist (or
+ * whose balance callback returns undefined) are skipped. Amounts round to
+ * two decimals. Shared by office approval of portal entries and UPI posting.
+ */
+export function clampAllocations(
+  wanted: { billId: Id<"bills">; amount: number }[],
+  balanceOf: (billId: Id<"bills">) => number | undefined,
+): { billId: Id<"bills">; amount: number }[] {
+  const applied: { billId: Id<"bills">; amount: number }[] = [];
+  for (const a of wanted) {
+    const balance = balanceOf(a.billId);
+    if (balance === undefined) continue;
+    const amt = Math.min(a.amount, Math.max(0, balance));
+    if (amt > 0.005) {
+      applied.push({ billId: a.billId, amount: Math.round(amt * 100) / 100 });
+    }
+  }
+  return applied;
+}
+
 export type MemberReceiptInput = {
   society: Doc<"societies">;
   memberId: Id<"members">;

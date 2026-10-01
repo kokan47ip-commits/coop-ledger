@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalQuery, mutation, query } from "./_generated/server";
+import { assertInFy, clampAllocations, postMemberReceipt, requireSociety, requireSocietyWrite } from "./lib";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertInFy, postMemberReceipt, requireSociety, requireSocietyWrite } from "./lib";
 
 /**
  * Office approval queue for member-portal payment entries. A member's cash,
@@ -154,19 +154,21 @@ export const approve = mutation({
     assertInFy(society, postDate, "Approved member payment");
 
     // Re-clamp allocations against current bill balances; the rest is advance.
-    let appliedTotal = 0;
-    const applied: { billId: Id<"bills">; amount: number }[] = [];
-    for (const a of sub.allocations) {
-      const bill = await ctx.db.get(a.billId);
-      if (!bill || bill.societyId !== societyId) continue;
-      const balance = bill.total - bill.paidAmount;
-      const amt = Math.min(a.amount, Math.max(0, balance));
-      if (amt > 0.005) {
-        applied.push({ billId: a.billId, amount: Math.round(amt * 100) / 100 });
-        appliedTotal += amt;
-      }
-    }
-    appliedTotal = Math.round(appliedTotal * 100) / 100;
+    const bills = await ctx.db
+      .query("bills")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", societyId).eq("memberId", sub.memberId),
+      )
+      .collect();
+    const balanceOf = (billId: Id<"bills">) => {
+      const bill = bills.find((b) => b._id === billId);
+      return bill && bill.societyId === societyId
+        ? bill.total - bill.paidAmount
+        : undefined;
+    };
+    const applied = clampAllocations(sub.allocations, balanceOf);
+    const appliedTotal =
+      Math.round(applied.reduce((s, a) => s + a.amount, 0) * 100) / 100;
     // The member's amount always lands in the books: what no longer fits
     // against bills stays as advance credit on their ledger.
     const total = Math.max(sub.amount, appliedTotal);

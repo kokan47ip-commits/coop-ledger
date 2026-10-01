@@ -11,7 +11,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { assertInFy, postMemberReceipt, requireSociety, requireUserId, societyMemberBinding } from "./lib";
+import { assertInFy, clampAllocations, postMemberReceipt, requireSociety, requireUserId, societyMemberBinding } from "./lib";
 import { portalBinding, validateMemberAllocations } from "./memberPortal";
 
 /**
@@ -427,14 +427,13 @@ async function postUpiPayment(
       q.eq("societyId", p.societyId).eq("memberId", p.memberId),
     )
     .collect();
-  const applied: { billId: Id<"bills">; amount: number }[] = [];
-  for (const a of p.allocations) {
-    const bill = bills.find((b) => b._id === a.billId);
-    if (!bill) continue;
-    const balance = bill.total - bill.paidAmount;
-    const amt = Math.min(a.amount, Math.max(0, balance));
-    if (amt > 0.005) applied.push({ billId: a.billId, amount: Math.round(amt * 100) / 100 });
-  }
+  const balanceOf = (billId: Id<"bills">) => {
+    const bill = bills.find((b) => b._id === billId);
+    return bill && bill.societyId === p.societyId
+      ? bill.total - bill.paidAmount
+      : undefined;
+  };
+  const applied = clampAllocations(p.allocations, balanceOf);
 
   // Books guard: money is real, so a posting that would fall outside the
   // current books period is parked as "captured" for the office — never lost.
