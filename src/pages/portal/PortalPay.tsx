@@ -1,6 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,11 +47,14 @@ import {
   Clock,
   Landmark,
   Loader2,
+  Pencil,
   PiggyBank,
   Send,
   Smartphone,
+  Trash2,
   TriangleAlert,
   WalletMinimal,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
@@ -84,6 +95,12 @@ type SubmissionRow = {
   voucherNo: string | null;
   reviewNote: string | null;
   createdAt: number;
+  editedAt: number | null;
+  bankCashAccountId: Id<"accounts">;
+  reference: string | null;
+  memberNote: string | null;
+  advanceAmount: number;
+  allocations: { billId: Id<"bills">; amount: number }[];
 };
 
 type UpiPaymentRow = {
@@ -168,6 +185,8 @@ export default function PortalPay() {
   const [submitting, setSubmitting] = useState(false);
 
   const submitPayment = useMutation(api.memberPortal.submitPayment);
+  const updateSubmission = useMutation(api.memberPortal.updateSubmission);
+  const deleteSubmission = useMutation(api.memberPortal.deleteSubmission);
 
   // My recent manual (cash/cheque/bank) submissions and their office-approval
   // status — a pending entry is not in the books until the office passes it.
@@ -189,6 +208,14 @@ export default function PortalPay() {
   const emailReceipt = useAction(api.payments.emailMemberReceipt);
   const [upiBusy, setUpiBusy] = useState(false);
   const [upiStage, setUpiStage] = useState<string | null>(null);
+
+  // Edit / delete of my own pending entries — once the office passes an
+  // entry it is part of the books and locked here.
+  const [editingId, setEditingId] = useState<Id<"paymentSubmissions"> | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState<SubmissionRow | null>(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
 
   // Pre-select the society's first cash/bank account so the member only has
   // to change it when paying somewhere other than the default account.
@@ -248,33 +275,95 @@ export default function PortalPay() {
             ? "One of the amounts is more than the bill balance — reduce it to continue."
             : null;
 
+  const resetEntryForm = () => {
+    setAllocs({});
+    setAdvance("");
+    setReference("");
+    setNarration("");
+    setPayDate(todayISO());
+  };
+
   const submit = async () => {
     if (!societyId || blockedReason) return;
     setSubmitting(true);
     try {
-      const res = await submitPayment({
-        societyId,
-        date: payDate,
-        bankCashAccountId: accountId as Id<"accounts">,
-        mode,
-        reference: reference.trim() || undefined,
-        narration: narration.trim() || undefined,
-        allocations: parsedAllocs,
-        amount: parsedAllocs.length === 0 ? advanceNum : undefined,
-      });
-      toast.success(
-        parsedAllocs.length === 0
-          ? `Advance of ${formatMoney(res.total)} submitted — it will be credited once the society office passes the entry.`
-          : `Payment of ${formatMoney(res.total)} submitted — sent for the society office's approval.`,
-      );
-      setAllocs({});
-      setAdvance("");
-      setReference("");
-      setNarration("");
+      if (editingId) {
+        const res = await updateSubmission({
+          societyId,
+          id: editingId,
+          date: payDate,
+          bankCashAccountId: accountId as Id<"accounts">,
+          mode,
+          reference: reference.trim() || undefined,
+          narration: narration.trim() || undefined,
+          allocations: parsedAllocs,
+          amount: parsedAllocs.length === 0 ? advanceNum : undefined,
+        });
+        toast.success(
+          `Entry updated — ${formatMoney(res.total)} resubmitted for the office's approval.`,
+        );
+      } else {
+        const res = await submitPayment({
+          societyId,
+          date: payDate,
+          bankCashAccountId: accountId as Id<"accounts">,
+          mode,
+          reference: reference.trim() || undefined,
+          narration: narration.trim() || undefined,
+          allocations: parsedAllocs,
+          amount: parsedAllocs.length === 0 ? advanceNum : undefined,
+        });
+        toast.success(
+          parsedAllocs.length === 0
+            ? `Advance of ${formatMoney(res.total)} submitted — it will be credited once the society office passes the entry.`
+            : `Payment of ${formatMoney(res.total)} submitted — sent for the society office's approval.`,
+        );
+      }
+      resetEntryForm();
+      setEditingId(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Payment failed.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** Load a pending entry back into the form for editing. */
+  const startEdit = (s: SubmissionRow) => {
+    setEditingId(s._id);
+    setPayDate(s.date);
+    setAccountId(s.bankCashAccountId);
+    setMode(s.mode);
+    setReference(s.reference ?? "");
+    setNarration(s.memberNote ?? "");
+    const next: Record<string, string> = {};
+    for (const a of s.allocations) next[a.billId] = String(a.amount);
+    setAllocs(next);
+    setAdvance(
+      s.allocations.length === 0 && s.advanceAmount > 0
+        ? String(s.advanceAmount)
+        : "",
+    );
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    resetEntryForm();
+  };
+
+  const doDelete = async () => {
+    if (!societyId || !deleting) return;
+    setDeletingBusy(true);
+    try {
+      await deleteSubmission({ societyId, id: deleting._id });
+      toast.success(`Entry of ${formatMoney(deleting.amount)} removed.`);
+      if (editingId === deleting._id) cancelEdit();
+      setDeleting(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not remove the entry.");
+    } finally {
+      setDeletingBusy(false);
     }
   };
 
@@ -761,7 +850,7 @@ export default function PortalPay() {
             <IconTile tone="indigo">
               <Send />
             </IconTile>
-            Submit payment entry
+            {editingId ? "Edit payment entry" : "Submit payment entry"}
           </CardTitle>
           <CardDescription>
             Record a payment already made (cash, cheque or bank transfer),
@@ -784,6 +873,16 @@ export default function PortalPay() {
               {blockedReason}
             </p>
           )}
+          {editingId && (
+            <Button
+              variant="outline"
+              onClick={cancelEdit}
+              disabled={submitting}
+            >
+              <X className="mr-2 size-4" />
+              Cancel edit
+            </Button>
+          )}
           <Button
             className="ml-auto"
             size="lg"
@@ -791,7 +890,11 @@ export default function PortalPay() {
             onClick={submit}
           >
             <Send className="mr-2 size-4" />
-            {submitting ? "Submitting..." : "Submit for approval"}
+            {submitting
+              ? "Saving..."
+              : editingId
+                ? "Update & resubmit"
+                : "Submit for approval"}
           </Button>
         </CardContent>
       </Card>
@@ -838,9 +941,38 @@ export default function PortalPay() {
                   <span className="text-xs capitalize text-muted-foreground">
                     {s.mode} · {s.date}
                   </span>
+                  {s.editedAt && s.status === "pending" && (
+                    <span className="text-xs italic text-muted-foreground">
+                      (edited)
+                    </span>
+                  )}
                   {s.status === "rejected" && s.reviewNote && (
                     <span className="text-xs text-rose-700 dark:text-rose-300">
                       — {s.reviewNote}
+                    </span>
+                  )}
+                  {s.status === "pending" && (
+                    <span className="ml-auto flex gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-7 text-muted-foreground hover:text-primary"
+                        disabled={upiBusy}
+                        onClick={() => startEdit(s)}
+                        aria-label={`Edit entry of ${formatMoney(s.amount)}`}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-7 text-muted-foreground hover:text-rose-600"
+                        disabled={upiBusy}
+                        onClick={() => setDeleting(s)}
+                        aria-label={`Delete entry of ${formatMoney(s.amount)}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
                     </span>
                   )}
                 </li>
@@ -849,6 +981,49 @@ export default function PortalPay() {
           </div>
         </Card>
       )}
+
+      {/* Delete confirmation — pending entries only; passed entries live in the books. */}
+      <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this payment entry?</DialogTitle>
+            <DialogDescription>
+              The pending entry will be removed and the office will no longer
+              see it. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleting && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <span className="font-medium tabular-nums">
+                {formatMoney(deleting.amount)}
+              </span>{" "}
+              <span className="capitalize">{deleting.mode}</span> ·{" "}
+              {deleting.date}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleting(null)}
+              disabled={deletingBusy}
+            >
+              Keep entry
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={doDelete}
+              disabled={deletingBusy}
+            >
+              {deletingBusy ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 size-4" />
+              )}
+              Delete entry
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

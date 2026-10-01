@@ -495,6 +495,52 @@ export const myPayAccounts = query({
 });
 
 /**
+ * Shared validation for member payment-entry submissions (create and edit):
+ * FY guard, bank/cash account check, allocation checks and advance handling.
+ * Returns the rounded amount and the validated allocations.
+ */
+async function validateSubmissionInput(
+  ctx: MutationCtx,
+  bind: PortalCtx,
+  society: Doc<"societies">,
+  input: {
+    date: string;
+    bankCashAccountId: Id<"accounts">;
+    allocations: { billId: Id<"bills">; amount: number }[];
+    amount?: number;
+  },
+) {
+  // FY guard: outside-the-year entries are declined, not saved.
+  assertInFy(society, input.date, "Payment");
+
+  // Validate the bank/cash account belongs to this society.
+  const account = await ctx.db.get(input.bankCashAccountId);
+  if (!account || account.societyId !== bind.societyId || account.kind !== "bank_cash") {
+    throw new ConvexError("Choose a valid cash/bank account for the payment.");
+  }
+
+  // Validate every allocated bill belongs to MY flat and the amounts are
+  // positive and do not exceed the bill balance.
+  let { total } = await validateMemberAllocations(ctx, bind, input.allocations);
+  // Advance payment: no bill selections needed — the full amount is
+  // credited to the member's ledger (receivable) and settles future bills.
+  if (input.amount !== undefined && input.amount > 0) {
+    if (input.amount + 0.005 < total) {
+      throw new ConvexError(
+        "The allocated bill amounts exceed the payment amount — reduce the allocations.",
+      );
+    }
+    total = Math.round(input.amount * 100) / 100;
+  }
+  if (total <= 0) {
+    throw new ConvexError(
+      "Enter an amount to pay — with no bills selected the payment is kept as an advance.",
+    );
+  }
+  return { total, allocations: input.allocations };
+}
+
+/**
  * Submit a payment against my flat. Cash / cheque / bank-transfer entries are
  * NOT posted to the books — they land in the office's pending-for-passing
  * queue and become a member-receipt voucher only after an authorised office
@@ -522,33 +568,12 @@ export const submitPayment = mutation({
     const society = await ctx.db.get(societyId);
     if (!society) throw new ConvexError("Society not found.");
 
-    // FY guard: outside-the-year entries are declined, not saved.
-    assertInFy(society, date, "Payment");
-
-    // Validate the bank/cash account belongs to this society.
-    const account = await ctx.db.get(bankCashAccountId);
-    if (!account || account.societyId !== societyId || account.kind !== "bank_cash") {
-      throw new ConvexError("Choose a valid cash/bank account for the payment.");
-    }
-
-    // Validate every allocated bill belongs to MY flat and the amounts are
-    // positive and do not exceed the bill balance.
-    let { total } = await validateMemberAllocations(ctx, bind, allocations);
-    // Advance payment: no bill selections needed — the full amount is
-    // credited to the member's ledger (receivable) and settles future bills.
-    if (amount !== undefined && amount > 0) {
-      if (amount + 0.005 < total) {
-        throw new ConvexError(
-          "The allocated bill amounts exceed the payment amount — reduce the allocations.",
-        );
-      }
-      total = Math.round(amount * 100) / 100;
-    }
-    if (total <= 0) {
-      throw new ConvexError(
-        "Enter an amount to pay — with no bills selected the payment is kept as an advance.",
-      );
-    }
+    const { total } = await validateSubmissionInput(ctx, bind, society, {
+      date,
+      bankCashAccountId,
+      allocations,
+      amount,
+    });
 
     const userId = await requireUserId(ctx);
     const advanceAmount = Math.round((total - allocations.reduce((s, a) => s + a.amount, 0)) * 100) / 100;
@@ -568,6 +593,94 @@ export const submitPayment = mutation({
       createdAt: Date.now(),
     });
     return { submissionId, status: "pending" as const, total };
+  },
+});
+
+/**
+ * Edit my own payment entry while it is still pending office approval.
+ * Once passed (or rejected) the entry is locked — a passed entry lives in the
+ * books as a voucher and can only be reversed by the office.
+ */
+export const updateSubmission = mutation({
+  args: {
+    societyId: v.id("societies"),
+    id: v.id("paymentSubmissions"),
+    date: v.string(),
+    bankCashAccountId: v.id("accounts"),
+    mode: v.optional(v.string()),
+    reference: v.optional(v.string()),
+    narration: v.optional(v.string()),
+    allocations: v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
+    amount: v.optional(v.number()),
+  },
+  handler: async (ctx, { societyId, id, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
+    const bind = await portalBinding(ctx, societyId);
+    if (!bind) {
+      throw new ConvexError("Your login is not linked to a flat in this society.");
+    }
+    const sub = await ctx.db.get(id);
+    if (!sub || sub.societyId !== societyId || sub.memberId !== bind.memberId) {
+      throw new ConvexError("Payment entry not found.");
+    }
+    if (sub.status !== "pending") {
+      throw new ConvexError(
+        sub.status === "posted"
+          ? "This entry has been passed by the society office and can no longer be edited."
+          : "This entry was rejected — submit a new payment instead.",
+      );
+    }
+    const society = await ctx.db.get(societyId);
+    if (!society) throw new ConvexError("Society not found.");
+
+    const { total } = await validateSubmissionInput(ctx, bind, society, {
+      date,
+      bankCashAccountId,
+      allocations,
+      amount,
+    });
+
+    const advanceAmount = Math.round((total - allocations.reduce((s, a) => s + a.amount, 0)) * 100) / 100;
+    await ctx.db.patch(id, {
+      date,
+      mode: mode ?? "bank",
+      bankCashAccountId,
+      reference: reference?.trim() || undefined,
+      memberNote: narration?.trim() || undefined,
+      amount: total,
+      advanceAmount,
+      allocations,
+      // The office sees that the member changed the entry after submitting.
+      editedAt: Date.now(),
+    });
+    return { ok: true, total };
+  },
+});
+
+/**
+ * Delete my own payment entry while it is still pending office approval.
+ * Passed entries are part of the books and are never deletable here; rejected
+ * entries stay visible with the office's reason.
+ */
+export const deleteSubmission = mutation({
+  args: { societyId: v.id("societies"), id: v.id("paymentSubmissions") },
+  handler: async (ctx, { societyId, id }) => {
+    const bind = await portalBinding(ctx, societyId);
+    if (!bind) {
+      throw new ConvexError("Your login is not linked to a flat in this society.");
+    }
+    const sub = await ctx.db.get(id);
+    if (!sub || sub.societyId !== societyId || sub.memberId !== bind.memberId) {
+      throw new ConvexError("Payment entry not found.");
+    }
+    if (sub.status !== "pending") {
+      throw new ConvexError(
+        sub.status === "posted"
+          ? "This entry has been passed by the society office and can no longer be deleted."
+          : "This entry was already rejected and cannot be deleted.",
+      );
+    }
+    await ctx.db.delete(id);
+    return { ok: true };
   },
 });
 
@@ -593,6 +706,14 @@ export const mySubmissions = query({
       voucherNo: r.voucherNo ?? null,
       reviewNote: r.reviewNote ?? null,
       createdAt: r.createdAt,
+      editedAt: r.editedAt ?? null,
+      // Full detail so the portal can load a pending entry back into the
+      // form for editing.
+      bankCashAccountId: r.bankCashAccountId,
+      reference: r.reference ?? null,
+      memberNote: r.memberNote ?? null,
+      advanceAmount: r.advanceAmount,
+      allocations: r.allocations,
     }));
   },
 });

@@ -305,6 +305,8 @@ const schema = defineSchema(
       reviewedById: v.optional(v.id("users")),
       reviewedAt: v.optional(v.number()),
       reviewNote: v.optional(v.string()),
+      /** Set when the member edited the entry while it was still pending. */
+      editedAt: v.optional(v.number()),
       createdAt: v.number(),
     })
       .index("by_society", ["societyId"])
