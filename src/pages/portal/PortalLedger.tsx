@@ -349,6 +349,20 @@ export default function PortalLedger() {
                   </td>
                 </tr>
               )}
+              {displayRows.length > 0 && (
+                <tr className="border-t-2 border-black bg-slate-50 font-semibold">
+                  <td colSpan={3} className="py-1.5 pr-2">
+                    Total — closing balance
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums">
+                    {formatMoney(totDr)}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums">
+                    {formatMoney(totCr)}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums">{drCr(closing)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
