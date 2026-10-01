@@ -12,6 +12,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
+import MemberQrCard from "@/pages/portal/MemberQrCard";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   ArrowUpRight,
@@ -300,6 +301,16 @@ export default function PortalHome() {
           )}
         </div>
       )}
+
+      {/* Per-member dynamic UPI QR — appears once the office adds a VPA. */}
+      <MemberQrCard
+        societyName={info.society.name}
+        vpa={info.society.upiVpa}
+        memberName={info.member.name}
+        flatLabel={flatLabel}
+        memberCode={info.member.code}
+        outstanding={outstanding}
+      />
 
       {/* Flat hero card */}
       <Card className="relative overflow-hidden border-primary/15 shadow-lg shadow-primary/[0.06]">

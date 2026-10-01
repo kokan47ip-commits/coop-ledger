@@ -24,6 +24,7 @@ import {
   periodLabelLong,
   type LegacyBillData,
 } from "@/lib/billDoc";
+import { amountUpiUri, memberUpiUri, preloadQrImage } from "@/lib/upiQr";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   CalendarRange,
@@ -85,6 +86,9 @@ export default function PortalBills() {
     const currentCharges = (bill.lines ?? [])
       .filter((l) => !isArrearsLine(l.name))
       .reduce((s, l) => s + l.amount, 0);
+    const flatLabel =
+      [memberBinding?.wing, memberBinding?.flatNo].filter(Boolean).join("-") ||
+      memberBinding?.code;
     return {
       society: {
         name: society?.name ?? "",
@@ -103,9 +107,7 @@ export default function PortalBills() {
       dueDate: bill.dueDate,
       periodLabel: periodLabelLong(bill.period),
       memberName: memberBinding?.name ?? "Member",
-      flatNo:
-        [memberBinding?.wing, memberBinding?.flatNo].filter(Boolean).join("-") ||
-        memberBinding?.code,
+      flatNo: flatLabel,
       lines: (bill.lines ?? [])
         .filter((l) => !isArrearsLine(l.name))
         .map((l) => ({ name: l.name, amount: l.amount, serial: l.printNo })),
@@ -113,15 +115,32 @@ export default function PortalBills() {
       arrears,
       totalDue: currentCharges + arrears,
       paidAmount: bill.paidAmount,
+      // Bill QR: pays this bill's exact due amount into the society's UPI ID.
+      upi:
+        society?.upiVpa && memberBinding
+          ? {
+              uri: memberUpiUri({
+                payeeName: society.name,
+                vpa: society.upiVpa,
+                flat: flatLabel ?? undefined,
+                code: memberBinding.code,
+              }),
+              amount: currentCharges + arrears,
+            }
+          : undefined,
     };
   };
 
-  const doExport = (
+  const doExport = async (
     bill: Bill,
     kind: "pdf" | "word" | "print",
   ) => {
     try {
       const data = buildData(bill);
+      // Word/print embed the QR as an image — cache it before rendering.
+      if (data.upi) {
+        await preloadQrImage(amountUpiUri(data.upi.uri, data.upi.amount));
+      }
       if (kind === "pdf") billPdf(data, `${bill.billNo}.pdf`);
       else if (kind === "word") billWord(data, `${bill.billNo}.doc`);
       else billPrint(data);

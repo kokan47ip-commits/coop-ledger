@@ -77,6 +77,7 @@ export default function SocietyProfile() {
     fyYear: fyYearLabel(4),
     fyStartDate: "",
     receivableAccountId: "",
+    upiVpa: "",
     chairmanMemberId: "",
     secretaryMemberId: "",
     treasurerMemberId: "",
@@ -99,6 +100,7 @@ export default function SocietyProfile() {
         fyYear: society.fyYear ?? fyYearLabel(society.fyStartMonth ?? 4),
         fyStartDate: society.fyStartDate ?? "",
         receivableAccountId: society.receivableAccountId ?? "",
+        upiVpa: society.upiVpa ?? "",
         chairmanMemberId: society.chairmanMemberId ?? "",
         secretaryMemberId: society.secretaryMemberId ?? "",
         treasurerMemberId: society.treasurerMemberId ?? "",
@@ -185,6 +187,7 @@ export default function SocietyProfile() {
           receivableAccountId: form.receivableAccountId
             ? (form.receivableAccountId as never)
             : undefined,
+          upiVpa: form.upiVpa.trim() || undefined,
         });
         toast.success("Society profile updated");
       }
@@ -550,6 +553,27 @@ export default function SocietyProfile() {
                     Add accounts in the Chart of Accounts to configure defaults.
                   </p>
                 )}
+              </section>
+              <section className="space-y-4">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Member UPI payments
+                </h3>
+                <div className="max-w-md space-y-2">
+                  <Label htmlFor="upi-vpa">UPI ID (VPA) for member payments</Label>
+                  <Input
+                    id="upi-vpa"
+                    value={form.upiVpa}
+                    onChange={(e) => setForm({ ...form, upiVpa: e.target.value })}
+                    placeholder="e.g. greenmeadowschs@hdfcbank"
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Once saved, every member gets a personal QR code in their portal and each
+                    bill carries a scannable QR that pays straight into this UPI ID. No gateway
+                    or fees — money lands directly in your society's bank account. Verify with
+                    a ₹1 transfer first.
+                  </p>
+                </div>
               </section>
             </TabsContent>
           )}

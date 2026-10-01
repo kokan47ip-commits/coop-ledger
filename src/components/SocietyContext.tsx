@@ -22,6 +22,8 @@ type Society = {
   fyYear?: string;
   fyStartDate?: string;
   receivableAccountId?: Id<"accounts">;
+  /** Society UPI ID (VPA) — powers member QR codes and bill QRs. */
+  upiVpa?: string;
   registrationNo?: string;
   registrationDate?: string;
   chairmanMemberId?: Id<"members">;

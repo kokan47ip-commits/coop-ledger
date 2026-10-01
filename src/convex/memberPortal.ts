@@ -136,6 +136,8 @@ export const myInfo = query({
         phone: society.phone,
         registrationNo: society.registrationNo,
         fyYear: society.fyYear,
+        /** Society's UPI ID (VPA) — drives the member's personal QR code. */
+        upiVpa: society.upiVpa,
       },
       member: {
         _id: member._id,

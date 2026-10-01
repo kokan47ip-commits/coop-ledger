@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import { formatDate } from "./format";
 import { rupeesInWords } from "./amountWords";
+import { amountUpiUri, cachedQrDataUrl, qrMatrix } from "./upiQr";
 
 /** Society header block shared by the bill and the receipt documents. */
 export type SocietyHeader = {
@@ -27,6 +28,11 @@ export type LegacyBillData = {
   /** Full amount due including arrears. */
   totalDue: number;
   paidAmount: number;
+  /**
+   * Optional UPI payment block: the member's pay URI (payee + flat note, no
+   * amount) plus the amount to prefill — drawn as a scannable QR on the bill.
+   */
+  upi?: { uri: string; amount: number };
 };
 
 export type LegacyReceiptData = {
@@ -125,6 +131,24 @@ function drawLetterhead(doc: jsPDF, s: SocietyHeader, x: number, w: number, top:
   }
   ink(doc, INK);
   return top + bandH + 3;
+}
+
+/**
+ * Draw a QR synchronously into the PDF at (x, y) — dark modules over a white
+ * ground, from the shared qrMatrix helper. No preload needed.
+ */
+function drawQrMatrix(doc: jsPDF, payload: string, x: number, y: number, size: number): void {
+  const m = qrMatrix(payload);
+  const n = m.length;
+  const cell = size / n;
+  fill(doc, WHITE);
+  doc.rect(x, y, size, size, "F");
+  fill(doc, INK);
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (m[r][c]) doc.rect(x + c * cell, y + r * cell, cell + 0.2, cell + 0.2, "F");
+    }
+  }
 }
 
 /** Bordered legacy bill: header box, particulars, totals, notes, signature. */
@@ -304,9 +328,26 @@ export function billPdfBytes(data: LegacyBillData): Uint8Array {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.6);
   ink(doc, MUTED);
+  // UPI QR (when configured) sits left of the payment notes in the footer.
+  const upi = data.upi;
+  if (upi) {
+    const qrSize = 46;
+    const qrX = x + 10;
+    const qrY = footerTop + 8;
+    drawQrMatrix(doc, amountUpiUri(upi.uri, upi.amount), qrX, qrY, qrSize);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(5.4);
+    ink(doc, ACCENT);
+    doc.text(`SCAN TO PAY RS ${money(upi.amount)}`, qrX + qrSize / 2, qrY + qrSize + 7.5, {
+      align: "center",
+    });
+    ink(doc, MUTED);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.2);
+  }
   let ny = footerTop + 19;
   for (const note of FOOTER_NOTES) {
-    doc.text(note, x + 12, ny);
+    doc.text(note, x + (upi ? 70 : 12), ny);
     ny += 12;
   }
   doc.setFont("helvetica", "bold");
@@ -599,6 +640,11 @@ function esc(s: string): string {
 }
 
 function billHtml(data: LegacyBillData): string {
+  // Word/print export embeds a QR only when its image was preloaded via
+  // preloadQrImage() — data URLs can't be produced synchronously here.
+  const upi = data.upi;
+  const upiPayload = upi ? amountUpiUri(upi.uri, upi.amount) : null;
+  const upiImg = upiPayload ? cachedQrDataUrl(upiPayload) : null;
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>Bill ${esc(String(data.billNo))}</title><style>${docCss}</style></head>
 <body><div class="wrap">
@@ -620,7 +666,9 @@ function billHtml(data: LegacyBillData): string {
     <tr class="grand"><td></td><td class="lbl">Total Due:</td><td class="val">${money(data.totalDue)}</td></tr>
   </table>
   <table class="foot">
-    <tr><td style="width:50%">${FOOTER_NOTES.map(esc).join("<br>")}</td>
+    <tr>
+      ${upiImg && upi ? `<td style="width:66px;vertical-align:middle;text-align:center"><img src="${upiImg}" style="width:60px;height:60px" alt="UPI QR"><br><span style="font-size:6.5pt;font-weight:bold;color:#312e81">SCAN TO PAY RS ${money(upi.amount)}</span></td>` : ""}
+      <td style="width:50%">${FOOTER_NOTES.map(esc).join("<br>")}</td>
     <td class="sig">For ${esc(data.society.name)}<br><br><br><span class="sigspan">SECRETARY</span></td></tr>
   </table>
 </div><div class="tear"></div></body></html>`;

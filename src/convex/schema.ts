@@ -68,6 +68,13 @@ const schema = defineSchema(
       receivableAccountId: v.optional(v.id("accounts")),
       /** Bank/cash account that online (UPI gateway) payments settle into. */
       upiSettlementAccountId: v.optional(v.id("accounts")),
+      /**
+       * The society's UPI ID (VPA) that members pay into — powers the
+       * per-member portal QR codes and the QR printed on bills. No gateway:
+       * money lands directly in the society's UPI account and the office
+       * records the receipt.
+       */
+      upiVpa: v.optional(v.string()),
     })
       .index("by_creator", ["createdBy"])
       .index("by_claim_code", ["claimCode"])

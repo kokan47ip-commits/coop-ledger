@@ -243,6 +243,8 @@ export const update = mutation({
     secretaryMemberId: v.optional(v.id("members")),
     treasurerMemberId: v.optional(v.id("members")),
     receivableAccountId: v.optional(v.id("accounts")),
+    /** Society's UPI ID (VPA) for member QR codes and bill printing. */
+    upiVpa: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...patch }) => {
     const userId = await requireUserId(ctx);
