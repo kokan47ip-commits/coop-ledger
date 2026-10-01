@@ -11,26 +11,27 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
+import { receiptPdf, receiptPrint, receiptWord } from "@/lib/billDoc";
 import {
-  receiptPdf,
-  receiptPrint,
-  receiptWord,
-  type LegacyReceiptData,
-} from "@/lib/billDoc";
+  buildMemberReceiptData,
+  receiptPdfBase64,
+} from "@/lib/memberReceipt";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   Banknote,
   CreditCard,
   Download,
   FileText,
+  Mail,
   Printer,
   Smartphone,
   Landmark,
 } from "lucide-react";
-import { useQuery } from "convex/react";
+import { useState } from "react";
+import { useAction, useQuery } from "convex/react";
 import { toast } from "sonner";
 
 type Voucher = Doc<"vouchers">;
@@ -57,38 +58,30 @@ export default function PortalReceipts() {
   ) as Bill[] | null | undefined;
 
   type Bill = Doc<"bills">;
+  const emailReceipt = useAction(api.payments.emailMemberReceipt);
+  const [emailingId, setEmailingId] = useState<Id<"vouchers"> | null>(null);
 
-  const buildData = (v: Voucher): LegacyReceiptData => {
-    const firstBill = (bills ?? [])
-      .filter((b) => (v.allocations ?? []).some((a) => a.billId === b._id))
-      .sort((a, b) => b.period.localeCompare(a.period))[0];
-    return {
-      society: {
-        name: society?.name ?? "",
-        address: [
-          society?.address,
-          society?.city,
-          society?.state,
-          society?.pincode,
-        ]
-          .filter(Boolean)
-          .join(", "),
-        registrationNo: society?.registrationNo,
-      },
-      receiptNo: v.voucherNo.replace(/^[A-Z]+-/, ""),
-      receiptDate: v.date,
-      memberName: memberBinding?.name ?? "Member",
-      flatNo:
-        [memberBinding?.wing, memberBinding?.flatNo].filter(Boolean).join("-") ||
-        memberBinding?.code,
-      amount: v.total,
-      paymentKind: "part",
-      purpose: firstBill
-        ? `Maintenance for the Month ${firstBill.period}`
-        : v.narration || "Maintenance dues",
-      mode: v.mode,
-      reference: v.reference,
-    };
+  // Shared builder — identical data to the auto-download/auto-email the UPI
+  // payment flow produces.
+  const buildData = (v: Voucher) =>
+    buildMemberReceiptData({ society, memberBinding, voucher: v, bills });
+
+  const doEmail = async (v: Voucher) => {
+    if (!societyId) return;
+    setEmailingId(v._id);
+    try {
+      await emailReceipt({
+        societyId,
+        voucherId: v._id,
+        pdfBase64: receiptPdfBase64(buildData(v)),
+        filename: `${v.voucherNo}.pdf`,
+      });
+      toast.success(`Receipt ${v.voucherNo} emailed.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Email failed.");
+    } finally {
+      setEmailingId(null);
+    }
   };
 
   const doExport = (v: Voucher, kind: "pdf" | "word" | "print") => {
@@ -202,6 +195,15 @@ export default function PortalReceipts() {
                       onClick={() => doExport(v, "print")}
                     >
                       <Printer className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="Email this receipt to me (PDF attached)"
+                      disabled={emailingId === v._id}
+                      onClick={() => void doEmail(v)}
+                    >
+                      <Mail className="size-4" />
                     </Button>
                   </div>
                 </TableCell>

@@ -11,7 +11,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { assertInFy, postMemberReceipt, requireSociety, requireUserId } from "./lib";
+import { assertInFy, postMemberReceipt, requireSociety, requireUserId, societyMemberBinding } from "./lib";
 import { portalBinding, validateMemberAllocations } from "./memberPortal";
 
 /**
@@ -610,5 +610,127 @@ export const myUpiPayments = query({
       postedAt: r.postedAt ?? null,
       failureReason: r.failureReason ?? null,
     }));
+  },
+});
+
+/** Everything the receipt email needs, after authorisation. */
+type ReceiptEmailContext = {
+  to: string;
+  voucherNo: string;
+  amount: number;
+  date: string;
+  narration: string | null;
+  societyName: string;
+  senderName: string | null;
+  replyTo: string | null;
+};
+
+/** Validate + gather everything the receipt email needs (server-side only). */
+export const internalReceiptEmailContext = internalQuery({
+  args: {
+    societyId: v.id("societies"),
+    voucherId: v.id("vouchers"),
+    userId: v.id("users"),
+  },
+  handler: async (
+    ctx,
+    { societyId, voucherId, userId },
+  ): Promise<ReceiptEmailContext> => {
+    const voucher = await ctx.db.get(voucherId);
+    if (!voucher || voucher.societyId !== societyId || voucher.type !== "member_receipt") {
+      throw new ConvexError("Receipt not found.");
+    }
+    const society = await ctx.db.get(societyId);
+    if (!society) throw new ConvexError("Society not found.");
+    // The caller must be the portal login bound to the flat this receipt is
+    // for — members can only email their own receipts.
+    const memberId = await societyMemberBinding(ctx, society, userId);
+    if (!memberId || voucher.memberId !== memberId) {
+      throw new ConvexError("This receipt belongs to another flat.");
+    }
+    const member = await ctx.db.get(voucher.memberId);
+    if (!member?.email) {
+      throw new ConvexError(
+        "Your profile has no email address — ask the office to add one so receipts can be emailed.",
+      );
+    }
+    return {
+      to: member.email,
+      voucherNo: voucher.voucherNo,
+      amount: voucher.total,
+      date: voucher.date,
+      narration: voucher.narration ?? null,
+      societyName: society.name,
+      senderName: society.messagingSenderName ?? null,
+      replyTo: society.messagingReplyTo ?? null,
+    };
+  },
+});
+
+/**
+ * Email a member their own receipt PDF (base64 of the same legacy layout the
+ * download buttons render in the browser). Used automatically after a UPI
+ * payment posts and from the My Receipts page. The PDF bytes come from the
+ * caller because the receipt renderer lives in browser code; the action only
+ * forwards them after authorising the caller against the flat binding.
+ */
+export const emailMemberReceipt = action({
+  args: {
+    societyId: v.id("societies"),
+    voucherId: v.id("vouchers"),
+    pdfBase64: v.string(),
+    filename: v.string(),
+  },
+  handler: async (
+    ctx,
+    { societyId, voucherId, pdfBase64, filename },
+  ): Promise<{ ok: true; to: string }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("You must be signed in.");
+    const info: ReceiptEmailContext = await ctx.runQuery(
+      internal.payments.internalReceiptEmailContext,
+      {
+        societyId,
+        voucherId,
+        userId,
+      },
+    );
+    if (pdfBase64.length > 6_000_000) {
+      throw new Error("The receipt PDF is too large to email.");
+    }
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "Email is not configured yet — the society office has not added RESEND_API_KEY, so the receipt could not be emailed. It is still available in My Receipts.",
+      );
+    }
+    const money = new Intl.NumberFormat("en-IN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(info.amount);
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `${info.senderName?.trim() || info.societyName} <onboarding@resend.dev>`,
+        ...(info.replyTo?.trim() ? { reply_to: info.replyTo.trim() } : {}),
+        to: [info.to],
+        subject: `Receipt ${info.voucherNo} — ${info.societyName}`,
+        html: `<p>Dear Member,</p><p>Thank you — your payment of <strong>₹${money}</strong> received on <strong>${info.date}</strong> has been recorded in the society books.</p><p>Receipt <strong>${info.voucherNo}</strong> is attached as a PDF and also available in your member portal under <em>My Receipts</em>.</p><p style="color:#64748b;font-size:12px">Automated message from ${info.societyName} · Imamm Accounting Solutions</p>`,
+        attachments: [
+          { filename, content: pdfBase64 },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `Resend error ${res.status}${text ? ` — ${text.slice(0, 200)}` : ""}`,
+      );
+    }
+    return { ok: true as const, to: info.to };
   },
 });

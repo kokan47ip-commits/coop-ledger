@@ -23,6 +23,11 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
+import { receiptPdf } from "@/lib/billDoc";
+import {
+  buildMemberReceiptData,
+  receiptPdfBase64,
+} from "@/lib/memberReceipt";
 import { effectiveFyPeriod, formatMoney, todayISO } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -40,7 +45,7 @@ import {
   WalletMinimal,
 } from "lucide-react";
 import { useState } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
 type OpenBill = {
@@ -55,6 +60,19 @@ type OpenBill = {
 };
 
 type PayAccount = { _id: Id<"accounts">; code: string; name: string };
+
+type VoucherDoc = {
+  _id: Id<"vouchers">;
+  voucherNo: string;
+  date: string;
+  total: number;
+  mode?: string;
+  reference?: string;
+  narration?: string;
+  allocations?: { billId: Id<"bills">; amount: number }[] | null;
+};
+
+type BillRow = { _id: Id<"bills">; period: string };
 
 type UpiPaymentRow = {
   _id: Id<"upiPayments">;
@@ -118,7 +136,8 @@ function loadRazorpayCheckout(): Promise<void> {
 }
 
 export default function PortalPay() {
-  const { societyId, society } = useSociety();
+  const { societyId, society, memberBinding } = useSociety();
+  const convex = useConvex();
   const openBills = useQuery(
     api.memberPortal.myOpenBills,
     societyId ? { societyId } : "skip",
@@ -147,6 +166,7 @@ export default function PortalPay() {
   const createUpiOrder = useMutation(api.payments.createUpiOrder);
   const initRazorpayOrder = useAction(api.payments.initRazorpayOrder);
   const verifyUpiPayment = useMutation(api.payments.verifyUpiPayment);
+  const emailReceipt = useAction(api.payments.emailMemberReceipt);
   const [upiBusy, setUpiBusy] = useState(false);
   const [upiStage, setUpiStage] = useState<string | null>(null);
 
@@ -258,6 +278,7 @@ export default function PortalPay() {
       }
       setAllocs({});
       setAdvance("");
+      if (res.posted) void deliverReceipt(res.voucherNo ?? null);
     } catch (err) {
       toast.error(
         err instanceof Error
@@ -267,6 +288,50 @@ export default function PortalPay() {
     } finally {
       setUpiBusy(false);
       setUpiStage(null);
+    }
+  };
+
+  /**
+   * After a UPI payment posts: download the receipt PDF immediately and email
+   * a copy to the member. Both failures are soft — the receipt stays available
+   * under My Receipts either way.
+   */
+  const deliverReceipt = async (voucherNo: string | null) => {
+    if (!societyId || !voucherNo) return;
+    try {
+      const [vouchers, bills] = await Promise.all([
+        convex.query(api.memberPortal.myReceipts, { societyId }),
+        convex.query(api.memberPortal.myBills, { societyId }),
+      ]);
+      const v = (vouchers as VoucherDoc[] | null)?.find(
+        (r) => r.voucherNo === voucherNo,
+      );
+      if (!v) return;
+      const data = buildMemberReceiptData({
+        society,
+        memberBinding,
+        voucher: v,
+        bills: bills as BillRow[] | null,
+      });
+      receiptPdf(data, `${v.voucherNo}.pdf`);
+      toast.success(`Receipt ${v.voucherNo} downloaded.`);
+      try {
+        await emailReceipt({
+          societyId,
+          voucherId: v._id,
+          pdfBase64: receiptPdfBase64(data),
+          filename: `${v.voucherNo}.pdf`,
+        });
+        toast.success(`A copy of receipt ${v.voucherNo} was emailed to you.`);
+      } catch (err) {
+        toast.info(
+          err instanceof Error
+            ? err.message
+            : "The receipt email could not be sent — you can download it from My Receipts.",
+        );
+      }
+    } catch {
+      // Download is a convenience — the receipt is always in My Receipts.
     }
   };
 
