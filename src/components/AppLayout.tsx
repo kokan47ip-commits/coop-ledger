@@ -124,7 +124,7 @@ const NAV: NavGroup[] = [
     title: "Settings",
     icon: <MessageCircle className="size-4" />,
     items: [
-      { to: "/app/messaging-settings", label: "Email & WhatsApp", icon: <MessageCircle className="size-4" /> },
+      { to: "/app/messaging-settings", label: "Messaging & Payments", icon: <MessageCircle className="size-4" /> },
     ],
   },
 ];
@@ -149,7 +149,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/uploads": "Excel Uploads",
   "/app/transaction-import": "Transaction Import",
   "/app/users": "Users & Rights",
-  "/app/messaging-settings": "Email & WhatsApp",
+  "/app/messaging-settings": "Messaging & Payments",
 };
 
 function navGroupHasActive(group: NavGroup, pathname: string) {

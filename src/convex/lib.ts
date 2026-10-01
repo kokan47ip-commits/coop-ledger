@@ -1,4 +1,5 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { ConvexError } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
 
@@ -396,6 +397,71 @@ export async function applyAllocationToBill(
     paidAmount,
     status: recomputeBillStatus(bill.total, paidAmount),
   });
+}
+
+export type MemberReceiptInput = {
+  society: Doc<"societies">;
+  memberId: Id<"members">;
+  date: string;
+  bankCashAccountId: Id<"accounts">;
+  mode?: string;
+  reference?: string;
+  narration: string;
+  allocations: { billId: Id<"bills">; amount: number }[];
+  total: number;
+  /** Links an auto-posted online (UPI) payment to its receipt voucher. */
+  upiPaymentId?: Id<"upiPayments">;
+};
+
+/**
+ * Post a member receipt voucher: Dr Bank/Cash, Cr Members Receivable, then
+ * settle the bill allocations. Shared by the office Member Receipt form, the
+ * member portal's manual payment and the online (UPI) payment auto-posting so
+ * all three paths produce identical books entries. Callers must validate the
+ * member, the bank/cash account and the allocations first.
+ */
+export async function postMemberReceipt(
+  ctx: MutationCtx,
+  input: MemberReceiptInput,
+) {
+  const { society, total } = input;
+  const receivableId =
+    society.receivableAccountId ??
+    (await ctx.db
+      .query("accounts")
+      .withIndex("by_society", (q) => q.eq("societyId", society._id))
+      .collect()
+      .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
+  if (!receivableId) {
+    throw new ConvexError(
+      "No Members Receivable account found — ask the society office to configure one.",
+    );
+  }
+  const n = await nextNumber(ctx, `${society._id}:voucher:member_receipt`);
+  const voucherNo = `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`;
+  const voucherId = await ctx.db.insert("vouchers", {
+    societyId: society._id,
+    type: "member_receipt" as const,
+    voucherNo,
+    date: input.date,
+    memberId: input.memberId,
+    mode: input.mode,
+    bankCashAccountId: input.bankCashAccountId,
+    reference: input.reference,
+    narration: input.narration,
+    total,
+    lines: [
+      { accountId: input.bankCashAccountId, debit: total, credit: 0 },
+      { accountId: receivableId, debit: 0, credit: total, note: input.mode },
+    ],
+    allocations: input.allocations,
+    upiPaymentId: input.upiPaymentId,
+  });
+  for (const a of input.allocations) {
+    const bill = await ctx.db.get(a.billId);
+    if (bill) await applyAllocationToBill(ctx, bill, a.amount);
+  }
+  return { voucherId, voucherNo };
 }
 
 export function fyStartDateString(fyStartMonth: number, onOrBefore: string) {

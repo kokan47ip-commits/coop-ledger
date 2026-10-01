@@ -27,16 +27,20 @@ import { effectiveFyPeriod, formatMoney, todayISO } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertCircle,
+  BadgeCheck,
   Banknote,
   CalendarClock,
+  CircleOff,
   Landmark,
+  Loader2,
   PiggyBank,
   Send,
+  Smartphone,
   TriangleAlert,
   WalletMinimal,
 } from "lucide-react";
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
 type OpenBill = {
@@ -51,6 +55,67 @@ type OpenBill = {
 };
 
 type PayAccount = { _id: Id<"accounts">; code: string; name: string };
+
+type UpiPaymentRow = {
+  _id: Id<"upiPayments">;
+  amount: number;
+  status: "created" | "posted" | "captured" | "cancelled";
+  voucherNo: string | null;
+  createdAt: number;
+  postedAt: number | null;
+  failureReason: string | null;
+};
+
+type RazorpayCheckoutResponse = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description?: string;
+  order_id: string;
+  prefill?: { name?: string; method?: string };
+  notes?: Record<string, string>;
+  theme?: { color?: string };
+  handler?: (response: RazorpayCheckoutResponse) => void;
+  modal?: { ondismiss?: () => void };
+};
+
+type RazorpayInstance = {
+  open: () => void;
+  on: (event: string, handler: (resp: unknown) => void) => void;
+};
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayOptions) => RazorpayInstance;
+  }
+}
+
+let checkoutPromise: Promise<void> | null = null;
+
+/** Load the gateway's checkout script once per page visit. */
+function loadRazorpayCheckout(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  if (checkoutPromise) return checkoutPromise;
+  checkoutPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      checkoutPromise = null;
+      reject(new Error("Could not load the payment window — check your internet connection."));
+    };
+    document.body.appendChild(script);
+  });
+  return checkoutPromise;
+}
 
 export default function PortalPay() {
   const { societyId, society } = useSociety();
@@ -71,6 +136,19 @@ export default function PortalPay() {
   const [submitting, setSubmitting] = useState(false);
 
   const submitPayment = useMutation(api.memberPortal.submitPayment);
+
+  // ---- Online UPI payments (GPay / PhonePe / Paytm via the gateway) ----
+  const gateway = useQuery(api.payments.gatewayStatus);
+  const gatewayReady = gateway?.ready === true;
+  const upiPayments = useQuery(
+    api.payments.myUpiPayments,
+    societyId ? { societyId } : "skip",
+  ) as UpiPaymentRow[] | null | undefined;
+  const createUpiOrder = useMutation(api.payments.createUpiOrder);
+  const initRazorpayOrder = useAction(api.payments.initRazorpayOrder);
+  const verifyUpiPayment = useMutation(api.payments.verifyUpiPayment);
+  const [upiBusy, setUpiBusy] = useState(false);
+  const [upiStage, setUpiStage] = useState<string | null>(null);
 
   // Pre-select the society's first cash/bank account so the member only has
   // to change it when paying somewhere other than the default account.
@@ -100,6 +178,16 @@ export default function PortalPay() {
   // member's ledger and settled against future bills by the office.
   const [advance, setAdvance] = useState("");
   const advanceNum = Number(advance) || 0;
+
+  /** Why the UPI button is disabled — the settlement account is the office's
+   *  choice, so unlike the manual flow it does not need one picked here. */
+  const upiBlocked: string | null = booksClosed
+    ? "The society's current books period does not include today's date — online payments are paused."
+    : parsedAllocs.length === 0 && advanceNum <= 0
+      ? "Tick a bill and enter the amount to pay — or enter an advance amount below."
+      : overAllocated
+        ? "One of the amounts is more than the bill balance — reduce it to continue."
+        : null;
 
   /** Why the submit button is disabled — shown next to it so it's never a mystery. */
   const blockedReason: string | null = booksClosed
@@ -141,6 +229,95 @@ export default function PortalPay() {
       toast.error(err instanceof Error ? err.message : "Payment failed.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** Confirm a completed checkout server-side; posts the receipt voucher. */
+  const confirmUpi = async (
+    paymentId: Id<"upiPayments">,
+    resp: RazorpayCheckoutResponse,
+  ) => {
+    setUpiStage("Confirming payment…");
+    try {
+      const res = await verifyUpiPayment({
+        paymentId,
+        razorpayOrderId: resp.razorpay_order_id,
+        razorpayPaymentId: resp.razorpay_payment_id,
+        razorpaySignature: resp.razorpay_signature,
+      });
+      if (res.posted && res.voucherNo) {
+        toast.success(
+          `Payment received — receipt ${res.voucherNo} posted to your ledger.`,
+        );
+      } else if (res.posted) {
+        toast.success("Payment received — it will appear in your ledger shortly.");
+      } else {
+        toast.success(
+          "Payment received — the society office will record it in the books.",
+        );
+      }
+      setAllocs({});
+      setAdvance("");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? `${err.message} If money was deducted, the bank confirmation will credit your ledger automatically.`
+          : "Payment verification failed — if money was deducted, your ledger will be credited automatically.",
+      );
+    } finally {
+      setUpiBusy(false);
+      setUpiStage(null);
+    }
+  };
+
+  /**
+   * Start an online UPI payment: store the order, create the gateway order
+   * server-side, then open the checkout — on a phone it lists the UPI apps
+   * installed on this device (GPay, PhonePe, Paytm…), on desktop a QR code.
+   */
+  const payViaUpi = async () => {
+    if (!societyId || upiBlocked || upiBusy) return;
+    setUpiBusy(true);
+    setUpiStage("Preparing…");
+    try {
+      const order = await createUpiOrder({
+        societyId,
+        allocations: parsedAllocs,
+        amount: parsedAllocs.length === 0 ? advanceNum : undefined,
+      });
+      setUpiStage("Opening payment apps…");
+      const init = await initRazorpayOrder({ paymentId: order.paymentId });
+      await loadRazorpayCheckout();
+      const RazorpayCtor = window.Razorpay;
+      if (!RazorpayCtor) throw new Error("The payment window could not be loaded.");
+      const rzp = new RazorpayCtor({
+        key: init.keyId,
+        amount: init.amountPaise,
+        currency: "INR",
+        name: init.societyName,
+        description: "Maintenance payment",
+        order_id: init.providerOrderId,
+        prefill: { name: init.memberName, method: "upi" },
+        notes: { paymentId: init.paymentId },
+        theme: { color: "#4f46e5" },
+        handler: (resp) => {
+          void confirmUpi(order.paymentId, resp);
+        },
+        modal: {
+          ondismiss: () => {
+            setUpiBusy(false);
+            setUpiStage(null);
+            toast.info("Payment window closed — you can pay again any time.");
+          },
+        },
+      });
+      rzp.open();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not start the UPI payment.",
+      );
+      setUpiBusy(false);
+      setUpiStage(null);
     }
   };
 
@@ -377,6 +554,102 @@ export default function PortalPay() {
         </Table>
       </div>
 
+      {/* Online UPI — opens the payment apps installed on the member's phone */}
+      <Card className="overflow-hidden py-0 shadow-lg shadow-emerald-950/[0.06]">
+        <div className="h-1 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-green-500" />
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2.5 text-base">
+            <IconTile tone="emerald">
+              <Smartphone />
+            </IconTile>
+            Pay online with UPI
+          </CardTitle>
+          <CardDescription>
+            Opens the UPI apps on your phone — GPay, PhonePe, Paytm or any
+            other. Your ledger is credited automatically the moment the bank
+            confirms the payment.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-4">
+          <div>
+            <p className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+              <Banknote className="size-3.5" /> Amount
+            </p>
+            <p className="mt-0.5 text-3xl font-semibold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-300">
+              {formatMoney(total)}
+            </p>
+          </div>
+          {!gatewayReady && (
+            <p className="flex max-w-md items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+              <CircleOff className="mt-0.5 size-4 shrink-0" />
+              Online UPI payments switch on once the society office completes
+              the payment setup (Messaging &amp; Payments → Payments).
+            </p>
+          )}
+          {gatewayReady && upiBlocked && !upiBusy && (
+            <p className="flex max-w-md items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              {upiBlocked}
+            </p>
+          )}
+          <Button
+            className="ml-auto bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 text-white shadow-md shadow-emerald-950/20 hover:from-emerald-500 hover:via-teal-500 hover:to-green-500"
+            size="lg"
+            disabled={upiBusy || !gatewayReady || !!upiBlocked || total <= 0}
+            onClick={payViaUpi}
+          >
+            {upiBusy ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                {upiStage ?? "Processing…"}
+              </>
+            ) : (
+              <>
+                <Smartphone className="mr-2 size-4" />
+                Pay {formatMoney(total)} via UPI
+              </>
+            )}
+          </Button>
+        </CardContent>
+        {upiPayments && upiPayments.length > 0 && (
+          <div className="border-t border-border/60 px-6 py-3">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Recent online payments
+            </p>
+            <ul className="space-y-1.5">
+              {upiPayments.slice(0, 4).map((p) => (
+                <li
+                  key={p._id}
+                  className="flex flex-wrap items-center gap-2 text-sm"
+                >
+                  {p.status === "posted" ? (
+                    <Badge className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                      <BadgeCheck className="size-3" /> Paid · {p.voucherNo}
+                    </Badge>
+                  ) : p.status === "created" ? (
+                    <Badge className="gap-1 border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                      <Loader2 className="size-3 animate-spin" /> Processing
+                    </Badge>
+                  ) : p.status === "captured" ? (
+                    <Badge className="gap-1 border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300">
+                      <BadgeCheck className="size-3" /> Received — office will record
+                    </Badge>
+                  ) : (
+                    <Badge className="gap-1 border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+                      <CircleOff className="size-3" /> Cancelled
+                    </Badge>
+                  )}
+                  <span className="font-medium tabular-nums">{formatMoney(p.amount)}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(p.createdAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Card>
+
       <Card className="overflow-hidden py-0 shadow-lg shadow-primary/[0.06]">
         <div className="brand-gradient h-1 w-full" />
         <CardHeader className="pb-3">
@@ -387,8 +660,9 @@ export default function PortalPay() {
             Submit payment
           </CardTitle>
           <CardDescription>
-            Dated today; allocations cannot exceed each bill's balance. The
-            society office sees your payment immediately.
+            Record a payment already made (cash, cheque or bank transfer),
+            dated today. Allocations cannot exceed each bill's balance and the
+            society office sees your entry immediately.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-4">

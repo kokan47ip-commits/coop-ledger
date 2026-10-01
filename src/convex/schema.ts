@@ -66,6 +66,8 @@ const schema = defineSchema(
       // without relying on the creating device's localStorage.
       claimEmail: v.optional(v.string()),
       receivableAccountId: v.optional(v.id("accounts")),
+      /** Bank/cash account that online (UPI gateway) payments settle into. */
+      upiSettlementAccountId: v.optional(v.id("accounts")),
     })
       .index("by_creator", ["createdBy"])
       .index("by_claim_code", ["claimCode"])
@@ -212,6 +214,8 @@ const schema = defineSchema(
       allocations: v.optional(
         v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
       ),
+      /** Set when this receipt was auto-posted from an online UPI payment. */
+      upiPaymentId: v.optional(v.id("upiPayments")),
     })
       .index("by_society", ["societyId"])
       .index("by_society_type", ["societyId", "type"])
@@ -221,6 +225,47 @@ const schema = defineSchema(
       "by_key",
       ["key"],
     ),
+
+    /**
+     * One online (UPI) payment initiated by a member from the portal. The
+     * gateway (Razorpay) notifies us by webhook; when the payment is captured
+     * the row is posted as a member receipt voucher — debiting the society's
+     * UPI settlement bank/cash account and crediting the member's receivable
+     * ledger, with the bill allocations settled at the same time.
+     */
+    upiPayments: defineTable({
+      societyId: v.id("societies"),
+      memberId: v.id("members"),
+      /** Portal login that created the payment — ownership checks. */
+      createdById: v.id("users"),
+      amount: v.number(), // rupees, two decimals
+      /** created → awaiting payment; posted → receipt in the books;
+       *  captured → money received but not yet posted (office action);
+       *  cancelled → member closed the checkout / gateway reported failure. */
+      status: v.union(
+        v.literal("created"),
+        v.literal("posted"),
+        v.literal("captured"),
+        v.literal("cancelled"),
+      ),
+      provider: v.literal("razorpay"),
+      providerOrderId: v.optional(v.string()),
+      providerPaymentId: v.optional(v.string()),
+      providerMethod: v.optional(v.string()),
+      allocations: v.array(
+        v.object({ billId: v.id("bills"), amount: v.number() }),
+      ),
+      /** Part of the amount not tied to any bill — an advance on the ledger. */
+      advanceAmount: v.number(),
+      voucherId: v.optional(v.id("vouchers")),
+      voucherNo: v.optional(v.string()),
+      failureReason: v.optional(v.string()),
+      createdAt: v.number(),
+      postedAt: v.optional(v.number()),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_member", ["societyId", "memberId"])
+      .index("by_provider_order", ["providerOrderId"]),
 
     // Per-society user rights. The society creator is the implicit "owner";
     // rows here grant "editor" (entry rights), "viewer" (read-only) or

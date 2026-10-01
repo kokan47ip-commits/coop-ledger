@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireSociety, requireSocietyWrite } from "./lib";
 
@@ -67,5 +67,68 @@ export const getChannelStatus = query({
       whatsappTemplate: process.env.WHATSAPP_TEMPLATE_NAME || "bill_notification",
       whatsappTemplateLang: process.env.WHATSAPP_TEMPLATE_LANG || "en",
     };
+  },
+});
+
+/**
+ * Office-facing configuration for online (UPI) member payments. Keys live in
+ * the deployment environment (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET /
+ * RAZORPAY_WEBHOOK_SECRET); only the public key id, booleans and the society's
+ * settlement preference are returned here.
+ */
+export const getUpiSettings = query({
+  args: { societyId: v.id("societies") },
+  handler: async (ctx, { societyId }) => {
+    const society = await requireSociety(ctx, societyId);
+    const accounts = await ctx.db
+      .query("accounts")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const settlement = society.upiSettlementAccountId
+      ? accounts.find((a) => a._id === society.upiSettlementAccountId)
+      : undefined;
+    return {
+      settlementAccountId: society.upiSettlementAccountId ?? null,
+      settlementAccountName: settlement
+        ? `${settlement.code} — ${settlement.name}`
+        : null,
+      bankCashAccounts: accounts
+        .filter((a) => a.kind === "bank_cash")
+        .map((a) => ({ _id: a._id, label: `${a.code} — ${a.name}` }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+      // Built-in: the public base URL HTTP actions are served from.
+      webhookUrl: `${process.env.CONVEX_SITE_URL ?? ""}/upi_webhook`,
+      keyId: process.env.RAZORPAY_KEY_ID ?? null,
+      ready: !!(
+        process.env.RAZORPAY_KEY_ID &&
+        process.env.RAZORPAY_KEY_SECRET &&
+        process.env.RAZORPAY_WEBHOOK_SECRET
+      ),
+    };
+  },
+});
+
+/** Save the UPI settlement account (null = back to the default). Owner/editor only. */
+export const saveUpiSettings = mutation({
+  args: {
+    societyId: v.id("societies"),
+    settlementAccountId: v.optional(v.union(v.id("accounts"), v.null())),
+  },
+  handler: async (ctx, { societyId, settlementAccountId }) => {
+    await requireSocietyWrite(ctx, societyId);
+    if (settlementAccountId !== undefined) {
+      if (settlementAccountId) {
+        const acc = await ctx.db.get(settlementAccountId);
+        if (!acc || acc.societyId !== societyId || acc.kind !== "bank_cash") {
+          throw new ConvexError(
+            "Choose a cash/bank account of this society as the settlement account.",
+          );
+        }
+      }
+      await ctx.db.patch(societyId, {
+        upiSettlementAccountId: settlementAccountId ?? undefined,
+      });
+    }
+    return true;
   },
 });

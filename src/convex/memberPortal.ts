@@ -6,14 +6,11 @@ import {
   analyzePortalBinding,
   assertInFy,
   isSoftwareAdmin,
-  nextNumber,
-  pad,
+  postMemberReceipt,
   requireSociety,
   requireUserId,
   societyMemberBinding,
-  VOUCHER_PREFIX,
 } from "./lib";
-import { applyAllocationToBill } from "./lib";
 import { verifyPassword, hashPassword } from "./passwordHash";
 
 /**
@@ -26,7 +23,7 @@ import { verifyPassword, hashPassword } from "./passwordHash";
 type PortalCtx = { societyId: Id<"societies">; memberId: Id<"members"> };
 
 /** Resolve the caller's flat binding, or null when they are not a portal member. */
-async function portalBinding(
+export async function portalBinding(
   ctx: Parameters<typeof requireUserId>[0],
   societyId: Id<"societies">,
 ): Promise<PortalCtx | null> {
@@ -37,6 +34,44 @@ async function portalBinding(
   const memberId = await societyMemberBinding(ctx, society, userId);
   if (!memberId) return null;
   return { societyId, memberId };
+}
+
+/**
+ * Validate bill allocations for a member payment: every bill must belong to
+ * the member's flat, amounts must be positive, within the bill balance and
+ * non-duplicated. Shared by the portal's manual payment and the online (UPI)
+ * payment flow so both enforce identical rules. Returns the allocated total.
+ */
+export async function validateMemberAllocations(
+  ctx: MutationCtx,
+  bind: PortalCtx,
+  allocations: { billId: Id<"bills">; amount: number }[],
+) {
+  const bills = await ctx.db
+    .query("bills")
+    .withIndex("by_society_member", (q) =>
+      q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
+    )
+    .collect();
+  const seen = new Set<Id<"bills">>();
+  let total = 0;
+  for (const a of allocations) {
+    const bill = bills.find((b) => b._id === a.billId);
+    if (!bill) {
+      throw new ConvexError("A selected bill does not belong to your flat — payment declined.");
+    }
+    if (a.amount <= 0) throw new ConvexError("Allocation amounts must be positive.");
+    const balance = bill.total - bill.paidAmount;
+    if (a.amount > balance + 0.005) {
+      throw new ConvexError(
+        `Allocation to ${bill.billNo} exceeds its balance of ${balance.toFixed(2)}.`,
+      );
+    }
+    if (seen.has(a.billId)) throw new ConvexError("Duplicate bill allocation.");
+    seen.add(a.billId);
+    total += a.amount;
+  }
+  return { total };
 }
 
 /** The member's profile, flat, society summary and account balance. */
@@ -498,31 +533,7 @@ export const submitPayment = mutation({
 
     // Validate every allocated bill belongs to MY flat and the amounts are
     // positive and do not exceed the bill balance.
-    const bills = await ctx.db
-      .query("bills")
-      .withIndex("by_society_member", (q) =>
-        q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
-      )
-      .collect();
-    const mine = new Map(bills.map((b) => [b._id, b]));
-    const seen = new Set<Id<"bills">>();
-    let total = 0;
-    for (const a of allocations) {
-      const bill = mine.get(a.billId);
-      if (!bill) {
-        throw new ConvexError("A selected bill does not belong to your flat — payment declined.");
-      }
-      if (a.amount <= 0) throw new ConvexError("Allocation amounts must be positive.");
-      const balance = bill.total - bill.paidAmount;
-      if (a.amount > balance + 0.005) {
-        throw new ConvexError(
-          `Allocation to ${bill.billNo} exceeds its balance of ${balance.toFixed(2)}.`,
-        );
-      }
-      if (seen.has(a.billId)) throw new ConvexError("Duplicate bill allocation.");
-      seen.add(a.billId);
-      total += a.amount;
-    }
+    let { total } = await validateMemberAllocations(ctx, bind, allocations);
     // Advance payment: no bill selections needed — the full amount is
     // credited to the member's ledger (receivable) and settles future bills.
     if (amount !== undefined && amount > 0) {
@@ -541,43 +552,22 @@ export const submitPayment = mutation({
 
     // Post the receipt: Dr Bank/Cash, Cr Members Receivable (same posting the
     // society's Member Receipt voucher produces), then apply allocations.
-    const receivableId =
-      society.receivableAccountId ??
-      (await ctx.db
-        .query("accounts")
-        .withIndex("by_society", (q) => q.eq("societyId", societyId))
-        .collect()
-        .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
-    if (!receivableId) {
-      throw new ConvexError("No Members Receivable account found — ask the society office to configure one.");
-    }
-    const n = await nextNumber(ctx, `${societyId}:voucher:member_receipt`);
-    const voucherId = await ctx.db.insert("vouchers", {
-      societyId,
-      type: "member_receipt" as const,
-      voucherNo: `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`,
-      date,
+    const { voucherId, voucherNo } = await postMemberReceipt(ctx, {
+      society,
       memberId: bind.memberId,
-      mode,
+      date,
       bankCashAccountId,
+      mode,
       reference,
       narration:
         narration ??
         (allocations.length > 0
           ? `Online payment by member for ${allocations.length} bill(s)`
           : "Advance payment by member"),
-      total,
-      lines: [
-        { accountId: bankCashAccountId, debit: total, credit: 0 },
-        { accountId: receivableId, debit: 0, credit: total, note: mode },
-      ],
       allocations,
+      total,
     });
-    for (const a of allocations) {
-      const bill = mine.get(a.billId);
-      if (bill) await applyAllocationToBill(ctx, bill, a.amount);
-    }
-    return { voucherId, voucherNo: `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`, total };
+    return { voucherId, voucherNo, total };
   },
 });
 

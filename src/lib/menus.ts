@@ -91,7 +91,7 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "transaction-import", label: "Transaction Import", section: "Data", path: "/app/transaction-import", icon: FileInput },
   { key: "uploads", label: "Excel Uploads", section: "Data", path: "/app/uploads", icon: FileSpreadsheet },
   { key: "users", label: "Users & Rights", section: "Data", path: "/app/users", icon: ShieldCheck },
-  { key: "messaging-settings", label: "Email & WhatsApp", section: "Settings", path: "/app/messaging-settings", icon: MessageCircle },
+  { key: "messaging-settings", label: "Messaging & Payments", section: "Settings", path: "/app/messaging-settings", icon: MessageCircle },
 ];
 
 export const MENU_KEYS = MENU_REGISTRY.map((m) => m.key);

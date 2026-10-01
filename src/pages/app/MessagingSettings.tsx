@@ -19,17 +19,21 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
+import { formatMoney } from "@/lib/format";
 import {
   CircleCheck,
   CircleX,
+  Copy,
   Info,
   KeyRound,
   Mail,
   MessageCircle,
   Send,
   SlidersHorizontal,
+  Smartphone,
 } from "lucide-react";
 import { useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -59,6 +63,49 @@ export default function MessagingSettings() {
   const [testPhone, setTestPhone] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [waBusy, setWaBusy] = useState(false);
+
+  // ---- Payments (UPI gateway) ----
+  const upiSettings = useQuery(
+    api.settings.getUpiSettings,
+    societyId ? { societyId } : "skip",
+  );
+  const officePayments = useQuery(
+    api.payments.listOfficeUpiPayments,
+    societyId ? { societyId } : "skip",
+  );
+  const saveUpi = useMutation(api.settings.saveUpiSettings);
+  const [settlementChoice, setSettlementChoice] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const settlementValue =
+    settlementChoice ?? upiSettings?.settlementAccountId ?? "__default__";
+
+  const saveSettlement = async () => {
+    if (!societyId) return;
+    try {
+      await saveUpi({
+        societyId,
+        settlementAccountId:
+          settlementValue === "__default__"
+            ? null
+            : (settlementValue as Id<"accounts">),
+      });
+      setSettlementChoice(null);
+      toast.success("UPI settlement account saved.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save.");
+    }
+  };
+
+  const copyWebhook = async () => {
+    if (!upiSettings?.webhookUrl) return;
+    try {
+      await navigator.clipboard.writeText(upiSettings.webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Copy failed — select the text and copy it manually.");
+    }
+  };
 
   // Preferences form: the server value is the base; edits are a sparse draft
   // overlay (derived state — no effect-synced copies of server data).
@@ -120,12 +167,12 @@ export default function MessagingSettings() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Email & WhatsApp"
-        description="Configure and test the channels that deliver bills and receipts to members."
+        title="Messaging & Payments"
+        description="Configure the channels that deliver bills and receipts, and online UPI payments that credit member ledgers automatically."
       />
 
       {/* Channel status */}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <ChannelCard
           icon={<Mail />}
           tone="emerald"
@@ -140,6 +187,13 @@ export default function MessagingSettings() {
           envKey="WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID"
           ready={status?.whatsapp}
         />
+        <ChannelCard
+          icon={<Smartphone />}
+          tone="sky"
+          title="UPI payments (Razorpay)"
+          envKey="RAZORPAY_KEY_ID + RAZORPAY_KEY_SECRET + RAZORPAY_WEBHOOK_SECRET"
+          ready={upiSettings?.ready}
+        />
       </div>
 
       <Tabs defaultValue="email" className="w-full">
@@ -152,6 +206,9 @@ export default function MessagingSettings() {
           </TabsTrigger>
           <TabsTrigger value="preferences" className="gap-1.5">
             <SlidersHorizontal className="size-4" /> Preferences
+          </TabsTrigger>
+          <TabsTrigger value="payments" className="gap-1.5">
+            <Smartphone className="size-4" /> Payments
           </TabsTrigger>
         </TabsList>
 
@@ -335,6 +392,156 @@ export default function MessagingSettings() {
             </p>
           </div>
         </TabsContent>
+
+        {/* ----------------------------- PAYMENTS ---------------------------- */}
+        <TabsContent value="payments" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Where online payments land</CardTitle>
+              <CardDescription>
+                Members pay by UPI (GPay / PhonePe / Paytm) from their portal.
+                Money settles into your Razorpay-settled bank account — record
+                that account here so receipts debit the right ledger.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Settlement account (cash/bank)
+                  </Label>
+                  <Select
+                    value={settlementValue}
+                    onValueChange={setSettlementChoice}
+                    disabled={!canEdit}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choose account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">
+                        Default — first cash/bank account
+                      </SelectItem>
+                      {upiSettings?.bankCashAccounts.map((a) => (
+                        <SelectItem key={a._id} value={a._id}>
+                          {a.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {upiSettings?.settlementAccountName && settlementChoice === null && (
+                    <p className="text-xs text-muted-foreground">
+                      Current: {upiSettings.settlementAccountName}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Webhook URL (paste into Razorpay → Webhooks)
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      readOnly
+                      value={upiSettings?.webhookUrl ?? ""}
+                      className="font-mono text-xs"
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={copyWebhook}
+                      disabled={!upiSettings?.webhookUrl}
+                      title="Copy webhook URL"
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </div>
+                  {copied && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      Copied to clipboard.
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={saveSettlement}
+                  disabled={!canEdit || settlementChoice === null}
+                  className="gap-1.5"
+                >
+                  <CircleCheck className="size-4" /> Save settlement account
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <SetupSteps
+            tone="sky"
+            steps={[
+              "Create an account at dashboard.razorpay.com and complete KYC (bank account + PAN). Test mode is available immediately.",
+              "Account & Settings → API Keys → Generate Key. Copy the Key Id and Key Secret.",
+              "Paste them into this project's Keys / API keys tab as RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET. Also add RAZORPAY_WEBHOOK_SECRET with any strong random text you choose.",
+              "Account & Settings → Webhooks → Add New Webhook: paste the webhook URL above, tick the events payment.captured and payment.failed, and set the same secret you saved as RAZORPAY_WEBHOOK_SECRET.",
+              "Members then see \u201cPay online with UPI\u201d on their payment page — GPay, PhonePe or Paytm opens right on their phone, and the receipt posts to the books automatically.",
+            ]}
+          />
+
+          {officePayments && officePayments.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Recent online payments</CardTitle>
+                <CardDescription>
+                  Received money normally posts itself to the books within
+                  seconds. Anything marked “received” here still needs a
+                  receipt entry from the office.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {officePayments.map((p) => (
+                    <li
+                      key={p._id}
+                      className="flex flex-wrap items-center gap-2 text-sm"
+                    >
+                      {p.status === "posted" ? (
+                        <Badge className="gap-1 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                          <CircleCheck className="size-3" /> Posted · {p.voucherNo}
+                        </Badge>
+                      ) : p.status === "captured" ? (
+                        <Badge className="gap-1 border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                          <Info className="size-3" /> Received — needs entry
+                        </Badge>
+                      ) : p.status === "created" ? (
+                        <Badge variant="outline" className="gap-1 text-muted-foreground">
+                          Processing
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 text-muted-foreground">
+                          Cancelled
+                        </Badge>
+                      )}
+                      <span className="font-medium tabular-nums">
+                        {formatMoney(p.amount)}
+                      </span>
+                      <span>
+                        {p.memberName}
+                        {p.flatLabel ? ` · ${p.flatLabel}` : ""}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(p.createdAt).toLocaleString()}
+                      </span>
+                      {p.failureReason && (
+                        <span className="w-full text-xs text-amber-700 dark:text-amber-300">
+                          {p.failureReason}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
       </Tabs>
 
       {!status && (
@@ -357,6 +564,15 @@ export default function MessagingSettings() {
           <span className="font-mono">WHATSAPP_PHONE_NUMBER_ID</span> are added.
         </p>
       )}
+      {upiSettings && !upiSettings.ready && (
+        <p className="text-xs text-muted-foreground">
+          UPI gateway keys are missing — the “Pay online with UPI” button stays
+          switched off for members until <span className="font-mono">RAZORPAY_KEY_ID</span>,{" "}
+          <span className="font-mono">RAZORPAY_KEY_SECRET</span> and{" "}
+          <span className="font-mono">RAZORPAY_WEBHOOK_SECRET</span> are added in the
+          Keys / API keys tab.
+        </p>
+      )}
     </div>
   );
 }
@@ -369,7 +585,7 @@ function ChannelCard({
   ready,
 }: {
   icon: React.ReactNode;
-  tone: "emerald" | "violet";
+  tone: "emerald" | "violet" | "sky";
   title: string;
   envKey: string;
   ready?: boolean;
@@ -407,7 +623,7 @@ function SetupSteps({
   tone,
 }: {
   steps: string[];
-  tone: "emerald" | "violet";
+  tone: "emerald" | "violet" | "sky";
 }) {
   return (
     <Card>
@@ -422,7 +638,9 @@ function SetupSteps({
                 className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
                   tone === "emerald"
                     ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                    : "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                    : tone === "sky"
+                      ? "bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                      : "bg-violet-500/15 text-violet-700 dark:text-violet-300"
                 }`}
               >
                 {i + 1}
