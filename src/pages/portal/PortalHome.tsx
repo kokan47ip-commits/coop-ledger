@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -8,21 +9,47 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
-import { formatMoney } from "@/lib/format";
+import { formatDate, formatMoney } from "@/lib/format";
 import {
   ArrowUpRight,
   BookOpen,
+  CircleCheck,
   FileSpreadsheet,
+  Info,
   Landmark,
+  Loader2,
   Receipt,
   UserCircle,
   Wallet,
+  X,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router";
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
+
+/**
+ * UPI payment status banner windows: a posted/captured payment stays visible
+ * for a day; an in-flight (created) payment only while it is plausibly still
+ * open in a UPI app.
+ */
+const POSTED_BANNER_MS = 24 * 60 * 60 * 1000;
+const PROCESSING_BANNER_MS = 30 * 60 * 1000;
+const BANNER_KEY = "chs.upiBannerDismissed";
+
+type UpiBannerPayment = {
+  _id: Id<"upiPayments">;
+  amount: number;
+  status: "created" | "posted" | "captured" | "cancelled";
+  voucherNo: string | null;
+  createdAt: number;
+  postedAt: number | null;
+};
+
+type OpenBillRow = { _id: Id<"bills">; dueDate: string; balance: number };
 
 function initialsOf(name: string): string {
   return (
@@ -41,6 +68,46 @@ export default function PortalHome() {
     api.memberPortal.myInfo,
     societyId ? { societyId } : "skip",
   );
+  const upiPayments = useQuery(
+    api.payments.myUpiPayments,
+    societyId ? { societyId } : "skip",
+  ) as UpiBannerPayment[] | null | undefined;
+  const openBills = useQuery(
+    api.memberPortal.myOpenBills,
+    societyId ? { societyId } : "skip",
+  ) as OpenBillRow[] | null | undefined;
+
+  // The most recent online payment worth surfacing, newest first — posted
+  // receipts and captured-but-unrecorded money stay visible for a day,
+  // in-flight payments only while checkout may still be open. Dismissal is
+  // remembered per payment, so a new payment brings the banner back.
+  const bannerPayment = (upiPayments ?? []).find((p) => {
+    if (p.status === "cancelled") return false;
+    const ts = p.status === "created" ? p.createdAt : (p.postedAt ?? p.createdAt);
+    const window = p.status === "created" ? PROCESSING_BANNER_MS : POSTED_BANNER_MS;
+    return Date.now() - ts < window;
+  });
+  const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(
+    () => {
+      try {
+        return localStorage.getItem(BANNER_KEY);
+      } catch {
+        return null;
+      }
+    },
+  );
+  const showBanner =
+    bannerPayment !== undefined && bannerPayment._id !== dismissedBannerId;
+
+  const dismissBanner = () => {
+    if (!bannerPayment) return;
+    setDismissedBannerId(bannerPayment._id);
+    try {
+      localStorage.setItem(BANNER_KEY, bannerPayment._id);
+    } catch {
+      // Private browsing — banner just returns next visit.
+    }
+  };
 
   if (!societyId) {
     return <Skeleton className="h-64 w-full" />;
@@ -70,6 +137,15 @@ export default function PortalHome() {
   const outstanding = info.totals.outstanding;
   const hasDue = outstanding > 0.005;
 
+  // Dues summary: how many bills are open and when the earliest one is due —
+  // mirrors the open-bill list on the payment page.
+  const openBillCount = openBills?.length ?? 0;
+  const earliestDue =
+    openBills && openBills.length > 0
+      ? openBills.map((b) => b.dueDate).sort()[0]
+      : null;
+  const overdue = !!earliestDue && earliestDue < new Date().toISOString().slice(0, 10);
+
   const quickLinks: {
     to: string;
     tone: "emerald" | "indigo" | "violet" | "amber" | "sky";
@@ -83,7 +159,9 @@ export default function PortalHome() {
       tone: "emerald",
       icon: Wallet,
       title: "Make a payment",
-      desc: "Pay your maintenance dues against open bills.",
+      desc: hasDue
+        ? "Pay open bills by UPI (GPay, PhonePe, Paytm) or at the office."
+        : "Pay your maintenance dues against open bills.",
       highlight: hasDue,
     },
     {
@@ -122,6 +200,103 @@ export default function PortalHome() {
         title="My Flat"
         description="Dues, bills, receipts and payments for your flat — all in one place."
       />
+
+      {/* UPI payment status banner */}
+      {showBanner && bannerPayment && (
+        <div
+          className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-sm ${
+            bannerPayment.status === "posted"
+              ? "border-emerald-500/40 bg-gradient-to-r from-emerald-50 to-teal-50 text-emerald-900 dark:border-emerald-500/30 dark:from-emerald-950/50 dark:to-teal-950/30 dark:text-emerald-200"
+              : bannerPayment.status === "captured"
+                ? "border-sky-500/40 bg-gradient-to-r from-sky-50 to-indigo-50 text-sky-900 dark:border-sky-500/30 dark:from-sky-950/50 dark:to-indigo-950/30 dark:text-sky-200"
+                : "border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-900 dark:border-amber-500/30 dark:from-amber-950/50 dark:to-orange-950/30 dark:text-amber-200"
+          }`}
+        >
+          <IconTile
+            tone={
+              bannerPayment.status === "posted"
+                ? "emerald"
+                : bannerPayment.status === "captured"
+                  ? "sky"
+                  : "amber"
+            }
+          >
+            {bannerPayment.status === "created" ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <CircleCheck />
+            )}
+          </IconTile>
+          <p className="min-w-0 flex-1">
+            {bannerPayment.status === "posted" ? (
+              <>
+                <strong>Payment successful.</strong>{" "}
+                {formatMoney(bannerPayment.amount)} receipt
+                {bannerPayment.voucherNo ? ` ${bannerPayment.voucherNo}` : ""} posted to your ledger.
+              </>
+            ) : bannerPayment.status === "captured" ? (
+              <>
+                <strong>Payment received.</strong> {formatMoney(bannerPayment.amount)} — the office will record it in the books shortly.
+              </>
+            ) : (
+              <>
+                <strong>Processing your payment.</strong> Complete it in your UPI app if the payment is still open.
+              </>
+            )}
+          </p>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-current opacity-60 hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+            onClick={dismissBanner}
+            aria-label="Dismiss"
+          >
+            <X />
+          </Button>
+        </div>
+      )}
+
+      {/* Dues summary strip */}
+      {openBills !== undefined && (
+        <div
+          className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-4 py-3 text-sm shadow-sm ${
+            overdue
+              ? "border-rose-500/40 bg-rose-50/70 text-rose-900 dark:border-rose-500/30 dark:bg-rose-950/40 dark:text-rose-200"
+              : openBillCount > 0
+                ? "border-amber-500/40 bg-amber-50/70 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+                : "border-emerald-500/40 bg-emerald-50/70 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-200"
+          }`}
+        >
+          <IconTile
+            tone={overdue ? "rose" : openBillCount > 0 ? "amber" : "emerald"}
+            size="sm"
+          >
+            {openBillCount > 0 ? <Info /> : <CircleCheck />}
+          </IconTile>
+          <p className="min-w-0 flex-1">
+            {openBillCount === 0 ? (
+              <strong>All dues are clear.</strong>
+            ) : (
+              <>
+                <strong>
+                  {openBillCount === 1
+                    ? "1 open bill"
+                    : `${openBillCount} open bills`}
+                </strong>
+                {earliestDue
+                  ? ` — earliest due ${formatDate(earliestDue)}`
+                  : ""}
+                {overdue ? " · Overdue" : ""}
+              </>
+            )}
+          </p>
+          {openBillCount > 0 && (
+            <Button asChild size="sm" className="shrink-0">
+              <Link to="/portal/pay">Pay now</Link>
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Flat hero card */}
       <Card className="relative overflow-hidden border-primary/15 shadow-lg shadow-primary/[0.06]">
