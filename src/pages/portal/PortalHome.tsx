@@ -81,11 +81,14 @@ export default function PortalHome() {
   // receipts and captured-but-unrecorded money stay visible for a day,
   // in-flight payments only while checkout may still be open. Dismissal is
   // remembered per payment, so a new payment brings the banner back.
+  // Wall clock captured once per mount so the render stays pure; windows are
+  // wide (hours) so a stale value within a session is harmless.
+  const [now] = useState(() => Date.now());
   const bannerPayment = (upiPayments ?? []).find((p) => {
     if (p.status === "cancelled") return false;
     const ts = p.status === "created" ? p.createdAt : (p.postedAt ?? p.createdAt);
     const window = p.status === "created" ? PROCESSING_BANNER_MS : POSTED_BANNER_MS;
-    return Date.now() - ts < window;
+    return now - ts < window;
   });
   const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(
     () => {
