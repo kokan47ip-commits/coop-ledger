@@ -33,8 +33,14 @@ function makeDb() {
     return m;
   };
   const db = {
-    async get(t: string, id: string) {
-      return ensure(t).get(id) ?? null;
+    // Convex db.get(id) takes a single id; the table comes from an internal
+    // map. Also support get(table, id) for test-side convenience reads.
+    async get(a: string, b?: string) {
+      if (b === undefined) {
+        const t = byId.get(a);
+        return t ? (ensure(t).get(a) ?? null) : null;
+      }
+      return ensure(a).get(b) ?? null;
     },
     async insert(t: string, doc: Record<string, unknown>) {
       const id = `id${++seq}`;
@@ -477,8 +483,6 @@ describe("updateSubmission / deleteSubmission (pending-only)", () => {
       grantedBy: "x",
       createdAt: 0,
     });
-    const made = makeDb();
-    void made;
     const otherCtx = buildWorldHelpers({ db: w.db })(otherUserId);
     expect(
       fn(memberPortal, "deleteSubmission")(otherCtx, {
@@ -527,9 +531,10 @@ describe("approvals.approve", () => {
     const v = vouchers[0];
     expect(v.type).toBe("member_receipt");
     expect(v.total).toBe(6000);
+    // The credit line carries the payment mode as its note (lib.postMemberReceipt).
     expect(v.lines).toEqual([
       { accountId: w.bankId, debit: 6000, credit: 0 },
-      { accountId: w.receivableId, debit: 0, credit: 6000 },
+      { accountId: w.receivableId, debit: 0, credit: 6000, note: "cheque" },
     ]);
 
     const bill1 = await w.db.get("bills", w.bill1);
