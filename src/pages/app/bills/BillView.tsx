@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
 import { billPdf, billPrint, billWord, periodLabelLong, type LegacyBillData } from "@/lib/billDoc";
+import { amountUpiUri, memberUpiUri, preloadQrImage } from "@/lib/upiQr";
 import { amountInWords } from "@/lib/amountWords";
 import { formatDate } from "@/lib/format";
 import { ArrowLeft, Download, FileText, Printer } from "lucide-react";
@@ -74,10 +75,28 @@ export default function BillView() {
     arrears,
     totalDue: currentCharges + arrears,
     paidAmount: bill.paidAmount,
+    // Bill QR: pays this bill's exact due amount into the society's UPI ID,
+    // tagged with the flat so the office can match the payment.
+    upi: society.upiVpa
+      ? {
+          uri: memberUpiUri({
+            payeeName: society.name,
+            vpa: society.upiVpa,
+            flat: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
+            code: m?.code,
+          }),
+          amount: currentCharges + arrears,
+        }
+      : undefined,
   };
 
-  const doExport = (kind: "pdf" | "word" | "print") => {
+  const doExport = async (kind: "pdf" | "word" | "print") => {
     try {
+      // Word/print embed the QR as an image — cache it before rendering.
+      // (The PDF path draws the QR synchronously from the module matrix.)
+      if (data.upi && kind !== "pdf") {
+        await preloadQrImage(amountUpiUri(data.upi.uri, data.upi.amount));
+      }
       if (kind === "pdf") billPdf(data, `${bill.billNo}.pdf`);
       else if (kind === "word") billWord(data, `${bill.billNo}.doc`);
       else billPrint(data);

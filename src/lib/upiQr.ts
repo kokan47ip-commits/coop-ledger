@@ -86,13 +86,6 @@ let cachedImage: HTMLImageElement | null = null;
 let cachedPayload: string | null = null;
 let preloadPromise: Promise<void> | null = null;
 
-function makeCanvas(px: number): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = px;
-  c.height = px;
-  return c;
-}
-
 async function payloadImage(payload: string): Promise<HTMLImageElement> {
   if (cachedImage && cachedPayload === payload) return cachedImage;
   const dataUrl = await qrDataUrl(payload, 264);
