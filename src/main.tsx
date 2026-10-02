@@ -278,3 +278,17 @@ createRoot(document.getElementById("root")!).render(
     </RootErrorBoundary>
   </StrictMode>,
 );
+
+/**
+ * PWA installability: Chromium only fires the install prompt when a service
+ * worker with a fetch handler is registered. This SW is a deliberate network
+ * passthrough — no offline shell, no caching — so it can never serve stale
+ * app code; the platform's redeploy flow stays the single source of truth.
+ */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Installability is best-effort; the app works without it.
+    });
+  });
+}

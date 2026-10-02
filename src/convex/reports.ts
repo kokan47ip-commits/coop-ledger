@@ -1,5 +1,5 @@
 import { Doc, Id } from "./_generated/dataModel";
-import { query, QueryCtx } from "./_generated/server";
+import { QueryCtx } from "./_generated/server";
 import { fyStartDateString, isCarriedOpeningLine, requireSociety } from "./lib";
 
 export type LedgerRow = {

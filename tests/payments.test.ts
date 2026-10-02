@@ -812,3 +812,188 @@ describe("qrMatrix", () => {
     expect(a).not.toEqual(b);
   });
 });
+
+/* -------------------- carried opening-balance line helper ------------------ */
+
+describe("isCarriedOpeningLine", () => {
+  const receivable = "accR";
+
+  test("recognises the generated arrears / credit-balance wording", () => {
+    expect(
+      isCarriedOpeningLine(
+        { name: "Arrears — opening balance", accountId: receivable },
+        receivable,
+      ),
+    ).toBe(true);
+    expect(
+      isCarriedOpeningLine(
+        { name: "Credit balance — advance adjusted", accountId: "accX" },
+        receivable,
+      ),
+    ).toBe(true);
+  });
+
+  test("never matches interest / late-fee lines or normal charge heads", () => {
+    expect(
+      isCarriedOpeningLine(
+        { name: "Interest on arrears @ 1.5% p.m.", accountId: "accI" },
+        receivable,
+      ),
+    ).toBe(false);
+    expect(
+      isCarriedOpeningLine(
+        { name: "Parking Charges", accountId: "accI", tariffId: "t1" },
+        receivable,
+      ),
+    ).toBe(false);
+  });
+
+  test("account fallback catches renamed receivable-only lines; tariffed lines stay", () => {
+    expect(
+      isCarriedOpeningLine({ name: "Old wording", accountId: receivable }, receivable),
+    ).toBe(true);
+    expect(
+      isCarriedOpeningLine(
+        { name: "Adjusted", accountId: receivable, tariffId: "t1" },
+        receivable,
+      ),
+    ).toBe(false);
+  });
+});
+
+/* --------- opening balance is counted once (April-2026 total-due bug) ------- */
+
+type LedgerRowT = {
+  voucherNo: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  heads?: { name: string; amount: number }[];
+};
+
+/**
+ * Member with Rs.100 opening + an April-2026 bill whose lines are the carried
+ * opening (100) plus charges (50). `staleCarried` simulates the carried line
+ * pointing at an OLD receivable account (the account was changed after the
+ * bills were generated); `billTotal` simulates older double-stored totals.
+ */
+async function seedOpeningWorld(
+  opts: { staleCarried?: boolean; billTotal?: number } = {},
+) {
+  const { db } = makeDb();
+  const ctxFor = buildWorldHelpers({ db });
+  const today = new Date().toISOString().slice(0, 10);
+  const fyStart = `${today.slice(0, 8)}01`;
+  const ownerUserId = await db.insert("users", { email: "owner@x.com" });
+  const societyId = await db.insert("societies", {
+    name: "Test CHS",
+    fyStartMonth: 4,
+    fyStartDate: fyStart,
+    fyYear: "2026-27",
+    createdBy: ownerUserId,
+  });
+  const receivableId = await db.insert("accounts", {
+    societyId,
+    kind: "receivable",
+    code: "R1",
+    name: "Members Receivable",
+  });
+  await db.patch(societyId, { receivableAccountId: receivableId });
+  const memberId = await db.insert("members", {
+    societyId,
+    name: "Ravi Kumar",
+    wing: "A",
+    flatNo: "101",
+    code: "A-101",
+    isActive: true,
+    openingBalance: 100,
+    openingDate: "2026-04-01",
+  });
+  const memberUserId = await db.insert("users", { email: "ravi@x.com" });
+  await db.insert("membersAccess", {
+    societyId,
+    userId: memberUserId,
+    email: "ravi@x.com",
+    role: "member",
+    memberId,
+    grantedBy: ownerUserId,
+    createdAt: 0,
+  });
+  await db.insert("bills", {
+    societyId,
+    memberId,
+    billNo: "BILL-0001",
+    period: "2026-04",
+    issueDate: "2026-04-01",
+    dueDate: "2026-04-15",
+    lines: [
+      {
+        accountId: opts.staleCarried ? "accStale" : receivableId,
+        name: "Arrears — opening balance",
+        amount: 100,
+      },
+      { accountId: "accIncome", name: "Maintenance Charges", amount: 50 },
+    ],
+    total: opts.billTotal ?? 150,
+    paidAmount: 0,
+    status: "unpaid",
+  });
+  return { societyId, receivableId, memberCtx: ctxFor(memberUserId) };
+}
+
+describe("opening balance counted once in ledger and outstanding", () => {
+  test("healthy data: opening 100 Dr + April bill 50 Dr → closing 150, outstanding 150", async () => {
+    const w = await seedOpeningWorld();
+    const rows = (await fn(memberPortal, "myLedger")(w.memberCtx, {
+      societyId: w.societyId,
+      fromDate: "2026-04-01",
+      toDate: "2026-04-30",
+    })) as LedgerRowT[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.voucherNo).toBe("OPENING");
+    expect(rows[0]!.debit).toBe(100);
+    expect(rows[0]!.balance).toBe(100);
+    expect(rows[1]!.voucherNo).toBe("BILL-0001");
+    expect(rows[1]!.debit).toBe(50); // NOT 150 — the carried line is not debited twice
+    expect(rows[1]!.heads).toEqual([{ name: "Maintenance Charges", amount: 50 }]);
+    expect(rows[1]!.balance).toBe(150);
+    const info = (await fn(memberPortal, "myInfo")(w.memberCtx, {
+      societyId: w.societyId,
+    })) as { totals: { totalBilled: number; totalPaid: number; outstanding: number } } | null;
+    expect(info?.totals.totalBilled).toBe(50);
+    expect(info?.totals.outstanding).toBe(150);
+  });
+
+  test("receivable account changed after generation: name-based check keeps total 150", async () => {
+    const w = await seedOpeningWorld({ staleCarried: true });
+    const rows = (await fn(memberPortal, "myLedger")(w.memberCtx, {
+      societyId: w.societyId,
+      fromDate: "2026-04-01",
+      toDate: "2026-04-30",
+    })) as LedgerRowT[];
+    expect(rows).toHaveLength(2);
+    expect(rows[1]!.debit).toBe(50); // 100 (opening) + 150 (bill) would be the bug
+    expect(rows[1]!.balance).toBe(150);
+    const info = (await fn(memberPortal, "myInfo")(w.memberCtx, {
+      societyId: w.societyId,
+    })) as { totals: { totalBilled: number; outstanding: number } } | null;
+    expect(info?.totals.totalBilled).toBe(50);
+    expect(info?.totals.outstanding).toBe(150);
+  });
+
+  test("older double-stored total (250): ledger debits charges only → closing 150", async () => {
+    const w = await seedOpeningWorld({ billTotal: 250 });
+    const rows = (await fn(memberPortal, "myLedger")(w.memberCtx, {
+      societyId: w.societyId,
+      fromDate: "2026-04-01",
+      toDate: "2026-04-30",
+    })) as LedgerRowT[];
+    expect(rows[1]!.debit).toBe(50);
+    expect(rows[1]!.balance).toBe(150);
+    const info = (await fn(memberPortal, "myInfo")(w.memberCtx, {
+      societyId: w.societyId,
+    })) as { totals: { totalBilled: number; outstanding: number } } | null;
+    expect(info?.totals.totalBilled).toBe(50);
+    expect(info?.totals.outstanding).toBe(150);
+  });
+});
