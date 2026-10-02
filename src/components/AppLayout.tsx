@@ -42,6 +42,7 @@ import {
   KeyRound,
   LogIn,
   MessageCircle,
+  Printer,
   LogOut,
   Plus,
   Receipt,
@@ -99,6 +100,7 @@ const NAV: NavGroup[] = [
       { to: "/app/payment-approvals", label: "Payment Approvals", icon: <ClipboardCheck className="size-4" /> },
       { to: "/app/journal", label: "Journal", icon: <FileText className="size-4" /> },
       { to: "/app/bills", label: "Bill Register", icon: <FileSpreadsheet className="size-4" /> },
+      { to: "/app/printing-hub", label: "Printing Hub", icon: <Printer className="size-4" /> },
     ],
   },
   {
@@ -142,6 +144,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/payment": "Payment Voucher",
   "/app/journal": "Journal Voucher",
   "/app/bills": "Bill Register",
+  "/app/printing-hub": "Printing Hub",
   "/app/member-ledger": "Member Ledger",
   "/app/general-ledger": "General Ledger",
   "/app/cash-book": "Cash Book",

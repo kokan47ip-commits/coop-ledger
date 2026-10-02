@@ -194,17 +194,28 @@ function downloadBytes(bytes: Uint8Array, filename: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-/** `billPdf` without the download — the caller mails or stores the bytes. */
-export function billPdfBytes(data: LegacyBillData): Uint8Array {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const W = doc.internal.pageSize.getWidth();
-  const H = doc.internal.pageSize.getHeight();
-  const x = 38;
-  const w = W - x * 2;
-  const boxTop = 30;
-  const footerH = 68;
-  const totalsH = 84;
-  const boxBottom = H - 138;
+/** Geometry of one drawn bill box, returned to callers for stacking. */
+export type BillBoxGeometry = { top: number; bottom: number };
+
+/**
+ * Draw one complete legacy bill box (letterhead → totals → notes → signature
+ * → frame) at (x, y) with the box height h. `scale` (0.5–1) compresses every
+ * fixed offset and font so two bills fit one A4 page; the layout logic is
+ * identical at either size. Returns the box's top/bottom y.
+ */
+function drawBillBox(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+  scale: number,
+): BillBoxGeometry {
+  const boxTop = top;
+  const boxBottom = top + h;
+  const footerH = 68 * scale;
+  const totalsH = 84 * scale;
   const footerTop = boxBottom - footerH;
   const totalsTop = footerTop - totalsH;
   const labelX = x + w * 0.56;
@@ -392,13 +403,400 @@ export function billPdfBytes(data: LegacyBillData): Uint8Array {
   stroke(doc, ACCENT);
   doc.setLineWidth(1);
   doc.rect(x, boxTop, w, boxBottom - boxTop);
+
+  return { top: boxTop, bottom: boxBottom };
+}
+
+/** `billPdf` without the download — the caller mails or stores the bytes. */
+export function billPdfBytes(data: LegacyBillData): Uint8Array {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const x = 38;
+  const w = W - x * 2;
+  drawBillBox(doc, data, x, 30, w, H - 168, 1);
+  // Tear line below the bill box (single-bill layout only).
   stroke(doc, HAIRLINE);
   doc.setLineWidth(0.8);
   doc.setLineDashPattern([5, 4], 0);
-  doc.line(x, boxBottom + 30, x + w, boxBottom + 30);
+  doc.line(x, H - 138 + 30, x + w, H - 138 + 30);
   doc.setLineDashPattern([], 0);
 
   return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+/* ------------------------------------------------------------------ */
+/* Batch layouts — two per A4 page, and bill+receipt combos            */
+/* ------------------------------------------------------------------ */
+
+export type BillBatchItem = { data: LegacyBillData; upiPayload?: string | null };
+
+/** One compact half-page receipt box (gold rule + tear line omitted). */
+function drawReceiptBoxCompact(
+  doc: jsPDF,
+  data: LegacyReceiptData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): number {
+  const bottom = top + h;
+  let cy = drawLetterheadCompact(doc, data.society, x, w, top) + 6;
+  const labelX = x + w * 0.44;
+  const valX = x + w - 12;
+
+  // Title band with amount
+  fill(doc, TINT);
+  doc.rect(x, cy, w, 22, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  ink(doc, ACCENT);
+  doc.text("R E C E I P T", x + 12, cy + 15);
+  doc.text(`Rs. ${money(data.amount)}/-`, valX, cy + 15, { align: "right" });
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  cy += 22 + 12;
+
+  const line = (label: string, value: string, bold = false) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    ink(doc, MUTED);
+    doc.text(label, x + 12, cy);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    ink(doc, INK);
+    doc.text(value, labelX, cy, { maxWidth: valX - labelX - 6 });
+    cy += 15;
+  };
+  line("Receipt No.:", String(data.receiptNo), true);
+  line("Receipt Date:", formatDate(data.receiptDate));
+  line("Received from:", data.memberName.toUpperCase(), true);
+  if (data.flatNo) line("Flat:", data.flatNo);
+  line("Being payment of:", data.purpose);
+  const modeTxt = [data.reference, data.mode].filter(Boolean).join(" · ");
+  if (modeTxt) line("Mode / Ref:", modeTxt);
+  if (data.copyLabel) line("Copy:", data.copyLabel.toUpperCase());
+
+  // Amount in words
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8.4);
+  ink(doc, ACCENT);
+  doc.text(rupeesInWords(data.amount), x + 12, cy + 4, { maxWidth: w - 24 });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+
+  // Signature pinned to the box foot
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, ACCENT);
+  doc.text(`For ${data.society.name}`, valX, bottom - 34, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.6);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + w * 0.62, bottom - 16, valX, bottom - 16);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  ink(doc, MUTED);
+  doc.text("SECRETARY", valX, bottom - 6, { align: "right" });
+
+  stroke(doc, ACCENT);
+  doc.setLineWidth(1);
+  doc.rect(x, top, w, h);
+  return bottom;
+}
+
+/** Compact letterhead for half-page boxes — smaller name, tighter band. */
+function drawLetterheadCompact(doc: jsPDF, s: SocietyHeader, x: number, w: number, top: number): number {
+  const bandH = 44;
+  fill(doc, ACCENT);
+  doc.rect(x, top, w, bandH, "F");
+  const cx = x + w / 2;
+  ink(doc, WHITE);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text(s.name.toUpperCase(), cx, top + 19, { align: "center", maxWidth: w - 30 });
+  const sub = [s.registrationNo, s.address].filter(Boolean).join(" · ");
+  if (sub) {
+    ink(doc, [199, 210, 254]);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.2);
+    doc.text(sub, cx, top + 32, { align: "center", maxWidth: w - 36 });
+  }
+  ink(doc, INK);
+  return top + bandH;
+}
+
+/** Compact half-page bill box — same fields as the full bill, tighter. */
+function drawBillBoxCompact(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): number {
+  const bottom = top + h;
+  let cy = drawLetterheadCompact(doc, data.society, x, w, top) + 6;
+  const labelX = x + w * 0.5;
+  const valX = x + w - 12;
+
+  // Title band
+  fill(doc, TINT);
+  doc.rect(x, cy, w, 20, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  ink(doc, ACCENT);
+  doc.text(`BILL FOR ${data.periodLabel.toUpperCase()}`, x + 12, cy + 13.5);
+  doc.text(`Bill No. ${String(data.billNo)}`, valX, cy + 13.5, { align: "right" });
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  cy += 20 + 10;
+
+  const line = (label: string, value: string, bold = false) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    ink(doc, MUTED);
+    doc.text(label, x + 12, cy);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    ink(doc, INK);
+    doc.text(value, labelX, cy, { maxWidth: valX - labelX - 6 });
+    cy += 14;
+  };
+  line("Name:", data.memberName.toUpperCase(), true);
+  if (data.flatNo) line("Flat:", data.flatNo);
+  line("Bill Date:", formatDate(data.billDate));
+  line("Due Date:", formatDate(data.dueDate));
+  cy += 2;
+
+  // Particulars rows (charges only — arrears shown in the totals block)
+  const charges = data.lines;
+  const rowH = 13;
+  const maxRows = Math.max(1, Math.floor((bottom - cy - 64) / rowH) - 1);
+  charges.slice(0, maxRows).forEach((l, i) => {
+    if (i % 2 === 1) {
+      fill(doc, TINT_ALT);
+      doc.rect(x + 8, cy - 2, w - 16, rowH, "F");
+    }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.8);
+    ink(doc, INK);
+    doc.text(`${l.serial ?? i + 1}. ${l.name.toUpperCase()}`, x + 12, cy + 7, {
+      maxWidth: labelX - x - 26,
+    });
+    doc.text(money(l.amount), valX, cy + 7, { align: "right" });
+    cy += rowH;
+  });
+  if (charges.length > maxRows) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    ink(doc, MUTED);
+    doc.text(`+ ${charges.length - maxRows} more head(s) — see the full bill`, x + 12, cy + 5);
+    cy += rowH;
+  }
+
+  // Totals pinned to the box foot
+  const totY = bottom - 66;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text("Total:", labelX, totY, { align: "right" });
+  doc.text(money(data.total), valX, totY, { align: "right" });
+  doc.text("Arrears:", labelX, totY + 13, { align: "right" });
+  doc.text(money(data.arrears), valX, totY + 13, { align: "right" });
+  fill(doc, ACCENT);
+  doc.rect(labelX - 14, totY + 19, valX - labelX + 26, 20, "F");
+  ink(doc, WHITE);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.text("Total Due:", labelX, totY + 33, { align: "right" });
+  doc.text(money(data.totalDue), valX, totY + 33, { align: "right" });
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+
+  stroke(doc, ACCENT);
+  doc.setLineWidth(1);
+  doc.rect(x, top, w, h);
+  return bottom;
+}
+
+/** Compact half-page voucher box — header band, lines table, signatures. */
+export function drawVoucherBoxCompact(
+  doc: jsPDF,
+  data: VoucherDocData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): number {
+  const bottom = top + h;
+  let cy = drawLetterheadCompact(doc, data.society, x, w, top) + 6;
+  const valX = x + w - 12;
+
+  fill(doc, TINT);
+  doc.rect(x, cy, w, 20, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  ink(doc, ACCENT);
+  doc.text(data.title.toUpperCase(), x + 12, cy + 13.5);
+  doc.text(`No. ${data.voucherNo}`, valX, cy + 13.5, { align: "right" });
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  cy += 20 + 10;
+
+  const line = (label: string, value: string, bold = false) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    ink(doc, MUTED);
+    doc.text(label, x + 12, cy);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    ink(doc, INK);
+    doc.text(value, x + 92, cy, { maxWidth: valX - x - 104 });
+    cy += 14;
+  };
+  line("Voucher Date:", formatDate(data.voucherDate));
+  const partyLabel = data.title.startsWith("Payment")
+    ? "Paid to"
+    : data.title.startsWith("Receipt")
+      ? "Received from"
+      : "Party";
+  if (data.party) line(`${partyLabel}:`, data.party.toUpperCase(), true);
+  const chequeBits = [
+    data.chequeNo ? `Cheque No.~ ${data.chequeNo}` : "",
+    data.chequeDate ? `dt ${formatDate(data.chequeDate)}` : "",
+    data.bankName ?? "",
+    data.mode ? `Mode: ${data.mode}` : "",
+  ].filter(Boolean);
+  if (chequeBits.length) line("Details:", chequeBits.join(" · "));
+  cy += 2;
+
+  // Lines table with TOTAL row
+  const { rows } = voucherLinesTable(data);
+  const colDebit = x + w - 130;
+  const colCredit = valX;
+  const rowH = 13;
+  const maxRows = Math.max(1, Math.floor((bottom - cy - 40) / rowH) - 1);
+  rows.slice(0, maxRows).forEach((r, i) => {
+    const isTotal = String(r[1]) === "TOTAL";
+    if (isTotal || i % 2 === 1) {
+      fill(doc, isTotal ? TINT : TINT_ALT);
+      doc.rect(x + 8, cy - 2, w - 16, rowH, "F");
+    }
+    doc.setFont("helvetica", isTotal ? "bold" : "normal");
+    doc.setFontSize(8.8);
+    ink(doc, isTotal ? ACCENT : INK);
+    const noteLines = String(r[1]).split("\n");
+    doc.text([String(r[0] ?? ""), noteLines[0] ?? ""].filter(Boolean).join(" "), x + 12, cy + 7, {
+      maxWidth: colDebit - x - 24,
+    });
+    doc.text(String(r[2] ?? ""), colDebit, cy + 7, { align: "right" });
+    doc.text(String(r[3] ?? ""), colCredit, cy + 7, { align: "right" });
+    cy += rowH;
+  });
+  if (rows.length > maxRows) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    ink(doc, MUTED);
+    doc.text(`+ ${rows.length - maxRows} more line(s) — see the full voucher`, x + 12, cy + 5);
+    cy += rowH;
+  }
+  doc.setFont("helvetica", "normal");
+
+  // Signature block pinned to the box foot
+  const sigY = bottom - 30;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  ink(doc, ACCENT);
+  doc.text(`For ${data.society.name}`, valX, sigY, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.6);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + 12, sigY + 16, x + w * 0.32, sigY + 16);
+  doc.line(x + w * 0.58, sigY + 16, valX, sigY + 16);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  ink(doc, MUTED);
+  doc.text("Receiver's signature", x + 12, sigY + 26);
+  doc.text("Authorised signatory", x + w * 0.58, sigY + 26);
+
+  stroke(doc, ACCENT);
+  doc.setLineWidth(1);
+  doc.rect(x, top, w, h);
+  return bottom;
+}
+
+/**
+ * Batch of bills in one PDF. With `twoUp` each A4 page carries two compact
+ * bill boxes separated by a dashed cut line; otherwise one full bill per page.
+ */
+export function billsPdfBatch(items: BillBatchItem[], filename: string, twoUp = false) {
+  downloadBytes(billsPdfBatchBytes(items, twoUp), filename, "application/pdf");
+}
+
+/** `billsPdfBatch` without the download — the caller mails or stores the bytes. */
+export function billsPdfBatchBytes(items: BillBatchItem[], twoUp = false): Uint8Array {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const x = 38;
+  const w = W - x * 2;
+  const perPage = twoUp ? 2 : 1;
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 26 : H / 2 + 12) : 30);
+  const boxH = twoUp ? H / 2 - 22 : H - 60;
+  let slot = 0;
+  for (const item of items) {
+    if (slot >= perPage) {
+      doc.addPage();
+      slot = 0;
+    }
+    if (twoUp && slot === 1) {
+      stroke(doc, HAIRLINE);
+      doc.setLineWidth(0.8);
+      doc.setLineDashPattern([5, 4], 0);
+      doc.line(x, H / 2, x + w, H / 2);
+      doc.setLineDashPattern([], 0);
+    }
+    if (twoUp) drawBillBoxCompact(doc, item.data, x, yFor(slot), w, boxH);
+    else drawBillBox(doc, item.data, x, yFor(slot), w, boxH, 1);
+    slot++;
+  }
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+/**
+ * Bill + its receipt on ONE A4 page: full-width bill box on top, its matching
+ * receipt box below, separated by a dashed cut line. Both are drawn compact
+ * so the pair always fits a single sheet.
+ */
+export function billWithReceiptPdfBytes(
+  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+): Uint8Array {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const x = 38;
+  const w = W - x * 2;
+  let first = true;
+  for (const p of pairs) {
+    if (!first) doc.addPage();
+    first = false;
+    const half = (H - 90) / 2;
+    drawBillBoxCompact(doc, p.bill, x, 26, w, half);
+    stroke(doc, HAIRLINE);
+    doc.setLineWidth(0.8);
+    doc.setLineDashPattern([5, 4], 0);
+    doc.line(x, 26 + half + 8, x + w, 26 + half + 8);
+    doc.setLineDashPattern([], 0);
+    drawReceiptBoxCompact(doc, p.receipt, x, 26 + half + 16, w, half);
+  }
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+/** Download the bill+receipt combo PDF. */
+export function billWithReceiptPdf(
+  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+  filename: string,
+) {
+  downloadBytes(billWithReceiptPdfBytes(pairs), filename, "application/pdf");
 }
 
 /** One bordered receipt box drawn at (x, y); returns the box's bottom y. */
@@ -556,8 +954,8 @@ export function receiptPdf(data: LegacyReceiptData, filename: string) {
 export type ReceiptBatchItem = { data: LegacyReceiptData; copyLabel?: string };
 
 /**
- * Batch of receipts in one PDF. With `twoUp` each A4 page carries two receipt
- * boxes separated by a dashed cut line; otherwise one receipt per page.
+ * Batch of receipts in one PDF. With `twoUp` each A4 page carries two compact
+ * receipt boxes separated by a dashed cut line; otherwise one receipt per page.
  */
 export function receiptsPdfBatch(items: ReceiptBatchItem[], filename: string, twoUp = false) {
   downloadBytes(receiptsPdfBatchBytes(items, twoUp), filename, "application/pdf");
@@ -567,32 +965,68 @@ export function receiptsPdfBatch(items: ReceiptBatchItem[], filename: string, tw
 export function receiptsPdfBatchBytes(items: ReceiptBatchItem[], twoUp = false): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
   const x = 38;
   const w = W - x * 2;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 44 : 424) : 56);
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 26 : H / 2 + 12) : 56);
+  const boxH = twoUp ? H / 2 - 22 : H - 112;
   let slot = 0;
-  let lastBottom = 0;
   for (const item of items) {
     if (slot >= perPage) {
       doc.addPage();
       slot = 0;
     }
     if (twoUp && slot === 1) {
-      const cut = Math.round((lastBottom + yFor(1)) / 2);
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
-      doc.line(x, cut, x + w, cut);
+      doc.line(x, H / 2, x + w, H / 2);
       doc.setLineDashPattern([], 0);
     }
-    lastBottom = drawReceiptBox(
-      doc,
-      { ...item.data, copyLabel: item.copyLabel ?? item.data.copyLabel },
-      x,
-      yFor(slot),
-      w,
-    );
+    const d = { ...item.data, copyLabel: item.copyLabel ?? item.data.copyLabel };
+    if (twoUp) drawReceiptBoxCompact(doc, d, x, yFor(slot), w, boxH);
+    else drawReceiptBox(doc, d, x, yFor(slot), w);
+    slot++;
+  }
+  return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+}
+
+export type VoucherBatchItem = { data: VoucherDocData };
+
+/**
+ * Batch of vouchers in one PDF. With `twoUp` each A4 page carries two compact
+ * voucher boxes separated by a dashed cut line; otherwise one voucher per page.
+ */
+export function vouchersPdfBatch(items: VoucherBatchItem[], filename: string, twoUp = false) {
+  downloadBytes(vouchersPdfBatchBytes(items, twoUp), filename, "application/pdf");
+}
+
+/** `vouchersPdfBatch` without the download — the caller mails the bytes. */
+export function vouchersPdfBatchBytes(items: VoucherBatchItem[], twoUp = false): Uint8Array {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const x = 38;
+  const w = W - x * 2;
+  const perPage = twoUp ? 2 : 1;
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 26 : H / 2 + 12) : 30);
+  const boxH = twoUp ? H / 2 - 22 : H - 60;
+  let slot = 0;
+  for (const item of items) {
+    if (slot >= perPage) {
+      doc.addPage();
+      slot = 0;
+    }
+    if (twoUp && slot === 1) {
+      stroke(doc, HAIRLINE);
+      doc.setLineWidth(0.8);
+      doc.setLineDashPattern([5, 4], 0);
+      doc.line(x, H / 2, x + w, H / 2);
+      doc.setLineDashPattern([], 0);
+    }
+    if (twoUp) drawVoucherBoxCompact(doc, item.data, x, yFor(slot), w, boxH);
+    else drawVoucherBoxFull(doc, item.data, x, yFor(slot), w);
     slot++;
   }
   return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
@@ -761,6 +1195,53 @@ export function receiptsWordBatch(items: ReceiptWordItem[], filename: string): v
   downloadDoc(html, filename);
 }
 
+/** Word page break between printed pairs (two boxes per A4). */
+const WORD_PAGE_BREAK =
+  '<br clear=all style="mso-special-character:line-break;page-break-before:always">';
+
+/** Join document blocks two-per-page: a hard page break after every 2nd. */
+function joinTwoUp(blocks: string[]): string {
+  return blocks
+    .map((b, i) => b + ((i + 1) % 2 === 0 && i < blocks.length - 1 ? WORD_PAGE_BREAK : '<div class="tear"></div>'))
+    .join("");
+}
+
+function batchWordDoc(title: string, body: string): void {
+  downloadDoc(
+    `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head><meta charset="utf-8"><title>${esc(title)}</title><style>${docCss}
+  @page { size: A4; margin: 1cm; }
+  .wrap { page-break-inside: avoid; }
+</style></head>
+<body>${body}<div class="tear"></div></body></html>`,
+    `${title}.doc`,
+  );
+}
+
+/** Batch of bills in one Word document (two per page when twoUp). */
+export function billsWordBatch(items: BillBatchItem[], filename: string, twoUp = false): void {
+  const blocks = items.map((it) => billHtml(it.data));
+  batchWordDoc(filename, twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'));
+}
+
+/** Batch of vouchers in one Word document (two per page when twoUp). */
+export function vouchersWordBatch(items: VoucherBatchItem[], filename: string, twoUp = false): void {
+  const blocks = items.map((it) => voucherHtml(it.data));
+  batchWordDoc(filename, twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'));
+}
+
+/** Bill + its receipt together, one pair per page. */
+export function billWithReceiptWord(
+  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+  filename: string,
+): void {
+  const blocks = pairs.map(
+    (p) =>
+      `${billHtml(p.bill).replace(/<div class="tear"><\/div>\s*$/, "")}<div class="tear"></div>${receiptHtml(p.receipt).replace(/<div class="tear"><\/div>\s*$/, "")}`,
+  );
+  batchWordDoc(filename, blocks.join(WORD_PAGE_BREAK));
+}
+
 function downloadDoc(html: string, filename: string): void {
   const blob = new Blob(["\ufeff", html], { type: "application/msword" });
   const url = URL.createObjectURL(blob);
@@ -885,14 +1366,10 @@ function voucherLinesTable(data: VoucherDocData): { head: string[]; rows: string
   return { head, rows, totDr, totCr };
 }
 
-/** `voucherPdf` without the download — the caller mails or stores the bytes. */
-export function voucherPdfBytes(data: VoucherDocData): Uint8Array {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const W = doc.internal.pageSize.getWidth();
+/** Full-page bordered voucher box (letterhead, lines, words, signatures). */
+function drawVoucherBoxFull(doc: jsPDF, data: VoucherDocData, x: number, top: number, w: number): void {
+  const boxTop = top;
   const H = doc.internal.pageSize.getHeight();
-  const x = 38;
-  const w = W - x * 2;
-  const boxTop = 30;
   const boxBottom = H - 130;
   const rightLabel = x + w * 0.6;
   const valX = x + w - 12;
@@ -1061,6 +1538,15 @@ export function voucherPdfBytes(data: VoucherDocData): Uint8Array {
   stroke(doc, ACCENT);
   doc.setLineWidth(1);
   doc.rect(x, boxTop, w, boxBottom - boxTop);
+}
+
+/** `voucherPdf` without the download — the caller mails or stores the bytes. */
+export function voucherPdfBytes(data: VoucherDocData): Uint8Array {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const x = 38;
+  const w = W - x * 2;
+  drawVoucherBoxFull(doc, data, x, 30, w);
   return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
 }
 
@@ -1131,4 +1617,66 @@ export function voucherPrint(data: VoucherDocData): void {
   w.document.close();
   w.focus();
   setTimeout(() => w.print(), 300);
+}
+
+/** Shared print-window helper for batch/combo documents. */
+function printWindowHtml(title: string, body: string) {
+  const w = window.open("", "_blank", "width=860,height=900");
+  if (!w) return;
+  w.document.write(
+    `<html><head><title>${esc(title)}</title><style>${docCss}
+  @page { size: A4; margin: 10mm; }
+  .wrap { page-break-inside: avoid; }
+  .tear { border-bottom:2px dashed #94a3b8; margin:14px auto; max-width:720px; }
+  @media print { body { margin: 8mm 10mm; } }
+  </style></head><body>${body}</body></html>`,
+  );
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 300);
+}
+
+const stripTear = (html: string) => html.replace(/<div class="tear"><\/div>\s*$/, "");
+
+/** Print a batch of bills (two per A4 page when twoUp). */
+export function billsPrintBatch(items: BillBatchItem[], twoUp = false): void {
+  const blocks = items.map((it) => stripTear(billHtml(it.data)));
+  printWindowHtml(
+    "Bills",
+    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+  );
+}
+
+/** Print a batch of receipts (two per A4 page when twoUp). */
+export function receiptsPrintBatch(items: ReceiptBatchItem[], twoUp = false): void {
+  const blocks = items.map((it) =>
+    receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }),
+  );
+  printWindowHtml(
+    "Receipts",
+    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+  );
+}
+
+/** Print a batch of vouchers (two per A4 page when twoUp). */
+export function vouchersPrintBatch(items: VoucherBatchItem[], twoUp = false): void {
+  const blocks = items.map((it) => stripTear(voucherHtml(it.data)));
+  printWindowHtml(
+    "Vouchers",
+    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+  );
+}
+
+/** Print bill + receipt pairs — one combo (bill above receipt) per page. */
+export function billWithReceiptPrint(
+  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+): void {
+  const blocks = pairs.map(
+    (p) =>
+      `${stripTear(billHtml(p.bill))}<div class="tear"></div>${stripTear(receiptHtml(p.receipt))}`,
+  );
+  printWindowHtml(
+    "Bills with Receipts",
+    blocks.join('<div style="page-break-before:always"></div>'),
+  );
 }

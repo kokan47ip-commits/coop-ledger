@@ -12,6 +12,7 @@ import {
   Home,
   Landmark,
   LayoutDashboard,
+  Printer,
   Receipt,
   ShieldCheck,
   TrendingUp,
@@ -37,6 +38,7 @@ export type MenuKey =
   | "payment-approvals"
   | "journal"
   | "bills"
+  | "printing-hub"
   | "member-ledger"
   | "general-ledger"
   | "cash-book"
@@ -85,6 +87,7 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "payment-approvals", label: "Payment Approvals", section: "Transactions", path: "/app/payment-approvals", icon: ClipboardCheck },
   { key: "journal", label: "Journal", section: "Transactions", path: "/app/journal", icon: FileText },
   { key: "bills", label: "Bill Register", section: "Transactions", path: "/app/bills", icon: FileSpreadsheet },
+  { key: "printing-hub", label: "Printing Hub", section: "Transactions", path: "/app/printing-hub", icon: Printer },
   { key: "member-ledger", label: "Member Ledger", section: "Reports", path: "/app/member-ledger", icon: Users },
   { key: "general-ledger", label: "General Ledger", section: "Reports", path: "/app/general-ledger", icon: BarChart3 },
   { key: "cash-book", label: "Cash Book", section: "Reports", path: "/app/cash-book", icon: Landmark },
