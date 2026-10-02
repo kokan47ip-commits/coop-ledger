@@ -9,7 +9,7 @@ import {
 import { IconTile } from "@/components/PageParts";
 import { memberUpiUri, qrToCanvas } from "@/lib/upiQr";
 import { formatMoney } from "@/lib/format";
-import { Download, Printer, QrCode } from "lucide-react";
+import { Download, Printer, QrCode, Smartphone } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
 /** Minimal HTML escape for the print window (names/VPA are user-controlled). */
@@ -79,6 +79,15 @@ export default function MemberQrCard({
     );
   }
 
+  // Deep-link into the device's UPI chooser: navigating to the upi:// URI
+  // makes Android/iOS pop up every INSTALLED UPI app (GPay, PhonePe, Paytm…)
+  // with the society's VPA and the member's flat note pre-filled — the member
+  // just picks an app and enters the amount. Desktop browsers have no UPI
+  // handler, so the QR above stays the way to pay there.
+  const openUpiApp = () => {
+    window.location.href = uri;
+  };
+
   const download = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -130,7 +139,11 @@ export default function MemberQrCard({
               </CardDescription>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button size="sm" onClick={openUpiApp} title="Opens your installed UPI apps on mobile">
+              <Smartphone className="size-4" />
+              Pay via UPI app
+            </Button>
             <Button variant="outline" size="sm" onClick={download}>
               <Download className="size-4" />
               Download
@@ -160,6 +173,11 @@ export default function MemberQrCard({
           </p>
           <p className="break-all font-mono text-xs text-muted-foreground">
             {uri}
+          </p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            On a phone or tablet, tapping <span className="font-medium text-foreground">Pay via UPI app</span>
+            {" "}pops up all your installed UPI apps — pick one and confirm the payment. On a
+            computer, scan the QR instead.
           </p>
           {outstanding > 0.005 && (
             <p className="text-xs text-muted-foreground">

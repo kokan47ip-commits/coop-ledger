@@ -245,6 +245,8 @@ export const update = mutation({
     receivableAccountId: v.optional(v.id("accounts")),
     /** Society's UPI ID (VPA) for member QR codes and bill printing. */
     upiVpa: v.optional(v.string()),
+    /** Stable late-fee / interest rate (% per month) charged on arrears. */
+    lateFeePercent: v.optional(v.number()),
   },
   handler: async (ctx, { id, ...patch }) => {
     const userId = await requireUserId(ctx);

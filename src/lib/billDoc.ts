@@ -33,6 +33,12 @@ export type LegacyBillData = {
    * amount) plus the amount to prefill — drawn as a scannable QR on the bill.
    */
   upi?: { uri: string; amount: number };
+  /**
+   * The society's stable late-fee / interest rate (% per month) — drives the
+   * printed late-fee footer note. Falls back to the legacy 18% p.a. wording
+   * when the society has not set a rate.
+   */
+  lateFeePercent?: number;
 };
 
 export type LegacyReceiptData = {
@@ -52,11 +58,30 @@ export type LegacyReceiptData = {
   copyLabel?: string;
 };
 
-const FOOTER_NOTES = [
-  "PLEASE PAY BY CROSSED A/C. PAYEE CHEQUE ONLY.",
-  "THIS BILL IS PAYABLE ON OR BEFORE LAST DAY OF THE MONTH",
-  "LATEFEES @18% WILL BE CHARGED ON OVERDUE MONTH",
-];
+/** Trailing-zero-free rate text: 18 → "18", 19.5 → "19.5". */
+function rateText(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+}
+
+/**
+ * Footer notes for the printed bill. The late-fee line follows the society's
+ * STABLE rate setting (% per month) so it never drifts with bill generation —
+ * it changes only when the office edits the rate. Societies without a saved
+ * rate keep the legacy 18%-per-annum wording.
+ */
+export function footerNotes(lateFeePercent?: number): string[] {
+  const base = [
+    "PLEASE PAY BY CROSSED A/C. PAYEE CHEQUE ONLY.",
+    "THIS BILL IS PAYABLE ON OR BEFORE LAST DAY OF THE MONTH",
+  ];
+  if (lateFeePercent !== undefined && lateFeePercent > 0) {
+    return [
+      ...base,
+      `LATEFEES @${rateText(lateFeePercent * 12)}% P.A. (${rateText(lateFeePercent)}% P.M.) WILL BE CHARGED ON OVERDUE MONTH`,
+    ];
+  }
+  return [...base, "LATEFEES @18% WILL BE CHARGED ON OVERDUE MONTH"];
+}
 
 function money(n: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -346,7 +371,7 @@ export function billPdfBytes(data: LegacyBillData): Uint8Array {
     doc.setFontSize(7.6);
   }
   let ny = footerTop + 19;
-  for (const note of FOOTER_NOTES) {
+  for (const note of footerNotes(data.lateFeePercent)) {
     doc.text(note, x + (upi ? 70 : 12), ny);
     ny += 12;
   }
@@ -668,7 +693,7 @@ function billHtml(data: LegacyBillData): string {
   <table class="foot">
     <tr>
       ${upiImg && upi ? `<td style="width:66px;vertical-align:middle;text-align:center"><img src="${upiImg}" style="width:60px;height:60px" alt="UPI QR"><br><span style="font-size:6.5pt;font-weight:bold;color:#312e81">SCAN TO PAY RS ${money(upi.amount)}</span></td>` : ""}
-      <td style="width:50%">${FOOTER_NOTES.map(esc).join("<br>")}</td>
+      <td style="width:50%">${footerNotes(data.lateFeePercent).map(esc).join("<br>")}</td>
     <td class="sig">For ${esc(data.society.name)}<br><br><br><span class="sigspan">SECRETARY</span></td></tr>
   </table>
 </div><div class="tear"></div></body></html>`;

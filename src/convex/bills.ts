@@ -164,6 +164,9 @@ export const generate = mutation({
       .collect();
     let created = 0;
     let skipped = 0;
+    // Set when at least one bill actually carried a percent-mode interest
+    // line — the trigger to remember the rate as the society's stable setting.
+    let interestCharged = false;
     for (const memberId of memberIds) {
       const member = await ctx.db.get(memberId);
       if (!member || member.societyId !== societyId || !member.isActive) {
@@ -227,6 +230,7 @@ export const generate = mutation({
               ? Math.round(interestFixed)
               : 0
           : 0;
+      if (interestAmount > 0) interestCharged = true;
       const allLines =
         interestAmount > 0 && interestAccount
           ? [
@@ -288,6 +292,18 @@ export const generate = mutation({
         status: "unpaid",
       });
       created++;
+    }
+    // The late-fee rate is a STABLE society setting, not a per-generation
+    // choice: generating with a percent rate saves it on the society so the
+    // next generation (and the printed bill's footer note) uses the same
+    // value. It only changes when the user edits it — here or in the profile.
+    if (
+      interestCharged &&
+      interestMode === "percent" &&
+      interestRate > 0 &&
+      society.lateFeePercent !== interestRate
+    ) {
+      await ctx.db.patch(societyId, { lateFeePercent: interestRate });
     }
     return { created, skipped };
   },

@@ -78,6 +78,7 @@ export default function SocietyProfile() {
     fyStartDate: "",
     receivableAccountId: "",
     upiVpa: "",
+    lateFeePercent: "",
     chairmanMemberId: "",
     secretaryMemberId: "",
     treasurerMemberId: "",
@@ -101,6 +102,8 @@ export default function SocietyProfile() {
         fyStartDate: society.fyStartDate ?? "",
         receivableAccountId: society.receivableAccountId ?? "",
         upiVpa: society.upiVpa ?? "",
+        lateFeePercent:
+          society.lateFeePercent !== undefined ? String(society.lateFeePercent) : "",
         chairmanMemberId: society.chairmanMemberId ?? "",
         secretaryMemberId: society.secretaryMemberId ?? "",
         treasurerMemberId: society.treasurerMemberId ?? "",
@@ -188,6 +191,10 @@ export default function SocietyProfile() {
             ? (form.receivableAccountId as never)
             : undefined,
           upiVpa: form.upiVpa.trim() || undefined,
+          lateFeePercent:
+            form.lateFeePercent.trim() !== "" && Number(form.lateFeePercent) > 0
+              ? Number(form.lateFeePercent)
+              : undefined,
         });
         toast.success("Society profile updated");
       }
@@ -572,6 +579,31 @@ export default function SocietyProfile() {
                     bill carries a scannable QR that pays straight into this UPI ID. No gateway
                     or fees — money lands directly in your society's bank account. Verify with
                     a ₹1 transfer first.
+                  </p>
+                </div>
+              </section>
+              <section className="space-y-4">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Late fee / interest on overdue bills
+                </h3>
+                <div className="max-w-md space-y-2">
+                  <Label htmlFor="late-fee-percent">Late fee rate (% per month)</Label>
+                  <Input
+                    id="late-fee-percent"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.lateFeePercent}
+                    onChange={(e) => setForm({ ...form, lateFeePercent: e.target.value })}
+                    placeholder="e.g. 1.5"
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    A stable society setting — charged on the outstanding balance of overdue
+                    months when bills are generated (1.5 per month ≈ 18% per year). It does not
+                    change at bill generation unless you edit it here or in the Bill Register's
+                    generate dialog, which saves the rate it used. Printed bills show this rate
+                    in their footer. Leave blank for no saved rate.
                   </p>
                 </div>
               </section>

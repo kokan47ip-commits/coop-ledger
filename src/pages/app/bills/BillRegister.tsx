@@ -35,7 +35,7 @@ import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrin
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
 import { BookText, Download, FileText, HandCoins, Mail, MessageCircle, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -128,8 +128,17 @@ export default function BillRegister() {
   const [arrearsDate, setArrearsDate] = useState(effectiveFyPeriod(society).from);
   const [generating, setGenerating] = useState(false);
   // Interest / late fee on the outstanding balance, charged at generation.
+  // The rate STARTS from the society's saved late-fee setting so it is stable
+  // across months — generation with a percent rate saves it back, so it only
+  // changes when the user actually edits it (here or in Society Profile).
   const [interestMode, setInterestMode] = useState<"none" | "percent" | "fixed">("none");
   const [interestRate, setInterestRate] = useState("1.5");
+  const rateTouched = useRef(false);
+  useEffect(() => {
+    if (!rateTouched.current && society?.lateFeePercent !== undefined) {
+      setInterestRate(String(society.lateFeePercent));
+    }
+  }, [society?.lateFeePercent]);
   const [interestFixed, setInterestFixed] = useState("100");
   const [interestAccountId, setInterestAccountId] = useState("");
   // Replace existing bills of the period (applies new rates/amounts/interest).
@@ -329,6 +338,7 @@ export default function BillRegister() {
       arrears,
       totalDue: currentCharges + arrears,
       paidAmount: b.paidAmount,
+      lateFeePercent: society.lateFeePercent,
     };
   };
 
@@ -858,7 +868,10 @@ export default function BillRegister() {
               <div className="space-y-2">
                 <Label htmlFor="b-intrate">Rate (% per month)</Label>
                 <Input id="b-intrate" type="number" step="0.01" min="0" value={interestRate}
-                  onChange={(e) => setInterestRate(e.target.value)} />
+                  onChange={(e) => {
+                    rateTouched.current = true;
+                    setInterestRate(e.target.value);
+                  }} />
               </div>
             )}
             {interestMode === "fixed" && (
@@ -885,6 +898,8 @@ export default function BillRegister() {
             {interestMode !== "none" && (
               <p className="self-center text-[11px] leading-4 text-muted-foreground sm:col-span-2 lg:col-span-1">
                 Charged only on members with unpaid earlier bills. 1.5% p.m. ≈ 18% p.a.
+                This rate is saved with the society — it stays the same for future months
+                unless changed here or in Society Profile.
               </p>
             )}
           </div>

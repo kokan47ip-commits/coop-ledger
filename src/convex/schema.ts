@@ -75,6 +75,14 @@ const schema = defineSchema(
        * records the receipt.
        */
       upiVpa: v.optional(v.string()),
+      /**
+       * Stable late-fee / interest rate (% PER MONTH on the outstanding
+       * balance) applied when bills are generated. A society-level setting:
+       * it only changes when the office edits it here (or in the generate
+       * dialog, which persists its value) — never silently per generation.
+       * 1.5 % p.m. ≈ 18 % per annum.
+       */
+      lateFeePercent: v.optional(v.number()),
     })
       .index("by_creator", ["createdBy"])
       .index("by_claim_code", ["claimCode"])

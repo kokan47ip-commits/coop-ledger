@@ -24,6 +24,8 @@ type Society = {
   receivableAccountId?: Id<"accounts">;
   /** Society UPI ID (VPA) — powers member QR codes and bill QRs. */
   upiVpa?: string;
+  /** Stable late-fee / interest rate (% per month) charged on arrears. */
+  lateFeePercent?: number;
   registrationNo?: string;
   registrationDate?: string;
   chairmanMemberId?: Id<"members">;

@@ -387,6 +387,28 @@ export function recomputeBillStatus(total: number, paidAmount: number) {
   return "partial" as const;
 }
 
+/**
+ * A bill line that restates the member's carried opening balance —
+ * "Arrears — opening balance" (dues) or "Credit balance — advance adjusted"
+ * (advance). Recognised by NAME first (the stable wording bill generation
+ * uses) so member ledgers and outstanding totals never double-count the
+ * opening balance — even when the society's receivable account was changed
+ * after the bills were generated, or older data stored the line against a
+ * different account. The receivable-only check (no tariff, receivable
+ * account) stays as a fallback for line shapes predating the naming.
+ */
+export function isCarriedOpeningLine(
+  line: { name: string; tariffId?: Id<"tariffs">; accountId: Id<"accounts"> },
+  receivableId?: Id<"accounts">,
+): boolean {
+  const n = (line.name ?? "").toLowerCase();
+  return (
+    n.startsWith("arrears") ||
+    n.startsWith("credit balance") ||
+    (!!receivableId && !line.tariffId && line.accountId === receivableId)
+  );
+}
+
 export async function applyAllocationToBill(
   ctx: MutationCtx,
   bill: Doc<"bills">,

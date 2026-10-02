@@ -12,6 +12,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
+import InstallAppButton from "@/components/InstallAppButton";
 import MemberQrCard from "@/pages/portal/MemberQrCard";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
@@ -301,6 +302,9 @@ export default function PortalHome() {
           )}
         </div>
       )}
+
+      {/* Install the app on phones/tablets (PWA) — hides itself once installed. */}
+      <InstallAppButton />
 
       {/* Per-member dynamic UPI QR — appears once the office adds a VPA. */}
       <MemberQrCard

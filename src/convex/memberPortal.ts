@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import {
   analyzePortalBinding,
   assertInFy,
+  isCarriedOpeningLine,
   isSoftwareAdmin,
   requireSociety,
   requireUserId,
@@ -111,11 +112,14 @@ export const myInfo = query({
         .withIndex("by_society", (q) => q.eq("societyId", bind.societyId))
         .collect()
         .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
+    // Carried opening-balance lines are recognised by NAME (with the
+    // receivable-account check as fallback) so the opening is never counted
+    // twice — it is added separately as member.openingBalance above.
     const totalBilled = bills.reduce(
       (s, b) =>
         s +
         b.lines
-          .filter((l) => !(receivableId && !l.tariffId && l.accountId === receivableId))
+          .filter((l) => !isCarriedOpeningLine(l, receivableId))
           .reduce((t, l) => t + l.amount, 0),
       0,
     );
@@ -381,27 +385,30 @@ export const myLedger = query({
       )
       .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
     for (const b of relevantBills) {
-      const carried = receivableId
-        ? b.lines
-            .filter((l) => !l.tariffId && l.accountId === receivableId)
-            .reduce((s, l) => s + l.amount, 0)
-        : 0;
+      // A carried opening-balance line restates the OPENING row above — never
+      // debit it twice. Recognised by NAME (plus the receivable-account
+      // fallback) so changing the receivable account after bill generation
+      // cannot resurrect the opening balance inside the bill's debit.
+      const chargeLines = b.lines.filter((l) => !isCarriedOpeningLine(l, receivableId));
+      const carried = b.lines
+        .filter((l) => isCarriedOpeningLine(l, receivableId))
+        .reduce((s, l) => s + l.amount, 0);
       addRow({
         date: b.issueDate,
         voucherNo: b.billNo,
         voucherType: "bill",
-        particulars: `Maintenance Bill ${b.period} — ${b.lines
-          .filter((l) => !(receivableId && !l.tariffId && l.accountId === receivableId))
+        particulars: `Maintenance Bill ${b.period} — ${chargeLines
           .map((l) => l.name)
           .join(", ")}`,
-        debit: b.total - carried,
+        debit:
+          b.lines.length > 0
+            ? chargeLines.reduce((s, l) => s + l.amount, 0)
+            : b.total,
         credit: 0,
         note: carried
           ? `Due ${b.dueDate} · includes arrears of ${carried.toFixed(2)} carried from opening`
           : `Due ${b.dueDate}`,
-        heads: b.lines
-          .filter((l) => !(receivableId && !l.tariffId && l.accountId === receivableId))
-          .map((l) => ({ name: l.name, amount: l.amount })),
+        heads: chargeLines.map((l) => ({ name: l.name, amount: l.amount })),
       });
     }
 

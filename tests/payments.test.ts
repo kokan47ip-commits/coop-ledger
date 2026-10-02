@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import * as memberPortal from "../src/convex/memberPortal";
 import * as approvalsMod from "../src/convex/approvals";
 import * as paymentsMod from "../src/convex/payments";
-import { clampAllocations, societyFyPeriod } from "../src/convex/lib";
+import { clampAllocations, isCarriedOpeningLine, societyFyPeriod } from "../src/convex/lib";
 
 /* ----------------------------- fake convex ctx ---------------------------- */
 
