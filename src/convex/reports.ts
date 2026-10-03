@@ -47,6 +47,8 @@ export type TrialBalanceRow = {
   type: Doc<"accounts">["type"];
   debit: number;
   credit: number;
+  /** Form N section heading (I&E statements only). */
+  group?: string;
 };
 
 const TYPE_LABEL: Record<Doc<"vouchers">["type"] | "bill", string> = {
@@ -75,10 +77,14 @@ type GenericEntry = {
 
 export async function loadSocietyData(ctx: QueryCtx, societyId: Id<"societies">) {
   await requireSociety(ctx, societyId);
-  const [accounts, members, vouchers, bills, society, tariffs] =
+  const [accounts, accountGroups, members, vouchers, bills, society, tariffs] =
     await Promise.all([
       ctx.db
         .query("accounts")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect(),
+      ctx.db
+        .query("accountGroups")
         .withIndex("by_society", (q) => q.eq("societyId", societyId))
         .collect(),
       ctx.db
@@ -99,7 +105,7 @@ export async function loadSocietyData(ctx: QueryCtx, societyId: Id<"societies">)
         .withIndex("by_society", (q) => q.eq("societyId", societyId))
         .collect(),
     ]);
-  return { accounts, members, vouchers, bills, society, tariffs };
+  return { accounts, accountGroups, members, vouchers, bills, society, tariffs };
 }
 
 function receivableIdOf(data: SocietyData): Id<"accounts"> | undefined {
@@ -391,7 +397,41 @@ export function computeMemberLedger(
     return { ...r, balance: running };
   });
   return reweighted;
+}/** Form N heading an income/expenditure ledger files under. */
+function ieGroupOf(a: Doc<"accounts">): string {
+  const n = a.name.toLowerCase();
+  if (a.type === "income") {
+    if (n.includes("interest")) return "Interest and Other Income";
+    return "Contributions and Other Receipts";
+  }
+  if (
+    n.includes("sinking") ||
+    n.includes("repair") ||
+    n.includes("repairs") ||
+    n.includes("salaries") ||
+    n.includes("salary") ||
+    n.includes("electricity") ||
+    n.includes("water") ||
+    n.includes("lift") ||
+    n.includes("insurance") ||
+    n.includes("audit") ||
+    n.includes("municipal") ||
+    n.includes("tax") ||
+    n.includes("printing") ||
+    n.includes("stationery") ||
+    n.includes("sundry")
+  )
+    return "Repairs, Maintenance and Establishment Expenses";
+  return "Other Operating Expenses";
 }
+
+/** Form N I&E headings in statement order (income sorts after all of these). */
+const IE_EXPENSE_ORDER = [
+  "Repairs, Maintenance and Establishment Expenses",
+  "Other Operating Expenses",
+  "Depreciation and Provisions",
+];
+const IE_INCOME_ORDER = ["Contributions and Other Receipts", "Interest and Other Income"];
 
 export function computeIncomeExpenditure(
   data: SocietyData,
@@ -400,6 +440,7 @@ export function computeIncomeExpenditure(
 ) {
   const { accounts } = data;
   const income: TrialBalanceRow[] = [];
+
   const expenditure: TrialBalanceRow[] = [];
   let totalIncome = 0;
   let totalExpenditure = 0;
@@ -430,6 +471,7 @@ export function computeIncomeExpenditure(
         debit: 0,
         credit: net,
         printNo: a.printNo,
+        group: ieGroupOf(a),
       });
       totalIncome += net;
     } else {
@@ -441,19 +483,71 @@ export function computeIncomeExpenditure(
         debit: net,
         credit: 0,
         printNo: a.printNo,
+        group: ieGroupOf(a),
       });
       totalExpenditure += net;
     }
   }
-  // Print order: serial-numbered ledgers first (numeric), then by code.
-  income.sort(byPrintOrder);
-  expenditure.sort(byPrintOrder);
+  // Print order: Form N headings first, then serial-numbered / code order
+  // within each heading.
+  const ieOrder = (rows: TrialBalanceRow[], groups: string[]) => {
+    const idx = (r: TrialBalanceRow) => {
+      const i = groups.indexOf(ieGroupOf(data.accounts.find((a) => a._id === r.accountId)!));
+      return i === -1 ? groups.length : i;
+    };
+    rows.sort((a, b) => idx(a) - idx(b) || byPrintOrder(a, b));
+  };
+  ieOrder(expenditure, IE_EXPENSE_ORDER);
+  ieOrder(income, IE_INCOME_ORDER);
   const surplus = totalIncome - totalExpenditure;
   return { income, expenditure, totalIncome, totalExpenditure, surplus };
 }
 
+/** Form N section heading a liability ledger files under (MCS Rules groups). */
+function fundGroupOf(data: SocietyData, a: Doc<"accounts">): string {
+  const g = a.groupId
+    ? data.accountGroups?.find((x) => x._id === a.groupId)
+    : undefined;
+  if (g) return g.name;
+  const n = a.name.toLowerCase();
+  if (n.includes("sinking") || n.includes("building") || n.includes("development"))
+    return "Reserve Funds and Other Funds";
+  if (n.includes("deposit")) return "Deposits";
+  if (
+    n.includes("advance") ||
+    n.includes("provision") ||
+    n.includes("payable") ||
+    n.includes("creditor") ||
+    n.includes("outstanding")
+  )
+    return "Current Liabilities and Provisions";
+  return "Other Liabilities";
+}
+
+/** Form N fund headings in statement order (assets sort after all of these). */
+const FUND_ORDER = [
+  "Share Capital",
+  "Reserve Funds and Other Funds",
+  "Staff Provident Fund",
+  "Secured Loans",
+  "Unsecured Loans",
+  "Deposits",
+  "Current Liabilities and Provisions",
+  "Other Liabilities",
+  "Surplus / (Deficit)",
+];
+
+/**
+ * Balance sheet in the Form N (MCS Rules) shape: liabilities and funds under
+ * their Roman-numbered headings, assets on the other side, and each row
+ * carrying the previous-year closing figure next to the current one.
+ *
+ * A credit (negative) receivable is member money held in advance — advances
+ * collected ahead of billing, including credit opening balances carried on
+ * bills — so it is presented under Current Liabilities as "Advance from
+ * Members" instead of netting into Sundry Debtors on the asset side.
+ */
 export function computeBalanceSheet(data: SocietyData, toDate: string) {
-  const { accounts } = data;
   type Side = {
     code: string;
     name: string;
@@ -461,52 +555,129 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     type: Doc<"accounts">["type"];
     /** User-defined printing serial no. for statement order. */
     printNo?: string;
+    /** Form N section heading this row is grouped under. */
+    group: string;
+    /** Previous-year figure for comparative display (negative = opposite side). */
+    prev: number;
   };
-  const assets: Side[] = [];
-  const liabilities: Side[] = [];
-  const entries = unifiedEntries(data).filter((e) => e.date <= toDate);
-  for (const a of accounts) {
-    if (a.type !== "asset" && a.type !== "liability") continue;
+
+  // Debit-positive for assets, credit-positive for liabilities, as at `upto`.
+  const entries = unifiedEntries(data);
+  const netOf = (a: Doc<"accounts">, upto: string): number => {
     let net = a.openingBalance;
-    let activity = a.openingBalance !== 0;
     for (const e of entries) {
+      if (e.date > upto) continue;
       for (const l of e.lines) {
         if (l.accountId !== a._id) continue;
-        const delta = l.debit - l.credit;
-        net += a.type === "asset" ? delta : -delta;
-        if (l.debit !== 0 || l.credit !== 0) activity = true;
+        net += a.type === "asset" ? l.debit - l.credit : l.credit - l.debit;
       }
     }
-    if (!activity) continue;
-    const row = {
+    return net;
+  };
+
+  // Previous-year cut-off: the day before this financial year opened.
+  const fyStart = fyStartDateString(data.society?.fyStartMonth ?? 4, toDate);
+  const dayBefore = new Date(`${fyStart}T00:00:00Z`);
+  dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+  const prevToDate = dayBefore.toISOString().slice(0, 10);
+  const prevFyStart = new Date(`${fyStart}T00:00:00Z`);
+  prevFyStart.setUTCFullYear(prevFyStart.getUTCFullYear() - 1);
+
+  const assets: Side[] = [];
+  const liabilities: Side[] = [];
+  const receivableId = receivableIdOf(data);
+  let memberAdvance = 0;
+  let memberAdvancePrev = 0;
+  let hasMemberAdvance = false;
+
+  for (const a of data.accounts) {
+    if (a.type !== "asset" && a.type !== "liability") continue;
+    const net = netOf(a, toDate);
+    const prev = netOf(a, prevToDate);
+    if (a._id === receivableId && a.type === "asset" && net < 0) {
+      // Credit receivable → Advance from Members (liability side).
+      memberAdvance += -net;
+      memberAdvancePrev += -prev;
+      hasMemberAdvance = true;
+      continue;
+    }
+    if (net === 0 && prev === 0) continue;
+    const row: Side = {
       code: a.code,
       name: a.name,
       amount: Math.abs(net),
       type: a.type,
       printNo: a.printNo,
+      group: a.type === "liability" ? fundGroupOf(data, a) : "Assets",
+      prev:
+        prev === 0
+          ? 0
+          : Math.sign(net) === Math.sign(prev)
+            ? Math.abs(prev)
+            : -Math.abs(prev),
     };
     if (a.type === "asset") assets.push(row);
     else liabilities.push(row);
   }
+  if (hasMemberAdvance) {
+    liabilities.push({
+      code: "",
+      name: "Advance from Members",
+      amount: memberAdvance,
+      type: "liability",
+      group: "Current Liabilities and Provisions",
+      prev: memberAdvancePrev,
+    });
+  }
+
   const ie = computeIncomeExpenditure(
     data,
     fyStartDateString(data.society?.fyStartMonth ?? 4, toDate),
     toDate,
   );
-  if (ie.surplus !== 0) {
+  const iePrev = computeIncomeExpenditure(
+    data,
+    prevFyStart.toISOString().slice(0, 10),
+    prevToDate,
+  );
+  if (ie.surplus !== 0 || iePrev.surplus !== 0) {
     liabilities.push({
       code: "",
       name: ie.surplus >= 0 ? "Surplus for the year" : "Deficit for the year",
       amount: Math.abs(ie.surplus),
       type: "liability",
+      group: "Surplus / (Deficit)",
+      prev:
+        iePrev.surplus === 0
+          ? 0
+          : Math.sign(ie.surplus) === Math.sign(iePrev.surplus)
+            ? Math.abs(iePrev.surplus)
+            : -Math.abs(iePrev.surplus),
     });
   }
-  // Print order: serial-numbered ledgers first (numeric), then by code.
+
+  const groupOrder = (g: string) => {
+    const i = FUND_ORDER.indexOf(g);
+    return i === -1 ? FUND_ORDER.length : i;
+  };
+  // Print order: Form N fund headings first, then serial-numbered / code order
+  // within each heading.
   assets.sort(byPrintOrder);
-  liabilities.sort(byPrintOrder);
+  liabilities.sort(
+    (a, b) => groupOrder(a.group) - groupOrder(b.group) || byPrintOrder(a, b),
+  );
   const totalAssets = assets.reduce((s, r) => s + r.amount, 0);
   const totalLiabilities = liabilities.reduce((s, r) => s + r.amount, 0);
-  return { assets, liabilities, totalAssets, totalLiabilities };
+  const totalAssetsPrev = assets.reduce((s, r) => s + r.prev, 0);
+  const totalLiabilitiesPrev = liabilities.reduce((s, r) => s + r.prev, 0);
+  return {
+    assets,
+    liabilities,
+    totalAssets,
+    totalLiabilities,
+    totalAssetsPrev,
+    totalLiabilitiesPrev,
+  };
 }
 
 export function computeReceiptPayment(
@@ -573,6 +744,13 @@ export function computeReceiptPayment(
 /**
  * Cash/Bank Book: per bank-cash account, the classic register with opening
  * balance carried down, To/By party narrations, and running Dr/Cr balance.
+ *
+ * Only MANUAL cash movements become register rows. Generated bills never
+ * touch a bank-cash ledger (they post Dr Receivable / Cr income); a bill line
+ * can only reach a bank-cash account through user misconfiguration, and
+ * showing those synthetic "movements" inflated deposits and the closing
+ * balance. The pre-period accrual is still carried into OPENING either way;
+ * bill rows inside the window are simply never rendered.
  */
 export function computeCashBook(
   data: SocietyData,
@@ -599,6 +777,9 @@ export function computeCashBook(
     const rows: CashBookRow[] = [];
 
     for (const e of entries) {
+      // Generated bills are accruals, not cash movements — never a register
+      // row (their receivable/income postings belong to the General Ledger).
+      if (e.type === "bill") continue;
       const bankLines = e.lines.filter((l) => l.accountId === bank._id);
       if (bankLines.length === 0) continue;
 

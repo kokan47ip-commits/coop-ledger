@@ -8,12 +8,22 @@ import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } f
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate } from "@/lib/format";
 import { Download, FileText, Printer } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery } from "convex/react";
 
+type IERow = {
+  code: string;
+  name: string;
+  credit: number;
+  debit: number;
+  printNo?: string;
+  /** Form N section heading this ledger files under. */
+  group?: string;
+};
+
 type IEResult = {
-  income: { code: string; name: string; credit: number; printNo?: string }[];
-  expenditure: { code: string; name: string; debit: number; printNo?: string }[];
+  income: IERow[];
+  expenditure: IERow[];
   totalIncome: number;
   totalExpenditure: number;
   surplus: number;
@@ -23,6 +33,9 @@ type IEResult = {
 function serialOf(printNo: string | undefined, position: number): string {
   return printNo ?? String(position);
 }
+
+const money = (n: number) =>
+  new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n);
 
 export default function IncomeExpenditure() {
   const { societyId, society } = useSociety();
@@ -49,25 +62,51 @@ export default function IncomeExpenditure() {
       }
     : null;
 
+  /** Form N table: Expenditure on the left, Income on the right, with the
+   *  prescribed headings rendered as band rows where each group begins. */
   const buildTable = (): TableSpec => {
+    const exp = ie?.expenditure ?? [];
+    const inc = ie?.income ?? [];
     const rows: (string | number)[][] = [];
-    rows.push(["", "", "INCOME", "", ""]);
-    (ie?.income ?? []).forEach((r, i) =>
-      rows.push(["", serialOf(r.printNo, i + 1), `    ${r.name}`, "", r.credit]),
-    );
-    rows.push(["", "", "Total Income", "", ie?.totalIncome ?? 0]);
-    rows.push(["", "", "", "", ""]);
-    rows.push(["", "", "EXPENDITURE", "", ""]);
-    (ie?.expenditure ?? []).forEach((r, i) =>
-      rows.push(["", serialOf(r.printNo, i + 1), `    ${r.name}`, r.debit, ""]),
-    );
-    rows.push(["", "", "Total Expenditure", ie?.totalExpenditure ?? 0, ""]);
-    rows.push(["", "", "", "", ""]);
-    rows.push(["", "", ie && ie.surplus >= 0 ? "Surplus for the period" : "Deficit for the period", "", Math.abs(ie?.surplus ?? 0)]);
+    rows.push(["", "", "EXPENDITURE", "", "", "INCOME", ""]);
+    const maxLen = Math.max(exp.length, inc.length);
+    for (let i = 0; i < maxLen; i++) {
+      const e = exp[i];
+      const c = inc[i];
+      const eHead = e ? (i === 0 || exp[i - 1]!.group !== e.group) : false;
+      const cHead = c ? (i === 0 || inc[i - 1]!.group !== c.group) : false;
+      if (eHead || cHead) {
+        rows.push([
+          "",
+          "",
+          eHead ? (e!.group ?? "").toUpperCase() : "",
+          "",
+          "",
+          cHead ? (c!.group ?? "").toUpperCase() : "",
+          "",
+        ]);
+      }
+      rows.push([
+        "",
+        e ? serialOf(e.printNo, i + 1) : "",
+        e ? `    ${e.name}` : "",
+        e ? e.debit : "",
+        c ? serialOf(c.printNo, i + 1) : "",
+        c ? `    ${c.name}` : "",
+        c ? c.credit : "",
+      ]);
+    }
+    rows.push(["", "", "Total Expenditure", ie?.totalExpenditure ?? 0, "", "Total Income", ie?.totalIncome ?? 0]);
+    const surplus = ie?.surplus ?? 0;
+    if (surplus >= 0) {
+      rows.push(["", "", "", "", "", "Surplus for the period", surplus]);
+    } else {
+      rows.push(["", "", "Deficit for the period", -surplus, "", "", ""]);
+    }
     return {
-      head: ["", "S.No.", "Particulars", "Amount (₹)", "Amount (₹)"],
+      head: ["", "S.No.", "Expenditure", "Amount (₹)", "S.No.", "Income", "Amount (₹)"],
       body: rows,
-      columnStyles: { 3: { halign: "right" }, 4: { halign: "right" } },
+      columnStyles: { 3: { halign: "right" }, 6: { halign: "right" } },
     };
   };
 
@@ -83,7 +122,7 @@ export default function IncomeExpenditure() {
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="Income & Expenditure"
-        description="Revenue and operating expenses for the selected period with the resulting surplus or deficit."
+        description="Form N statement — expenditure and income on opposite sides, grouped under the prescribed headings, with the resulting surplus or deficit."
       />
 
       <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
@@ -116,7 +155,7 @@ export default function IncomeExpenditure() {
             variant="outline"
             size="sm"
             onClick={() => doExport("print")}
-            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:text-violet-300"
           >
             <Printer className="size-4" /> Print
           </Button>
@@ -138,70 +177,79 @@ export default function IncomeExpenditure() {
             subtitle={`For the period ${formatDate(from)} to ${formatDate(to)}`}
           />
           <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
+                <td className="px-5 py-2.5">Expenditure</td>
+                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
+                <td className="w-44 px-5 py-2.5 text-right">Amount (₹)</td>
+                <td className="border-l px-5 py-2.5">Income</td>
+                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
+                <td className="w-44 border-l px-5 py-2.5 text-right">Amount (₹)</td>
+              </tr>
+            </thead>
             <tbody>
-              <tr className="border-b bg-indigo-50 text-[#312e81]">
-                <td colSpan={2} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em]">Income</td>
-                <td />
-                <td className="w-44" />
-              </tr>
-              {ie.income.length === 0 && (
-                <tr><td className="px-5 py-2 text-muted-foreground" colSpan={3}>No income recorded</td><td className="text-right px-5">—</td></tr>
-              )}
-              {ie.income.map((r, i) => (
-                <tr key={r.code + r.name} className="border-b last:border-0">
-                  <td className="w-16 px-5 py-2.5 font-mono text-xs text-muted-foreground">{r.code}</td>
-                  <td className="w-14 px-2 py-2.5 text-center font-mono text-xs">{serialOf(r.printNo, i + 1)}</td>
-                  <td className="px-0 py-2.5">{r.name}</td>
-                  <td className="px-5 py-2.5 text-right tabular-nums">
-                    {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(r.credit)}
-                  </td>
-                </tr>
-              ))}
+              {Array.from({
+                length: Math.max(ie.expenditure.length, ie.income.length, 1),
+              }).map((_, i) => {
+                const e = ie.expenditure[i];
+                const c = ie.income[i];
+                const eHead = e ? i === 0 || ie.expenditure[i - 1]!.group !== e.group : false;
+                const cHead = c ? i === 0 || ie.income[i - 1]!.group !== c.group : false;
+                return (
+                  <Fragment key={i}>
+                    {(eHead || cHead) && (
+                      <tr className="border-y bg-indigo-50/60 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#312e81]/80">
+                        <td className="px-5 py-1.5">{eHead ? (e!.group ?? "") : ""}</td>
+                        <td />
+                        <td />
+                        <td className="border-l px-5 py-1.5">{cHead ? (c!.group ?? "") : ""}</td>
+                        <td />
+                        <td className="border-l" />
+                      </tr>
+                    )}
+                    <tr className="border-b last:border-0">
+                      <td className="px-5 py-2.5">{e?.name ?? ""}</td>
+                      <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
+                        {e ? serialOf(e.printNo, i + 1) : ""}
+                      </td>
+                      <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
+                      <td className="border-l px-5 py-2.5">{c?.name ?? ""}</td>
+                      <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
+                        {c ? serialOf(c.printNo, i + 1) : ""}
+                      </td>
+                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
               <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
+                <td className="px-5 py-2.5">Total Expenditure</td>
                 <td />
+                <td className="px-5 py-2.5 text-right tabular-nums">{money(ie.totalExpenditure)}</td>
+                <td className="border-l px-5 py-2.5">Total Income</td>
                 <td />
-                <td className="px-0 py-2.5">Total Income</td>
-                <td className="px-5 py-2.5 text-right tabular-nums">
-                  {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(ie.totalIncome)}
-                </td>
+                <td className="border-l px-5 py-2.5 text-right tabular-nums">{money(ie.totalIncome)}</td>
               </tr>
-
-              <tr className="border-b bg-indigo-50 text-[#312e81]">
-                <td colSpan={2} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em]">Expenditure</td>
-                <td />
-                <td />
-              </tr>
-              {ie.expenditure.length === 0 && (
-                <tr><td className="px-5 py-2 text-muted-foreground" colSpan={3}>No expenditure recorded</td><td className="text-right px-5">—</td></tr>
-              )}
-              {ie.expenditure.map((r, i) => (
-                <tr key={r.code + r.name} className="border-b last:border-0">
-                  <td className="w-16 px-5 py-2.5 font-mono text-xs text-muted-foreground">{r.code}</td>
-                  <td className="w-14 px-2 py-2.5 text-center font-mono text-xs">{serialOf(r.printNo, i + 1)}</td>
-                  <td className="px-0 py-2.5">{r.name}</td>
-                  <td className="px-5 py-2.5 text-right tabular-nums">
-                    {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(r.debit)}
-                  </td>
-                </tr>
-              ))}
-              <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
-                <td />
-                <td />
-                <td className="px-0 py-2.5">Total Expenditure</td>
-                <td className="px-5 py-2.5 text-right tabular-nums">
-                  {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(ie.totalExpenditure)}
-                </td>
-              </tr>
-
               <tr className="bg-[#312e81] text-base font-semibold text-white">
-                <td />
-                <td />
-                <td className="px-0 py-4">
-                  {ie.surplus >= 0 ? "Surplus for the period" : "Deficit for the period"}
-                </td>
-                <td className="px-5 py-4 text-right tabular-nums">
-                  {new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(Math.abs(ie.surplus))}
-                </td>
+                {ie.surplus >= 0 ? (
+                  <>
+                    <td />
+                    <td />
+                    <td />
+                    <td className="border-l px-5 py-4">Surplus for the period</td>
+                    <td />
+                    <td className="border-l px-5 py-4 text-right tabular-nums">{money(ie.surplus)}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-5 py-4">Deficit for the period</td>
+                    <td />
+                    <td className="px-5 py-4 text-right tabular-nums">{money(-ie.surplus)}</td>
+                    <td className="border-l" />
+                    <td />
+                    <td className="border-l" />
+                  </>
+                )}
               </tr>
             </tbody>
           </table>
