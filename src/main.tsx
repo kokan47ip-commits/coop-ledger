@@ -74,6 +74,8 @@ const PaymentApprovals = lazyPage(
 );
 const Journal = lazyPage(() => import("./pages/app/vouchers/Journal.tsx"));
 const MemberLedger = lazyPage(() => import("./pages/app/ledgers/MemberLedger.tsx"));
+const MemberDues = lazyPage(() => import("./pages/app/reports/MemberDues.tsx"));
+const MemberAdvance = lazyPage(() => import("./pages/app/reports/MemberAdvance.tsx"));
 const GeneralLedger = lazyPage(() => import("./pages/app/ledgers/GeneralLedger.tsx"));
 const CashBook = lazyPage(() => import("./pages/app/ledgers/CashBook.tsx"));
 const TrialBalance = lazyPage(() => import("./pages/app/reports/TrialBalance.tsx"));
@@ -242,6 +244,8 @@ createRoot(document.getElementById("root")!).render(
                 />
                 <Route path="journal" element={<Journal />} />
                 <Route path="member-ledger" element={<MemberLedger />} />
+                <Route path="member-dues" element={<MemberDues />} />
+                <Route path="member-advance" element={<MemberAdvance />} />
                 <Route path="general-ledger" element={<GeneralLedger />} />
                 <Route path="cash-book" element={<CashBook />} />
                 <Route path="trial-balance" element={<TrialBalance />} />

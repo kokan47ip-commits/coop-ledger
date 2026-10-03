@@ -12,8 +12,10 @@ import {
   Home,
   Landmark,
   LayoutDashboard,
+  PiggyBank,
   Printer,
   Receipt,
+  ReceiptText,
   Scale,
   ShieldCheck,
   CreditCard,
@@ -42,6 +44,8 @@ export type MenuKey =
   | "bills"
   | "printing-hub"
   | "member-ledger"
+  | "member-dues"
+  | "member-advance"
   | "general-ledger"
   | "cash-book"
   | "trial-balance"
@@ -93,6 +97,8 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "bills", label: "Bill Register", section: "Transactions", path: "/app/bills", icon: FileSpreadsheet },
   { key: "printing-hub", label: "Printing Hub", section: "Transactions", path: "/app/printing-hub", icon: Printer },
   { key: "member-ledger", label: "Member Ledger", section: "Reports", path: "/app/member-ledger", icon: Users },
+  { key: "member-dues", label: "Member Dues", section: "Reports", path: "/app/member-dues", icon: ReceiptText },
+  { key: "member-advance", label: "Member Advance", section: "Reports", path: "/app/member-advance", icon: PiggyBank },
   { key: "general-ledger", label: "General Ledger", section: "Reports", path: "/app/general-ledger", icon: BarChart3 },
   { key: "cash-book", label: "Cash Book", section: "Reports", path: "/app/cash-book", icon: Landmark },
   { key: "trial-balance", label: "Trial Balance", section: "Reports", path: "/app/trial-balance", icon: Scale },

@@ -17,8 +17,12 @@ type TBRow = {
   code: string;
   name: string;
   type: "asset" | "liability" | "income" | "expense";
-  debit: number;
-  credit: number;
+  openingDr: number;
+  openingCr: number;
+  periodDr: number;
+  periodCr: number;
+  closingDr: number;
+  closingCr: number;
 };
 
 const TYPE_LABEL: Record<TBRow["type"], string> = {
@@ -40,9 +44,20 @@ export default function TrialBalance() {
     societyId ? { societyId, fromDate: from, toDate: to } : "skip",
   ) as TBRow[] | undefined;
 
-  const totalDebit = (rows ?? []).reduce((s, r) => s + r.debit, 0);
-  const totalCredit = (rows ?? []).reduce((s, r) => s + r.credit, 0);
-  const balanced = Math.abs(totalDebit - totalCredit) < 0.5;
+  // Column-wise totals: every Dr column and every Cr column is footed
+  // separately, so the printed statement can be checked group by group.
+  const totals = (rows ?? []).reduce(
+    (t, r) => ({
+      openingDr: t.openingDr + r.openingDr,
+      openingCr: t.openingCr + r.openingCr,
+      periodDr: t.periodDr + r.periodDr,
+      periodCr: t.periodCr + r.periodCr,
+      closingDr: t.closingDr + r.closingDr,
+      closingCr: t.closingCr + r.closingCr,
+    }),
+    { openingDr: 0, openingCr: 0, periodDr: 0, periodCr: 0, closingDr: 0, closingCr: 0 },
+  );
+  const balanced = Math.abs(totals.closingDr - totals.closingCr) < 0.5;
 
   const meta: ExportMeta | null = society
     ? {
@@ -58,13 +73,31 @@ export default function TrialBalance() {
     : null;
 
   const buildTable = (): TableSpec => ({
-    head: ["Code", "Ledger Account", "Debit (₹)", "Credit (₹)"],
-    body: (rows ?? []).map((r) => [r.code, `${r.name}  (${TYPE_LABEL[r.type]})`, r.debit, r.credit]),
-    foot: [["", "TOTAL", totalDebit, totalCredit]],
+    groupHead: [
+      { label: "Opening Balance", span: 2, align: "center" },
+      { label: "Current Period", span: 2, align: "center" },
+      { label: "Closing Balance", span: 2, align: "center" },
+    ],
+    head: ["Code", "Ledger Account", "Dr", "Cr", "Dr", "Cr", "Dr", "Cr"],
+    body: (rows ?? []).map((r) => [
+      r.code,
+      `${r.name}  (${TYPE_LABEL[r.type]})`,
+      r.openingDr,
+      r.openingCr,
+      r.periodDr,
+      r.periodCr,
+      r.closingDr,
+      r.closingCr,
+    ]),
+    foot: [["", "TOTAL", totals.openingDr, totals.openingCr, totals.periodDr, totals.periodCr, totals.closingDr, totals.closingCr]],
     columnStyles: {
-      0: { cellWidth: 58 },
+      0: { cellWidth: 44 },
       2: { halign: "right" },
       3: { halign: "right" },
+      4: { halign: "right" },
+      5: { halign: "right" },
+      6: { halign: "right" },
+      7: { halign: "right" },
     },
   });
 
@@ -76,10 +109,10 @@ export default function TrialBalance() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Trial Balance"
-        description="Closing Dr/Cr balance of every ledger account for the selected period — the check that total debits equal total credits before the books are finalised."
+        description="Opening balance, current-period movements and closing balance of every ledger account — with Dr and Cr columns for each, and a total of all heads below every Dr total and every Cr total."
       />
 
       <div className="panel mb-6 grid gap-4 p-5 sm:grid-cols-3">
@@ -123,7 +156,7 @@ export default function TrialBalance() {
         <p className="text-sm text-muted-foreground">
           {rows === undefined
             ? "Loading…"
-            : `${rows.length} ${rows.length === 1 ? "account" : "accounts"} · debits ${formatMoney(totalDebit)} · credits ${formatMoney(totalCredit)}`}
+            : `${rows.length} ${rows.length === 1 ? "account" : "accounts"} · closing debits ${formatMoney(totals.closingDr)} · closing credits ${formatMoney(totals.closingCr)}`}
         </p>
         {rows !== undefined && rows.length > 0 && (
           <p
@@ -133,7 +166,9 @@ export default function TrialBalance() {
                 : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
             }`}
           >
-            {balanced ? "✓ Books balanced — debits equal credits" : `Out of balance by ${formatMoney(Math.abs(totalDebit - totalCredit))}`}
+            {balanced
+              ? "✓ Books balanced — closing debits equal credits"
+              : `Closing balance out by ${formatMoney(Math.abs(totals.closingDr - totals.closingCr))}`}
           </p>
         )}
       </div>
@@ -141,14 +176,22 @@ export default function TrialBalance() {
       {rows !== undefined && rows.length === 0 ? (
         <EmptyHint>No account activity in this period — enter vouchers or bills to build the trial balance.</EmptyHint>
       ) : (
-        <div className="panel overflow-hidden">
+        <div className="panel overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="w-20">Code</TableHead>
-                <TableHead>Ledger Account</TableHead>
-                <TableHead className="w-32 text-right">Debit (₹)</TableHead>
-                <TableHead className="w-32 text-right">Credit (₹)</TableHead>
+                <TableHead rowSpan={2} className="w-16 align-middle">Code</TableHead>
+                <TableHead rowSpan={2} className="align-middle">Ledger Account</TableHead>
+                <TableHead colSpan={2} className="border-l text-center">Opening Balance</TableHead>
+                <TableHead colSpan={2} className="border-l text-center">Current Period</TableHead>
+                <TableHead colSpan={2} className="border-l text-center">Closing Balance</TableHead>
+              </TableRow>
+              <TableRow className="hover:bg-transparent">
+                {["Dr", "Cr", "Dr", "Cr", "Dr", "Cr"].map((s, i) => (
+                  <TableHead key={i} className={`w-28 text-right ${i % 2 === 0 ? "border-l" : ""}`}>
+                    {s}
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -159,14 +202,22 @@ export default function TrialBalance() {
                     <span className="font-medium">{r.name}</span>
                     <span className="ml-2 text-xs text-muted-foreground">{TYPE_LABEL[r.type]}</span>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{r.debit ? formatMoney(r.debit) : "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{r.credit ? formatMoney(r.credit) : "—"}</TableCell>
+                  <TableCell className="border-l text-right tabular-nums">{r.openingDr ? formatMoney(r.openingDr) : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{r.openingCr ? formatMoney(r.openingCr) : "—"}</TableCell>
+                  <TableCell className="border-l text-right tabular-nums">{r.periodDr ? formatMoney(r.periodDr) : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{r.periodCr ? formatMoney(r.periodCr) : "—"}</TableCell>
+                  <TableCell className="border-l text-right tabular-nums">{r.closingDr ? formatMoney(r.closingDr) : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{r.closingCr ? formatMoney(r.closingCr) : "—"}</TableCell>
                 </TableRow>
               ))}
               <TableRow className="border-t-2 hover:bg-transparent">
-                <TableCell colSpan={2} className="font-semibold">Total</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatMoney(totalDebit)}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{formatMoney(totalCredit)}</TableCell>
+                <TableCell colSpan={2} className="font-semibold">Total of all heads</TableCell>
+                <TableCell className="border-l text-right font-semibold tabular-nums">{formatMoney(totals.openingDr)}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">{formatMoney(totals.openingCr)}</TableCell>
+                <TableCell className="border-l text-right font-semibold tabular-nums">{formatMoney(totals.periodDr)}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">{formatMoney(totals.periodCr)}</TableCell>
+                <TableCell className="border-l text-right font-semibold tabular-nums">{formatMoney(totals.closingDr)}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">{formatMoney(totals.closingCr)}</TableCell>
               </TableRow>
             </TableBody>
           </Table>

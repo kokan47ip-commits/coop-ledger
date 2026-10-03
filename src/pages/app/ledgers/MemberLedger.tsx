@@ -54,6 +54,9 @@ type MemberSection = {
 
 const drCr = (n: number) => `${formatMoney(n)} ${n >= 0 ? "Dr" : "Cr"}`;
 
+/** Display flat number — ledgers identify members by flat, not member no. */
+const flatOf = (m: Member) => [m.wing, m.flatNo].filter(Boolean).join("-") || m.code;
+
 export default function MemberLedger() {
   const { societyId, society } = useSociety();
   const signatures = useCommitteeSignatures();
@@ -179,7 +182,7 @@ export default function MemberLedger() {
     const totDr = openingDr + items.reduce((s, r) => s + r.debit, 0);
     const totCr = openingCr + items.reduce((s, r) => s + r.credit, 0);
     const closing = rows.length > 0 ? rows[rows.length - 1].balance : mem.openingBalance;
-    return { member: mem, title: `${mem.code}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing };
+    return { member: mem, title: `${flatOf(mem)}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing };
   };
 
   const sections: MemberSection[] =
@@ -318,7 +321,7 @@ export default function MemberLedger() {
                 onCheckedChange={(c) => toggleAll(c === true)}
                 aria-label="Select all members"
               />
-              <span>Unit Code</span>
+              <span>Flat No.</span>
               <span>Member Name</span>
             </div>
             <div className="max-h-56 overflow-y-auto">
@@ -337,7 +340,7 @@ export default function MemberLedger() {
                     onCheckedChange={(c) => toggleMember(m._id, c === true)}
                     aria-label={`Select ${m.name}`}
                   />
-                  <span className="font-mono text-xs">{m.code}</span>
+                  <span className="font-mono text-xs">{flatOf(m)}</span>
                   <span className="truncate uppercase">{m.name}</span>
                 </div>
               ))}

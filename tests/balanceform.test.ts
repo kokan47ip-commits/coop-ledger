@@ -17,6 +17,8 @@ import {
   computeBalanceSheet,
   computeCashBook,
   computeIncomeExpenditure,
+  computeMemberBalances,
+  computeTrialBalance,
   type SocietyData,
 } from "../src/convex/reports";
 
@@ -35,15 +37,20 @@ const acct = (
   openingBalance: extra.openingBalance ?? 0,
 });
 
-const member = {
-  _id: "m1",
+const member = (id: string, extra: { code?: string; name?: string; wing?: string; flatNo?: string; openingBalance?: number } = {}) => ({
+  _id: id,
   _creationTime: 0,
   societyId: "s1",
-  code: "01",
-  name: "Member One",
+  code: extra.code ?? "01",
+  name: extra.name ?? "Member One",
+  wing: extra.wing,
+  flatNo: extra.flatNo,
   isActive: true,
-  openingBalance: 0,
-};
+  openingBalance: extra.openingBalance ?? 0,
+});
+
+/** Legacy fixture shape (single member, code "01"). */
+const m1 = member("m1");
 
 const society = { _id: "s1", fyStartMonth: 4 };
 
@@ -57,7 +64,7 @@ describe("Cash/Bank Book register", () => {
         acct("maint", "income", { name: "Maintenance Contributions" }),
       ],
       accountGroups: [],
-      members: [member],
+      members: [m1],
       vouchers: [
         // Dr bank 700 / Cr recv 700
         {
@@ -114,7 +121,7 @@ describe("Form N: Income & Expenditure", () => {
         acct("misc", "expense", { name: "Miscellaneous Fund Expense" }),
       ],
       accountGroups: [],
-      members: [member],
+      members: [m1],
       vouchers: [
         {
           _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
@@ -177,10 +184,10 @@ describe("Form N: Balance Sheet", () => {
         acct("recv", "asset", { kind: "receivable", name: "Members Receivable", openingBalance: 0 }),
       ],
       accountGroups: [],
-      members: [member],
+      members: [{ ...m1, openingBalance: -800 }], // member paid 800 ahead before the system
       vouchers: [
-        // Dr bank 500 / Cr recv 500 — the 800 credit bill line over-takes it,
-        // netting the receivable to a 300 credit (advance held from members).
+        // Dr bank 500 / Cr recv 500 — the 800 credit carried line plus the
+        // 500 receipt leaves the member 1300 in advance.
         {
           _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
           type: "member_receipt", memberId: "m1", bankCashAccountId: "bank", total: 500,
@@ -204,21 +211,27 @@ describe("Form N: Balance Sheet", () => {
 
     const bs = computeBalanceSheet(data, "2026-06-30");
 
-    // The receivable itself must NOT appear on the asset side.
+    // The receivable itself must NOT appear on the asset side (member dues
+    // are zero), and the GL/member figures reconcile with no unadjusted row.
     expect(bs.assets.map((r) => r.name)).toEqual(["Bank of India"]);
     expect(bs.assets[0]!.amount).toBe(1500);
 
     const advance = bs.liabilities.find((r) => r.name === "Advance from Members");
     expect(advance).toBeDefined();
-    // Bill total −800 posts a −800 (credit) to the receivable — the carried
-    // credit line IS the total carrier — plus the 500 receipt credit → 1300.
+    // Member-level: opening −800 (paid ahead), no charge lines, 500 received
+    // → 1300 advance. Same figure the GL receivable nets to, so no
+    // "Members Receivable (unadjusted)" row appears.
     expect(advance!.amount).toBe(1300);
     expect(advance!.group).toBe("Current Liabilities and Provisions");
+    expect(bs.liabilities.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
+    expect(bs.totalAssets).toBe(1500);
+    expect(bs.totalLiabilities).toBe(1300);
 
     // Comparative column: every posting is inside the current FY, so the
-    // previous-year cut-off (day before FY start) sees only the bank opening.
+    // previous-year cut-off (day before FY start) sees the bank opening and
+    // the member's carried advance opening (800 held last year).
     expect(bs.totalAssetsPrev).toBe(1000);
-    expect(bs.totalLiabilitiesPrev).toBe(0);
+    expect(bs.totalLiabilitiesPrev).toBe(800);
   });
 
   test("surplus lands under its own Form N heading with fund ordering", () => {
@@ -230,7 +243,7 @@ describe("Form N: Balance Sheet", () => {
         acct("maint", "income", { name: "Maintenance Contributions" }),
       ],
       accountGroups: [],
-      members: [member],
+      members: [m1],
       vouchers: [
         {
           _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
@@ -257,5 +270,217 @@ describe("Form N: Balance Sheet", () => {
     // Balanced books: 500 openings + 100 surplus on both sides.
     expect(bs.totalLiabilities).toBe(600);
     expect(bs.totalAssets).toBe(600);
+  });
+
+  test("member dues and advances are shown GROSS, never netted", () => {
+    // Member A owes 500 (billed 800, received 300); member B paid 400 with
+    // nothing due. Netting would show a single 100 debtor and hide both the
+    // 500 dues and the 400 advance — the books must show each separately.
+    const mA = member("mA", { code: "02", name: "Member A", wing: "A", flatNo: "101" });
+    const mB = member("mB", { code: "03", name: "Member B", wing: "B", flatNo: "102" });
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India" }),
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable" }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [mA, mB],
+      vouchers: [
+        // Dr bank 300 / Cr recv 300 (member A)
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "member_receipt", memberId: "mA", bankCashAccountId: "bank", total: 300,
+          lines: [
+            { accountId: "bank", debit: 300, credit: 0 },
+            { accountId: "recv", debit: 0, credit: 300 },
+          ],
+        },
+        // Dr bank 400 / Cr recv 400 (member B, nothing due → advance)
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-12", voucherNo: "R2",
+          type: "member_receipt", memberId: "mB", bankCashAccountId: "bank", total: 400,
+          lines: [
+            { accountId: "bank", debit: 400, credit: 0 },
+            { accountId: "recv", debit: 0, credit: 400 },
+          ],
+        },
+      ],
+      bills: [
+        // Dr recv 800 / Cr maintenance income 800 (member A)
+        {
+          _id: "b1", _creationTime: 0, societyId: "s1", billNo: "BILL-1", memberId: "mA",
+          period: "2026-05", issueDate: "2026-05-01", dueDate: "2026-05-10", total: 800,
+          paidAmount: 0, status: "unpaid",
+          lines: [{ accountId: "maint", name: "Maintenance", amount: 800 }],
+        },
+      ],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    const debtors = bs.assets.find((r) => r.name === "Members Receivable");
+    const advance = bs.liabilities.find((r) => r.name === "Advance from Members");
+
+    // Gross on both sides — NOT the netted 100.
+    expect(debtors!.amount).toBe(500);
+    expect(advance!.amount).toBe(400);
+    expect(advance!.group).toBe("Current Liabilities and Provisions");
+    // GL receivable (800 billed − 700 received = 100) exactly explains the
+    // member split (500 − 400), so no unadjusted reconciliation row appears.
+    expect(bs.liabilities.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
+    expect(bs.assets.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
+
+    // The principle keeps the sheet balanced: bank 700 + dues 500 = advance
+    // 400 + bill income surplus 800.
+    expect(bs.totalAssets).toBe(1200);
+    expect(bs.totalLiabilities).toBe(1200);
+  });
+});
+
+describe("Trial Balance (three columns)", () => {
+  test("opening / current / closing with Dr and Cr, and bank excludes generated bills", async () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("cash", "asset", { kind: "bank_cash", name: "Cash in Hand", openingBalance: 500 }),
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable", openingBalance: 2000 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Dr bank 700 / Cr recv 700
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "member_receipt", memberId: "m1", bankCashAccountId: "bank", total: 700,
+          lines: [
+            { accountId: "bank", debit: 700, credit: 0 },
+            { accountId: "recv", debit: 0, credit: 700 },
+          ],
+        },
+        // Dr maint (mis-mapped head) 300 / Cr cash 300
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-12", voucherNo: "P1",
+          type: "payment", total: 300,
+          lines: [
+            { accountId: "maint", debit: 300, credit: 0 },
+            { accountId: "cash", debit: 0, credit: 300 },
+          ],
+        },
+      ],
+      bills: [
+        // MISCONFIGURED bill: charge line mapped straight onto the bank ledger.
+        {
+          _id: "b1", _creationTime: 0, societyId: "s1", billNo: "BILL-1", memberId: "m1",
+          period: "May,2026", issueDate: "2026-05-01", dueDate: "2026-05-10", total: 500,
+          paidAmount: 0, status: "unpaid",
+          lines: [{ accountId: "bank", name: "Maintenance", amount: 500 }],
+        },
+      ],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    const row = (id: string) => tb.find((r) => r.accountId === id)!;
+
+    // Bank: the mis-mapped bill line never touches the ledger — the TB closing
+    // (1700) now agrees with the Bank Book (opening 1000 + 700 receipt).
+    expect(row("bank")).toMatchObject({
+      openingDr: 1000, openingCr: 0,
+      periodDr: 700, periodCr: 0,
+      closingDr: 1700, closingCr: 0,
+    });
+    // Receivable: opening 2000, bill total 500 Dr, receipt 700 Cr → 1800 Dr.
+    expect(row("recv")).toMatchObject({
+      openingDr: 2000, openingCr: 0,
+      periodDr: 500, periodCr: 700,
+      closingDr: 1800, closingCr: 0,
+    });
+    // Cash: 500 opening − 300 payment = 200 Dr.
+    expect(row("cash")!.closingDr).toBe(200);
+    // Income head debited by the payment shows on the Dr side.
+    expect(row("maint")).toMatchObject({
+      openingDr: 0, openingCr: 0,
+      periodDr: 300, periodCr: 0,
+      closingDr: 300, closingCr: 0,
+    });
+
+    // The Balance Sheet bank figure agrees with the TB and the Bank Book.
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    expect(bs.assets.find((r) => r.name === "Bank of India")!.amount).toBe(1700);
+  });
+});
+
+describe("Member dues & advance lists", () => {
+  test("date-wise per-member position: dues, advance and neither", () => {
+    const mA = member("mA", { code: "02", name: "Member A", wing: "A", flatNo: "101", openingBalance: 200 });
+        // Member A receives 300 against 1000 billed → 700 due.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "member_receipt", memberId: "mA", bankCashAccountId: "bank", total: 300,
+          lines: [
+            { accountId: "bank", debit: 300, credit: 0 },
+            { accountId: "recv", debit: 0, credit: 300 },
+          ],
+        },
+        // Member B (100 due from opening) receives 400 → 300 in ADVANCE.        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-12", voucherNo: "R2",
+          type: "member_receipt", memberId: "mB", bankCashAccountId: "bank", total: 400,
+          lines: [
+            { accountId: "bank", debit: 400, credit: 0 },
+            { accountId: "recv", debit: 0, credit: 400 },
+          ],
+        },
+      ],
+      bills: [
+        // Pre-period bill for A (belongs in the OPENING column).
+        {
+          _id: "b0", _creationTime: 0, societyId: "s1", billNo: "BILL-0", memberId: "mA",
+          period: "2026-03", issueDate: "2026-03-15", dueDate: "2026-03-25", total: 200,
+          paidAmount: 0, status: "unpaid",
+          lines: [{ accountId: "recv", name: "Arrears — opening balance", amount: 200 }],
+        },
+        // In-period bill for A.
+        {
+          _id: "b1", _creationTime: 0, societyId: "s1", billNo: "BILL-1", memberId: "mA",
+          period: "2026-05", issueDate: "2026-05-01", dueDate: "2026-05-10", total: 800,
+          paidAmount: 0, status: "unpaid",
+          lines: [{ accountId: "recv", name: "Maintenance", amount: 800 }],
+        },
+      ],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const rows = computeMemberBalances(data, "2026-04-01", "2026-06-30");
+    const a = rows.find((r) => r.memberId === "mA")!;
+    const b = rows.find((r) => r.memberId === "mB")!;
+    const c = rows.find((r) => r.memberId === "mC")!;
+
+    // A: pre-period bill (charge lines only — the carried line restates the
+    // opening, it is not debited twice) → opening 200, billed 800, received
+    // 300, closing 700 due, last entry 2026-05-10. Flat No., not member no.
+    expect(a).toMatchObject({
+      flatNo: "A-101", opening: 200, billed: 800, received: 300,
+      closing: 700, lastEntryDate: "2026-05-10",
+    });
+    // B: 100 opening dues, paid 400 → 300 advance held.
+    expect(b).toMatchObject({
+      flatNo: "B-102", opening: 100, billed: 0, received: 400,
+      closing: -300, lastEntryDate: "2026-05-12",
+    });
+    // C: no movement → in neither list.
+    expect(c.closing).toBe(0);
+
+    // The two lists split on the sign of closing and never overlap.
+    const dues = rows.filter((r) => r.closing > 0);
+    const advances = rows.filter((r) => r.closing < 0);
+    expect(dues.map((r) => r.flatNo)).toEqual(["A-101"]);
+    expect(advances.map((r) => r.flatNo)).toEqual(["B-102"]);
+    expect(dues.reduce((s, r) => s + r.closing, 0)).toBe(700);
+    expect(advances.reduce((s, r) => s - r.closing, 0)).toBe(300);
   });
 });

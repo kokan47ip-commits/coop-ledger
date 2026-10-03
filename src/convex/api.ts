@@ -5,6 +5,7 @@ import {
   computeBalanceSheet,
   computeCashBook,
   computeIncomeExpenditure,
+  computeMemberBalances,
   computeMemberLedger,
   computeReceiptPayment,
   computeTrialBalance,
@@ -119,6 +120,23 @@ export const accountBalance = query({
   },
 });
 
+/**
+ * Per-member dues position (member-ledger arithmetic) for the date range —
+ * powers the Member Dues list (closing > 0) and the Member Advance list
+ * (closing < 0), whose totals tie to the Balance Sheet's member split.
+ */
+export const memberBalances = query({
+  args: {
+    societyId: v.id("societies"),
+    fromDate: v.string(),
+    toDate: v.string(),
+  },
+  handler: async (ctx, { societyId, fromDate, toDate }) => {
+    const data = await loadSocietyData(ctx, societyId);
+    return computeMemberBalances(data, fromDate, toDate);
+  },
+});
+
 export const trialBalance = query({
   args: {
     societyId: v.id("societies"),
@@ -208,7 +226,7 @@ export const dashboard = query({
       totalExpenditure: ie.totalExpenditure,
       surplus: ie.surplus,
       cashOnHand: rp.closingCash,
-      trialBalanceTotal: tb.reduce((s, r) => s + r.debit, 0),
+      trialBalanceTotal: tb.reduce((s, r) => s + r.closingDr, 0),
       recentVouchers,
     };
   },

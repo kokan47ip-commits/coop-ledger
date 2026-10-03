@@ -38,6 +38,27 @@ export type CashBookSection = {
   closing: number;
 };
 
+/**
+ * One Trial Balance row in the three-column format: Opening balance (as at the
+ * day before the period), Current-period movement (gross Dr/Cr postings inside
+ * the range) and Closing balance (as at the end date), each shown on its Dr or
+ * Cr side.
+ */
+export type TrialBalanceColumnRow = {
+  accountId: Id<"accounts">;
+  /** User-defined printing serial no. for statement order. */
+  printNo?: string;
+  code: string;
+  name: string;
+  type: Doc<"accounts">["type"];
+  openingDr: number;
+  openingCr: number;
+  periodDr: number;
+  periodCr: number;
+  closingDr: number;
+  closingCr: number;
+};
+
 export type TrialBalanceRow = {
   accountId: Id<"accounts">;
   /** User-defined printing serial no. for statement order. */
@@ -138,6 +159,17 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
   }));
   const receivableId = receivableIdOf(data);
   if (receivableId) {
+    // A generated bill is an accrual — Dr Members Receivable / Cr income
+    // heads — and is never a cash movement. The Bank Book therefore never
+    // shows bill rows; the Trial Balance, Balance Sheet and General Ledger
+    // read the same postings and must agree with it, so a bill line may not
+    // post to a bank-cash ledger either. A line can only sit on one through a
+    // tariff head mis-mapped in the Tariff Schedule, and letting it through
+    // made the bank balance in the TB/BS drift away from the Bank Book. The
+    // same guard covers the receivable total line itself, should the
+    // receivable account ever be (mis)set to a bank-cash ledger.
+    const isBankCash = (id: Id<"accounts">) =>
+      data.accounts.find((a) => a._id === id)?.kind === "bank_cash";
     for (const b of data.bills) {
       entries.push({
         date: b.issueDate,
@@ -146,11 +178,23 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
         memberId: b.memberId,
         narration: `Bill ${b.period}`,
         lines: [
-          { accountId: receivableId, debit: b.total, credit: 0, note: `Period ${b.period}` },
+          ...(isBankCash(receivableId)
+            ? []
+            : [
+                {
+                  accountId: receivableId,
+                  debit: b.total,
+                  credit: 0,
+                  note: `Period ${b.period}`,
+                },
+              ]),
           // The carried opening-balance line is part of the receivable debit
           // itself (it predates the system), so it is not credited anywhere.
           ...b.lines
-            .filter((l) => l.accountId !== receivableId)
+            .filter(
+              (l) =>
+                l.accountId !== receivableId && !isBankCash(l.accountId),
+            )
             .map((l) => ({
               accountId: l.accountId,
               debit: 0,
@@ -163,49 +207,77 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
   return entries;
 }
 
+/**
+ * Display flat number for a member — "Wing-FlatNo", falling back to the
+ * member code. Ledgers and statements identify members by FLAT, not by the
+ * internal member no.
+ */
+export function memberFlatNo(m: Doc<"members">): string {
+  return [m.wing, m.flatNo].filter(Boolean).join("-") || m.code;
+}
+
 function memberLabel(data: SocietyData, memberId: Id<"members"> | null | undefined) {
   if (!memberId) return null;
   const m = data.members.find((x) => x._id === memberId);
-  return m ? `${m.name} (${m.code})` : null;
+  return m ? `${m.name} (${memberFlatNo(m)})` : null;
 }
 
-/** Trial balance within a date range (account openings sit outside the range). */
+/**
+ * Trial balance in the three-column format. For every ledger account:
+ * Opening — the balance as at the day before `fromDate` (account opening
+ * balance plus all postings before the period); Current — the GROSS debits
+ * and credits posted inside the period; Closing — opening plus the period's
+ * net movement, as at `toDate`. Each of the three is shown on its Dr or Cr
+ * side, so the column totals below every Dr and every Cr total can be footed
+ * (and closing Dr vs closing Cr re-checked) on the printed statement.
+ */
 export async function computeTrialBalance(
   data: SocietyData,
   fromDate: string,
   toDate: string,
-) {
+): Promise<TrialBalanceColumnRow[]> {
   const { accounts } = data;
-  const movement = new Map<Id<"accounts">, { debit: number; credit: number }>();
-  for (const a of accounts) movement.set(a._id, { debit: 0, credit: 0 });
+  const movement = new Map<
+    Id<"accounts">,
+    { pre: number; dr: number; cr: number }
+  >();
+  for (const a of accounts) movement.set(a._id, { pre: 0, dr: 0, cr: 0 });
   for (const e of unifiedEntries(data)) {
-    if (e.date < fromDate || e.date > toDate) continue;
+    if (e.date > toDate) continue;
+    const prePeriod = e.date < fromDate;
     for (const l of e.lines) {
       const m = movement.get(l.accountId);
-      if (m) {
-        m.debit += l.debit;
-        m.credit += l.credit;
+      if (!m) continue;
+      if (prePeriod) m.pre += l.debit - l.credit;
+      else {
+        m.dr += l.debit;
+        m.cr += l.credit;
       }
     }
   }
-  const rows: TrialBalanceRow[] = [];
+  const rows: TrialBalanceColumnRow[] = [];
   for (const a of accounts) {
     const m = movement.get(a._id)!;
-    const openingNet =
-      a.type === "asset" || a.type === "expense"
-        ? a.openingBalance
-        : -a.openingBalance;
-    const net = openingNet + m.debit - m.credit;
-    const hasActivity =
-      m.debit !== 0 || m.credit !== 0 || a.openingBalance !== 0;
-    if (!hasActivity) continue;
+    const debitPositive = a.type === "asset" || a.type === "expense";
+    const opening =
+      (debitPositive ? a.openingBalance : -a.openingBalance) + m.pre;
+    const closing = opening + m.dr - m.cr;
+    const openingDr = opening > 0 ? opening : 0;
+    const openingCr = opening < 0 ? -opening : 0;
+    const closingDr = closing > 0 ? closing : 0;
+    const closingCr = closing < 0 ? -closing : 0;
+    if (openingDr === 0 && openingCr === 0 && m.dr === 0 && m.cr === 0) continue;
     rows.push({
       accountId: a._id,
       code: a.code,
       name: a.name,
       type: a.type,
-      debit: net > 0 ? net : 0,
-      credit: net < 0 ? -net : 0,
+      openingDr,
+      openingCr,
+      periodDr: m.dr,
+      periodCr: m.cr,
+      closingDr,
+      closingCr,
       printNo: a.printNo,
     });
   }
@@ -280,6 +352,23 @@ export function computeAccountLedger(
   return rows;
 }
 
+/**
+ * The receivable debit a bill represents on the member ledger: the charge
+ * lines only. A carried opening-balance line restates the member's OPENING
+ * balance (already shown as the ledger's OPENING row), so it is excluded;
+ * pathological line-less bills fall back to the stored total. Shared by the
+ * member ledger and the member dues/advance lists so both always agree.
+ */
+export function billChargeAmount(
+  b: Doc<"bills">,
+  receivableId?: Id<"accounts">,
+): number {
+  if (b.lines.length === 0) return b.total;
+  return b.lines
+    .filter((l) => !isCarriedOpeningLine(l, receivableId))
+    .reduce((s, l) => s + l.amount, 0);
+}
+
 /** Member receivable ledger: opening + bills + receipts, running balance. */
 export function computeMemberLedger(
   data: SocietyData,
@@ -341,10 +430,7 @@ export function computeMemberLedger(
       // Debit only the charge lines: the opening balance is already the
       // OPENING row, and generated bills always sum their lines to the total.
       // (Falls back to the stored total for pathological line-less bills.)
-      debit:
-        b.lines.length > 0
-          ? chargeLines.reduce((s, l) => s + l.amount, 0)
-          : b.total,
+      debit: billChargeAmount(b, receivableId),
       credit: 0,
       note: carried
         ? `Due ${b.dueDate} · includes arrears of ${carried.toFixed(2)} carried from opening`
@@ -397,7 +483,86 @@ export function computeMemberLedger(
     return { ...r, balance: running };
   });
   return reweighted;
-}/** Form N heading an income/expenditure ledger files under. */
+}
+
+export type MemberBalanceRow = {
+  memberId: Id<"members">;
+  code: string;
+  /** Display flat number (wing-flat, falling back to the code). */
+  flatNo: string;
+  name: string;
+  isActive: boolean;
+  /** Dues as at the day before `fromDate` (debit-positive; negative = advance). */
+  opening: number;
+  /** Bills raised inside the period (charge lines, as on the member ledger). */
+  billed: number;
+  /** Member receipts inside the period. */
+  received: number;
+  /** Dues as at `toDate` (debit-positive; negative = advance held). */
+  closing: number;
+  /** Date of the member's latest bill/receipt up to `toDate` (date-wise display). */
+  lastEntryDate: string | null;
+};
+
+/**
+ * Per-member dues position, in exactly the member-ledger arithmetic: opening
+ * balance, plus bill charge amounts (carried opening lines excluded — they
+ * restate the opening), minus receipts. One source of truth for the Member
+ * Dues list, the Member Advance list and the Balance Sheet's member-level
+ * Sundry Debtors / Advance from Members split, so they always agree.
+ */
+export function computeMemberBalances(
+  data: SocietyData,
+  fromDate: string,
+  toDate: string,
+): MemberBalanceRow[] {
+  const receivableId = receivableIdOf(data);
+  const billsByMember = new Map<Id<"members">, Doc<"bills">[]>();
+  for (const b of data.bills) {
+    if (b.issueDate > toDate) continue;
+    const list = billsByMember.get(b.memberId);
+    if (list) list.push(b);
+    else billsByMember.set(b.memberId, [b]);
+  }
+  const receiptsByMember = new Map<Id<"members">, Doc<"vouchers">[]>();
+  for (const v of data.vouchers) {
+    if (v.type !== "member_receipt" || !v.memberId || v.date > toDate) continue;
+    const list = receiptsByMember.get(v.memberId);
+    if (list) list.push(v);
+    else receiptsByMember.set(v.memberId, [v]);
+  }
+  return data.members.map((m) => {
+    let opening = m.openingBalance;
+    let billed = 0;
+    let received = 0;
+    let lastEntryDate: string | null = null;
+    for (const b of billsByMember.get(m._id) ?? []) {
+      const charge = billChargeAmount(b, receivableId);
+      if (b.issueDate < fromDate) opening += charge;
+      else billed += charge;
+      if (!lastEntryDate || b.issueDate > lastEntryDate) lastEntryDate = b.issueDate;
+    }
+    for (const v of receiptsByMember.get(m._id) ?? []) {
+      if (v.date < fromDate) opening -= v.total;
+      else received += v.total;
+      if (!lastEntryDate || v.date > lastEntryDate) lastEntryDate = v.date;
+    }
+    return {
+      memberId: m._id,
+      code: m.code,
+      flatNo: memberFlatNo(m),
+      name: m.name,
+      isActive: m.isActive,
+      opening,
+      billed,
+      received,
+      closing: opening + billed - received,
+      lastEntryDate,
+    };
+  });
+}
+
+/** Form N heading an income/expenditure ledger files under. */
 function ieGroupOf(a: Doc<"accounts">): string {
   const n = a.name.toLowerCase();
   if (a.type === "income") {
@@ -542,10 +707,12 @@ const FUND_ORDER = [
  * their Roman-numbered headings, assets on the other side, and each row
  * carrying the previous-year closing figure next to the current one.
  *
- * A credit (negative) receivable is member money held in advance — advances
- * collected ahead of billing, including credit opening balances carried on
- * bills — so it is presented under Current Liabilities as "Advance from
- * Members" instead of netting into Sundry Debtors on the asset side.
+ * Member money is presented PER MEMBER, never netted: a member with dues
+ * outstanding is an asset (Sundry Debtors); a member who has paid ahead of
+ * billing — nothing due — has lent the society money, a liability ("Advance
+ * from Members" under Current Liabilities). The figures come from the same
+ * member-ledger arithmetic as the Member Dues / Member Advance lists, so the
+ * statements and those lists always agree.
  */
 export function computeBalanceSheet(data: SocietyData, toDate: string) {
   type Side = {
@@ -586,19 +753,24 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   const assets: Side[] = [];
   const liabilities: Side[] = [];
   const receivableId = receivableIdOf(data);
-  let memberAdvance = 0;
-  let memberAdvancePrev = 0;
-  let hasMemberAdvance = false;
+  // GL receivable balance (debit-positive), kept only to reconcile against
+  // the member-level split below.
+  let receivableNet = 0;
+  let receivableNetPrev = 0;
+  let receivableName = "Sundry Debtors";
+  let receivablePrintNo: string | undefined;
 
   for (const a of data.accounts) {
     if (a.type !== "asset" && a.type !== "liability") continue;
     const net = netOf(a, toDate);
     const prev = netOf(a, prevToDate);
-    if (a._id === receivableId && a.type === "asset" && net < 0) {
-      // Credit receivable → Advance from Members (liability side).
-      memberAdvance += -net;
-      memberAdvancePrev += -prev;
-      hasMemberAdvance = true;
+    if (a._id === receivableId) {
+      // Presented below from the MEMBER-LEVEL position (gross dues vs gross
+      // advances), not from this netted GL balance.
+      receivableNet += a.type === "asset" ? net : -net;
+      receivableNetPrev += a.type === "asset" ? prev : -prev;
+      receivableName = a.name;
+      receivablePrintNo = a.printNo;
       continue;
     }
     if (net === 0 && prev === 0) continue;
@@ -619,14 +791,64 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     if (a.type === "asset") assets.push(row);
     else liabilities.push(row);
   }
-  if (hasMemberAdvance) {
+
+  const memberGross = (upto: string) => {
+    let dues = 0;
+    let advance = 0;
+    for (const r of computeMemberBalances(data, "0000-01-01", upto)) {
+      if (r.closing > 0) dues += r.closing;
+      else if (r.closing < 0) advance += -r.closing;
+    }
+    return { dues, advance };
+  };
+  const membersNow = memberGross(toDate);
+  const membersPrev = memberGross(prevToDate);
+
+  if (membersNow.dues !== 0 || membersPrev.dues !== 0) {
+    assets.push({
+      code: "",
+      name: receivableName,
+      amount: membersNow.dues,
+      type: "asset",
+      printNo: receivablePrintNo,
+      group: "Assets",
+      prev: membersPrev.dues,
+    });
+  }
+  if (membersNow.advance !== 0 || membersPrev.advance !== 0) {
     liabilities.push({
       code: "",
       name: "Advance from Members",
-      amount: memberAdvance,
+      amount: membersNow.advance,
       type: "liability",
       group: "Current Liabilities and Provisions",
-      prev: memberAdvancePrev,
+      prev: membersPrev.advance,
+    });
+  }
+  // Reconciliation line for postings the member-ledger arithmetic cannot see
+  // (e.g. journals posted straight to the receivable, or a receivable opening
+  // balance that predates the member records). Shown on its own row so the
+  // sheet still ties to the General Ledger instead of silently absorbing it.
+  // (Member openings that no bill has carried into the GL yet are ignored in
+  // the comparative column — the GL only learns them through bill totals.)
+  const receivableGap = receivableNet - (membersNow.dues - membersNow.advance);
+  const receivableGapPrev =
+    receivableNetPrev - (membersPrev.dues - membersPrev.advance);
+  if (Math.abs(receivableGap) > 0.005) {
+    const debitSide = receivableGap > 0;
+    assets.push({
+      code: "",
+      name: "Members Receivable (unadjusted)",
+      amount: Math.abs(receivableGap),
+      type: "asset",
+      printNo: receivablePrintNo,
+      group: "Assets",
+      prev:
+        Math.abs(receivableGapPrev) <= 0.005
+          ? 0
+          : Math.sign(receivableGap) === Math.sign(receivableGapPrev)
+            ? Math.abs(receivableGapPrev)
+            : -Math.abs(receivableGapPrev),
     });
   }
 
