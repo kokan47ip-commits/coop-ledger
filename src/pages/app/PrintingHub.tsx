@@ -24,7 +24,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { EmptyHint, IconTile, PageHeader } from "@/components/PageParts";
+import { IconTile, PageHeader } from "@/components/PageParts";
 import {
   DEFAULT_MARGINS,
   billWithReceiptPdf,
@@ -77,6 +77,15 @@ const isArrearsLine = (name: string) => {
   const n = name.toLowerCase();
   return n.startsWith("arrears") || n.startsWith("credit balance");
 };
+
+/** Margin inputs shown in the controls panel (millimetres, A4). */
+const MARGIN_FIELDS = [
+  ["top", "Top"],
+  ["bottom", "Bottom"],
+  ["left", "Left"],
+  ["right", "Right"],
+  ["centre", "Centre gap"],
+] as const satisfies readonly (readonly [keyof PageMargins, string])[];
 
 export default function PrintingHub() {
   const { societyId, society } = useSociety();
@@ -668,6 +677,28 @@ export default function PrintingHub() {
               </RadioGroup>
             </div>
           )}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <Ruler className="size-3.5" /> Page margins (mm)
+            </Label>
+            <div className="flex flex-wrap gap-3">
+              {MARGIN_FIELDS.map(([k, lbl]) => (
+                <div key={k} className="w-20 space-y-1">
+                  <Label htmlFor={`mg-${k}`} className="text-xs text-muted-foreground">
+                    {lbl}
+                  </Label>
+                  <Input
+                    id={`mg-${k}`}
+                    type="number"
+                    min={0}
+                    max={50}
+                    value={margins[k]}
+                    onChange={(e) => setMargin(k, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="ml-auto flex items-center gap-2">
             <Badge variant="outline" className="gap-1.5">
               <Files className="size-3.5" />
@@ -687,11 +718,11 @@ export default function PrintingHub() {
         </div>
       </div>
 
-      {/* Selection table (selection-wise scope) */}
-      {scope === "selection" && docType !== "combo" && (
+      {/* Document list — tick boxes in selection scope, print preview otherwise */}
+      {docType !== "combo" && (
         <Card className="py-0">
           <CardContent className="px-0">
-            {selectionTable}
+            {docsTable}
           </CardContent>
         </Card>
       )}
@@ -745,12 +776,6 @@ export default function PrintingHub() {
         </Card>
       )}
 
-      {(scope === "month" || scope === "range") && docType !== "combo" && effCount === 0 && (
-        <EmptyHint>
-          Nothing matches this scope yet — change the month or dates above.
-        </EmptyHint>
-      )}
-
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <CalendarRange className="size-3.5" />
         Half-size layouts draw the same document compactly with a dashed cut line — fold or cut
@@ -761,8 +786,9 @@ export default function PrintingHub() {
   );
 }
 
-/** Simple tick-to-include table used by selection-wise scope. */
+/** Document list: tick-to-include in selection scope, read-only preview otherwise. */
 function SelectionTable({
+  showChecks = false,
   head,
   rows,
   selected,
@@ -770,6 +796,7 @@ function SelectionTable({
   onToggleAll,
   onToggle,
 }: {
+  showChecks?: boolean;
   head: string[];
   rows: { id: string; cells: (string | number)[] }[];
   selected: Set<string>;
@@ -778,15 +805,23 @@ function SelectionTable({
   onToggle: (id: string, on: boolean) => void;
 }) {
   if (rows.length === 0) {
-    return <div className="p-6 text-sm text-muted-foreground">Nothing to select yet.</div>;
+    return (
+      <div className="p-6 text-sm text-muted-foreground">
+        {showChecks
+          ? "Nothing to select yet."
+          : "No documents match this scope — change the month or dates above."}
+      </div>
+    );
   }
   return (
     <Table>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-8 pl-4">
-            <Checkbox checked={allSelected} onCheckedChange={(v) => onToggleAll(v === true)} aria-label="Select all" />
-          </TableHead>
+          {showChecks && (
+            <TableHead className="w-8 pl-4">
+              <Checkbox checked={allSelected} onCheckedChange={(v) => onToggleAll(v === true)} aria-label="Select all" />
+            </TableHead>
+          )}
           {head.map((h) => (
             <TableHead key={h}>{h}</TableHead>
           ))}
@@ -795,13 +830,15 @@ function SelectionTable({
       <TableBody>
         {rows.map((r) => (
           <TableRow key={r.id}>
-            <TableCell className="pl-4">
-              <Checkbox
-                checked={selected.has(r.id)}
-                onCheckedChange={(v) => onToggle(r.id, v === true)}
-                aria-label={`Select ${r.cells[0]}`}
-              />
-            </TableCell>
+            {showChecks && (
+              <TableCell className="pl-4">
+                <Checkbox
+                  checked={selected.has(r.id)}
+                  onCheckedChange={(v) => onToggle(r.id, v === true)}
+                  aria-label={`Select ${r.cells[0]}`}
+                />
+              </TableCell>
+            )}
             {r.cells.map((c, i) => (
               <TableCell key={i} className={typeof c === "number" ? "tabular-nums" : ""}>
                 {c}
