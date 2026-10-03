@@ -82,18 +82,29 @@ export async function qrToCanvas(
 
 type Matrix = boolean[][];
 
-let cachedImage: HTMLImageElement | null = null;
-let cachedPayload: string | null = null;
+/**
+ * Image cache keyed by the exact UPI payload. Batch exports preload a QR per
+ * bill (each bill's payload embeds its own amount), so the cache MUST hold
+ * every payload — a single-slot cache would leave only the last bill's QR
+ * drawable when the batch HTML is finally built.
+ */
+const imageCache = new Map<string, HTMLImageElement>();
+const IMAGE_CACHE_MAX = 500;
 let preloadPromise: Promise<void> | null = null;
 
 async function payloadImage(payload: string): Promise<HTMLImageElement> {
-  if (cachedImage && cachedPayload === payload) return cachedImage;
+  const hit = imageCache.get(payload);
+  if (hit) return hit;
   const dataUrl = await qrDataUrl(payload, 264);
   const img = new Image();
   img.src = dataUrl;
   await img.decode();
-  cachedImage = img;
-  cachedPayload = payload;
+  // Soft cap: drop the oldest entry when the cache grows past the limit.
+  if (imageCache.size >= IMAGE_CACHE_MAX) {
+    const oldest = imageCache.keys().next().value;
+    if (oldest !== undefined) imageCache.delete(oldest);
+  }
+  imageCache.set(payload, img);
   return img;
 }
 
@@ -123,10 +134,11 @@ export function drawQrImage(
   y: number,
   size: number,
 ): void {
-  if (!(cachedImage && cachedPayload === payload)) return;
+  const img = imageCache.get(payload);
+  if (!img) return;
   if (typeof (target as jsPDF).addImage === "function") {
     (target as jsPDF).addImage(
-      cachedImage,
+      img,
       "PNG",
       x,
       y,
@@ -137,7 +149,7 @@ export function drawQrImage(
     );
   } else {
     const ctx = target as CanvasRenderingContext2D;
-    ctx.drawImage(cachedImage, x, y, size, size);
+    ctx.drawImage(img, x, y, size, size);
   }
 }
 
@@ -162,5 +174,5 @@ export function qrMatrix(payload: string): Matrix {
 
 /** Render a payload to a PNG data URL synchronously from a cached image. */
 export function cachedQrDataUrl(payload: string): string | null {
-  return cachedImage && cachedPayload === payload ? cachedImage.src : null;
+  return imageCache.get(payload)?.src ?? null;
 }

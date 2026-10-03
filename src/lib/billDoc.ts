@@ -431,6 +431,31 @@ export function billPdfBytes(data: LegacyBillData): Uint8Array {
 
 export type BillBatchItem = { data: LegacyBillData; upiPayload?: string | null };
 
+/** Page margins in millimetres for batch exports (PDF, Word and print). */
+export type PageMargins = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  /** Extra vertical gap between the two half-page documents in 2-up layout. */
+  centre: number;
+};
+
+export const DEFAULT_MARGINS: PageMargins = {
+  top: 10,
+  bottom: 10,
+  left: 10,
+  right: 10,
+  centre: 8,
+};
+
+const mmToPt = (mm: number) => (Math.max(0, mm || 0) * 72) / 25.4;
+
+/** Merge user margins over the defaults. */
+function withMargins(m?: PageMargins): PageMargins {
+  return { ...DEFAULT_MARGINS, ...(m ?? {}) };
+}
+
 /** One compact half-page receipt box (gold rule + tear line omitted). */
 function drawReceiptBoxCompact(
   doc: jsPDF,
@@ -728,20 +753,33 @@ export function drawVoucherBoxCompact(
  * Batch of bills in one PDF. With `twoUp` each A4 page carries two compact
  * bill boxes separated by a dashed cut line; otherwise one full bill per page.
  */
-export function billsPdfBatch(items: BillBatchItem[], filename: string, twoUp = false) {
-  downloadBytes(billsPdfBatchBytes(items, twoUp), filename, "application/pdf");
+export function billsPdfBatch(
+  items: BillBatchItem[],
+  filename: string,
+  twoUp = false,
+  margins?: PageMargins,
+) {
+  downloadBytes(billsPdfBatchBytes(items, twoUp, margins), filename, "application/pdf");
 }
 
 /** `billsPdfBatch` without the download — the caller mails or stores the bytes. */
-export function billsPdfBatchBytes(items: BillBatchItem[], twoUp = false): Uint8Array {
+export function billsPdfBatchBytes(
+  items: BillBatchItem[],
+  twoUp = false,
+  margins?: PageMargins,
+): Uint8Array {
+  const M = withMargins(margins);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const x = 38;
-  const w = W - x * 2;
+  const x = mmToPt(M.left);
+  const w = W - x - mmToPt(M.right);
+  const top = mmToPt(M.top);
+  const usableH = H - top - mmToPt(M.bottom);
+  const gap = mmToPt(M.centre);
+  const boxH = twoUp ? Math.max(120, (usableH - gap) / 2) : usableH;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 26 : H / 2 + 12) : 30);
-  const boxH = twoUp ? H / 2 - 22 : H - 60;
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? top : top + boxH + gap) : top);
   let slot = 0;
   for (const item of items) {
     if (slot >= perPage) {
@@ -749,10 +787,11 @@ export function billsPdfBatchBytes(items: BillBatchItem[], twoUp = false): Uint8
       slot = 0;
     }
     if (twoUp && slot === 1) {
+      const cutY = top + boxH + gap / 2;
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
-      doc.line(x, H / 2, x + w, H / 2);
+      doc.line(x, cutY, x + w, cutY);
       doc.setLineDashPattern([], 0);
     }
     if (twoUp) drawBillBoxCompact(doc, item.data, x, yFor(slot), w, boxH);
@@ -767,36 +806,82 @@ export function billsPdfBatchBytes(items: BillBatchItem[], twoUp = false): Uint8
  * receipt box below, separated by a dashed cut line. Both are drawn compact
  * so the pair always fits a single sheet.
  */
+/** Dashed placeholder shown when a bill has no matching receipt yet. */
+function drawNoReceiptPlaceholder(
+  doc: jsPDF,
+  bill: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): void {
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.9);
+  doc.setLineDashPattern([4, 4], 0);
+  doc.rect(x, top, w, h);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  ink(doc, MUTED);
+  doc.text("NO RECEIPT ISSUED YET", x + w / 2, top + h / 2 - 12, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.text(
+    `No receipt has been recorded against Bill No. ${bill.billNo} (${bill.memberName}) yet.`,
+    x + w / 2,
+    top + h / 2 + 6,
+    { align: "center", maxWidth: w - 28 },
+  );
+  doc.text(
+    "The bill above stands on its own until a receipt is issued.",
+    x + w / 2,
+    top + h / 2 + 20,
+    { align: "center", maxWidth: w - 28 },
+  );
+}
+
+/**
+ * Bill + its receipt on ONE A4 page: full-width bill box on top, its matching
+ * receipt box below, separated by a dashed cut line. Bills without a receipt
+ * in the window still print — the bottom half becomes a clear placeholder.
+ */
 export function billWithReceiptPdfBytes(
-  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+  pairs: { bill: LegacyBillData; receipt?: LegacyReceiptData }[],
+  margins?: PageMargins,
 ): Uint8Array {
+  const M = withMargins(margins);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const x = 38;
-  const w = W - x * 2;
+  const x = mmToPt(M.left);
+  const w = W - x - mmToPt(M.right);
+  const top = mmToPt(M.top);
+  const gap = mmToPt(Math.max(M.centre, 6));
+  const half = Math.max(120, (H - top - mmToPt(M.bottom) - gap) / 2);
   let first = true;
   for (const p of pairs) {
     if (!first) doc.addPage();
     first = false;
-    const half = (H - 90) / 2;
-    drawBillBoxCompact(doc, p.bill, x, 26, w, half);
+    drawBillBoxCompact(doc, p.bill, x, top, w, half);
+    const cutY = top + half + gap / 2;
     stroke(doc, HAIRLINE);
     doc.setLineWidth(0.8);
     doc.setLineDashPattern([5, 4], 0);
-    doc.line(x, 26 + half + 8, x + w, 26 + half + 8);
+    doc.line(x, cutY, x + w, cutY);
     doc.setLineDashPattern([], 0);
-    drawReceiptBoxCompact(doc, p.receipt, x, 26 + half + 16, w, half);
+    if (p.receipt) drawReceiptBoxCompact(doc, p.receipt, x, top + half + gap, w, half);
+    else drawNoReceiptPlaceholder(doc, p.bill, x, top + half + gap, w, half);
   }
   return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
 }
 
 /** Download the bill+receipt combo PDF. */
 export function billWithReceiptPdf(
-  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+  pairs: { bill: LegacyBillData; receipt?: LegacyReceiptData }[],
   filename: string,
+  margins?: PageMargins,
 ) {
-  downloadBytes(billWithReceiptPdfBytes(pairs), filename, "application/pdf");
+  downloadBytes(billWithReceiptPdfBytes(pairs, margins), filename, "application/pdf");
 }
 
 /** One bordered receipt box drawn at (x, y); returns the box's bottom y. */
@@ -957,20 +1042,33 @@ export type ReceiptBatchItem = { data: LegacyReceiptData; copyLabel?: string };
  * Batch of receipts in one PDF. With `twoUp` each A4 page carries two compact
  * receipt boxes separated by a dashed cut line; otherwise one receipt per page.
  */
-export function receiptsPdfBatch(items: ReceiptBatchItem[], filename: string, twoUp = false) {
-  downloadBytes(receiptsPdfBatchBytes(items, twoUp), filename, "application/pdf");
+export function receiptsPdfBatch(
+  items: ReceiptBatchItem[],
+  filename: string,
+  twoUp = false,
+  margins?: PageMargins,
+) {
+  downloadBytes(receiptsPdfBatchBytes(items, twoUp, margins), filename, "application/pdf");
 }
 
 /** `receiptsPdfBatch` without the download — the caller mails the bytes. */
-export function receiptsPdfBatchBytes(items: ReceiptBatchItem[], twoUp = false): Uint8Array {
+export function receiptsPdfBatchBytes(
+  items: ReceiptBatchItem[],
+  twoUp = false,
+  margins?: PageMargins,
+): Uint8Array {
+  const M = withMargins(margins);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const x = 38;
-  const w = W - x * 2;
+  const x = mmToPt(M.left);
+  const w = W - x - mmToPt(M.right);
+  const top = mmToPt(M.top);
+  const usableH = H - top - mmToPt(M.bottom);
+  const gap = mmToPt(M.centre);
+  const boxH = twoUp ? Math.max(110, (usableH - gap) / 2) : usableH;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 26 : H / 2 + 12) : 56);
-  const boxH = twoUp ? H / 2 - 22 : H - 112;
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? top : top + boxH + gap) : top);
   let slot = 0;
   for (const item of items) {
     if (slot >= perPage) {
@@ -978,10 +1076,11 @@ export function receiptsPdfBatchBytes(items: ReceiptBatchItem[], twoUp = false):
       slot = 0;
     }
     if (twoUp && slot === 1) {
+      const cutY = top + boxH + gap / 2;
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
-      doc.line(x, H / 2, x + w, H / 2);
+      doc.line(x, cutY, x + w, cutY);
       doc.setLineDashPattern([], 0);
     }
     const d = { ...item.data, copyLabel: item.copyLabel ?? item.data.copyLabel };
@@ -998,20 +1097,33 @@ export type VoucherBatchItem = { data: VoucherDocData };
  * Batch of vouchers in one PDF. With `twoUp` each A4 page carries two compact
  * voucher boxes separated by a dashed cut line; otherwise one voucher per page.
  */
-export function vouchersPdfBatch(items: VoucherBatchItem[], filename: string, twoUp = false) {
-  downloadBytes(vouchersPdfBatchBytes(items, twoUp), filename, "application/pdf");
+export function vouchersPdfBatch(
+  items: VoucherBatchItem[],
+  filename: string,
+  twoUp = false,
+  margins?: PageMargins,
+) {
+  downloadBytes(vouchersPdfBatchBytes(items, twoUp, margins), filename, "application/pdf");
 }
 
 /** `vouchersPdfBatch` without the download — the caller mails the bytes. */
-export function vouchersPdfBatchBytes(items: VoucherBatchItem[], twoUp = false): Uint8Array {
+export function vouchersPdfBatchBytes(
+  items: VoucherBatchItem[],
+  twoUp = false,
+  margins?: PageMargins,
+): Uint8Array {
+  const M = withMargins(margins);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const x = 38;
-  const w = W - x * 2;
+  const x = mmToPt(M.left);
+  const w = W - x - mmToPt(M.right);
+  const top = mmToPt(M.top);
+  const usableH = H - top - mmToPt(M.bottom);
+  const gap = mmToPt(M.centre);
+  const boxH = twoUp ? Math.max(120, (usableH - gap) / 2) : usableH;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? 26 : H / 2 + 12) : 30);
-  const boxH = twoUp ? H / 2 - 22 : H - 60;
+  const yFor = (slot: number) => (twoUp ? (slot === 0 ? top : top + boxH + gap) : top);
   let slot = 0;
   for (const item of items) {
     if (slot >= perPage) {
@@ -1019,10 +1131,11 @@ export function vouchersPdfBatchBytes(items: VoucherBatchItem[], twoUp = false):
       slot = 0;
     }
     if (twoUp && slot === 1) {
+      const cutY = top + boxH + gap / 2;
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
-      doc.line(x, H / 2, x + w, H / 2);
+      doc.line(x, cutY, x + w, cutY);
       doc.setLineDashPattern([], 0);
     }
     if (twoUp) drawVoucherBoxCompact(doc, item.data, x, yFor(slot), w, boxH);
@@ -1084,6 +1197,28 @@ const docCss = `
   .copytag { text-align:right; font-size:8pt; margin:6px 12px 0; color:#64748b; letter-spacing:1px; }
   table.sign { width:100%; }
   .vsig td { vertical-align:top; }
+  /* Compact (half-page) variant used by 2-up batch exports. */
+  .compact .hdr { padding:7px 10px 6px; }
+  .compact .hdr h1 { font-size:11pt; }
+  .compact .hdr p { font-size:7pt; }
+  .compact .goldrule { height:2px; }
+  .compact .titlebar { font-size:8.5pt; padding:4px; }
+  .compact .meta td { padding:2px 8px; font-size:8.5pt; }
+  .compact .parthead th { font-size:8.5pt; padding:4px 10px; }
+  .compact .lines td { padding:2px 10px; font-size:8.5pt; }
+  .compact .tot td { padding:2px 10px; font-size:9pt; }
+  .compact .tot .val { width:100px; }
+  .compact .foot td { padding:4px 10px; font-size:7pt; }
+  .compact .receipt-body { padding:8px 14px; font-size:9pt; line-height:1.55; }
+  .compact .amtbox { padding:4px 10px; margin-top:4px; }
+  .compact .wordband { font-size:8pt; padding:3px 8px; margin:4px 0; }
+  .compact .copytag { margin:2px 12px 0; font-size:7pt; }
+  .compact .vhead td { padding:2px 8px; font-size:8.5pt; }
+  .compact .vtable th { font-size:8.5pt; padding:4px 8px; }
+  .compact .vtable td { padding:2px 8px; font-size:8.5pt; }
+  .compact .words { font-size:8pt; padding:4px 10px; }
+  .compact .vsig td { padding-top:14px; font-size:8pt; }
+  .compact .tear { margin:8px auto; }
 `;
 
 function societyHeaderHtml(s: SocietyHeader): string {
@@ -1098,15 +1233,16 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function billHtml(data: LegacyBillData): string {
+function billHtml(data: LegacyBillData, compact = false): string {
   // Word/print export embeds a QR only when its image was preloaded via
   // preloadQrImage() — data URLs can't be produced synchronously here.
+  // `compact` drops the empty filler rows so two bills fit half a page each.
   const upi = data.upi;
   const upiPayload = upi ? amountUpiUri(upi.uri, upi.amount) : null;
   const upiImg = upiPayload ? cachedQrDataUrl(upiPayload) : null;
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>Bill ${esc(String(data.billNo))}</title><style>${docCss}</style></head>
-<body><div class="wrap">
+<body><div class="wrap${compact ? " compact" : ""}">
   ${societyHeaderHtml(data.society)}
   <div class="titlebar">BILL FOR THE MONTH OF ${esc(data.periodLabel.toUpperCase())}</div>
   <table class="meta">
@@ -1117,7 +1253,7 @@ function billHtml(data: LegacyBillData): string {
   <table class="parthead"><tr><th>P A R T I C U L A R S</th><th class="r">A M O U N T</th></tr></table>
   <table class="lines">
     ${data.lines.map((l, i) => `<tr><td>${l.serial ?? i + 1}.&nbsp; ${esc(l.name.toUpperCase())}</td><td class="num">${money(l.amount)}</td></tr>`).join("")}
-    ${Array.from({ length: Math.max(0, 7 - data.lines.length) }, () => `<tr><td>&nbsp;</td><td></td></tr>`).join("")}
+    ${Array.from({ length: compact ? 0 : Math.max(0, 7 - data.lines.length) }, () => `<tr><td>&nbsp;</td><td></td></tr>`).join("")}
   </table>
   <table class="tot">
     <tr><td class="words" rowspan="2" style="width:52%">${esc(rupeesInWords(data.totalDue))}</td><td class="lbl">Total:</td><td class="val">${money(data.total)}</td></tr>
@@ -1137,10 +1273,10 @@ export function billWord(data: LegacyBillData, filename: string): void {
   downloadDoc(billHtml(data), filename);
 }
 
-function receiptHtml(data: LegacyReceiptData): string {
+function receiptHtml(data: LegacyReceiptData, compact = false): string {
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>Receipt ${esc(String(data.receiptNo))}</title><style>${docCss}</style></head>
-<body><div class="wrap">
+<body><div class="wrap${compact ? " compact" : ""}">
   ${societyHeaderHtml(data.society)}
   <div class="titlebar" style="letter-spacing:4px;">RECEIPT</div>
   ${data.copyLabel ? `<p class="copytag">${esc(data.copyLabel.toUpperCase())}</p>` : ""}
@@ -1166,8 +1302,8 @@ export function receiptWord(data: LegacyReceiptData, filename: string): void {
 }
 
 /** Inner markup of a full receiptHtml document (the bordered block + tear line). */
-function receiptBodyInner(data: LegacyReceiptData): string {
-  const full = receiptHtml(data);
+function receiptBodyInner(data: LegacyReceiptData, compact = false): string {
+  const full = receiptHtml(data, compact);
   const start = full.indexOf("<body>");
   const end = full.lastIndexOf("</body>");
   if (start < 0 || end < 0) return full;
@@ -1175,21 +1311,28 @@ function receiptBodyInner(data: LegacyReceiptData): string {
 }
 
 function receiptHtmlCompact(data: LegacyReceiptData): string {
-  // Strip the trailing tear line; batching adds its own separators.
-  return receiptBodyInner(data).replace(/<div class="tear"><\/div>\s*$/, "");
+  // Compact half-page variant; batching adds its own separators.
+  return receiptBodyInner(data, true).replace(/<div class="tear"><\/div>\s*$/, "");
 }
 
 export type ReceiptWordItem = { data: LegacyReceiptData; copyLabel?: string };
 
 /** Batch of receipts in one Word document, two receipts per printed page. */
-export function receiptsWordBatch(items: ReceiptWordItem[], filename: string): void {
+export function receiptsWordBatch(
+  items: ReceiptWordItem[],
+  filename: string,
+  margins?: PageMargins,
+): void {
+  const M = withMargins(margins);
+  const wrapW = Math.round((210 - M.left - M.right) * 3.7795);
   const blocks = items
     .map((it) => receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }))
     .join('<div class="tear"></div>');
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>Receipts</title><style>${docCss}
-  @page { size: A4; margin: 1cm; }
-  .wrap { page-break-inside: avoid; }
+  @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
+  body { margin: 0; }
+  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
 </style></head>
 <body>${blocks}<div class="tear"></div></body></html>`;
   downloadDoc(html, filename);
@@ -1206,40 +1349,68 @@ function joinTwoUp(blocks: string[]): string {
     .join("");
 }
 
-function batchWordDoc(title: string, body: string): void {
+function batchWordDoc(title: string, body: string, margins?: PageMargins): void {
+  const M = withMargins(margins);
+  const wrapW = Math.round((210 - M.left - M.right) * 3.7795);
   downloadDoc(
     `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>${esc(title)}</title><style>${docCss}
-  @page { size: A4; margin: 1cm; }
-  .wrap { page-break-inside: avoid; }
+  @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
+  body { margin: 0; }
+  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
 </style></head>
 <body>${body}<div class="tear"></div></body></html>`,
     `${title}.doc`,
   );
 }
 
-/** Batch of bills in one Word document (two per page when twoUp). */
-export function billsWordBatch(items: BillBatchItem[], filename: string, twoUp = false): void {
-  const blocks = items.map((it) => billHtml(it.data));
-  batchWordDoc(filename, twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'));
-}
-
-/** Batch of vouchers in one Word document (two per page when twoUp). */
-export function vouchersWordBatch(items: VoucherBatchItem[], filename: string, twoUp = false): void {
-  const blocks = items.map((it) => voucherHtml(it.data));
-  batchWordDoc(filename, twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'));
-}
-
-/** Bill + its receipt together, one pair per page. */
-export function billWithReceiptWord(
-  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+/** Batch of bills in one Word document (two compact bills per page when twoUp). */
+export function billsWordBatch(
+  items: BillBatchItem[],
   filename: string,
+  twoUp = false,
+  margins?: PageMargins,
 ): void {
-  const blocks = pairs.map(
-    (p) =>
-      `${billHtml(p.bill).replace(/<div class="tear"><\/div>\s*$/, "")}<div class="tear"></div>${receiptHtml(p.receipt).replace(/<div class="tear"><\/div>\s*$/, "")}`,
+  const blocks = items.map((it) => billHtml(it.data, twoUp));
+  batchWordDoc(
+    filename,
+    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    margins,
   );
-  batchWordDoc(filename, blocks.join(WORD_PAGE_BREAK));
+}
+
+/** Batch of vouchers in one Word document (two compact vouchers per page when twoUp). */
+export function vouchersWordBatch(
+  items: VoucherBatchItem[],
+  filename: string,
+  twoUp = false,
+  margins?: PageMargins,
+): void {
+  const blocks = items.map((it) => voucherHtml(it.data, twoUp));
+  batchWordDoc(
+    filename,
+    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    margins,
+  );
+}
+
+/**
+ * Bill + its receipt together, one compact pair per page. Bills without a
+ * receipt still print — the lower half becomes a clear placeholder box.
+ */
+export function billWithReceiptWord(
+  pairs: { bill: LegacyBillData; receipt?: LegacyReceiptData }[],
+  filename: string,
+  margins?: PageMargins,
+): void {
+  const blocks = pairs.map((p) => {
+    const bill = billHtml(p.bill, true).replace(/<div class="tear"><\/div>\s*$/, "");
+    const receipt = p.receipt
+      ? receiptHtml(p.receipt, true).replace(/<div class="tear"><\/div>\s*$/, "")
+      : `<div class="wrap compact" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
+    return `${bill}<div class="tear"></div>${receipt}`;
+  });
+  batchWordDoc(filename, blocks.join(WORD_PAGE_BREAK), margins);
 }
 
 function downloadDoc(html: string, filename: string): void {
@@ -1555,7 +1726,7 @@ export function voucherPdf(data: VoucherDocData, filename: string) {
   downloadBytes(voucherPdfBytes(data), filename, "application/pdf");
 }
 
-function voucherHtml(data: VoucherDocData): string {
+function voucherHtml(data: VoucherDocData, compact = false): string {
   const partyLabel = data.title.startsWith("Payment")
     ? "Paid to"
     : data.title.startsWith("Receipt")
@@ -1578,7 +1749,7 @@ function voucherHtml(data: VoucherDocData): string {
   .vsig td { font-size:9pt; padding-top:36px; color:#64748b; }
   .sigline { border-top:1px dotted #94a3b8; margin:0 30px; }
 </style></head>
-<body><div class="wrap">
+<body><div class="wrap${compact ? " compact" : ""}">
   ${societyHeaderHtml(data.society)}
   <div class="titlebar" style="letter-spacing:3px;">${esc(data.title.toUpperCase())}</div>
   <table class="vhead">
@@ -1620,15 +1791,17 @@ export function voucherPrint(data: VoucherDocData): void {
 }
 
 /** Shared print-window helper for batch/combo documents. */
-function printWindowHtml(title: string, body: string) {
+function printWindowHtml(title: string, body: string, margins?: PageMargins) {
+  const M = withMargins(margins);
+  const wrapW = Math.round((210 - M.left - M.right) * 3.7795);
   const w = window.open("", "_blank", "width=860,height=900");
   if (!w) return;
   w.document.write(
     `<html><head><title>${esc(title)}</title><style>${docCss}
-  @page { size: A4; margin: 10mm; }
-  .wrap { page-break-inside: avoid; }
-  .tear { border-bottom:2px dashed #94a3b8; margin:14px auto; max-width:720px; }
-  @media print { body { margin: 8mm 10mm; } }
+  @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
+  body { margin: 0; }
+  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
+  .tear { border-bottom:2px dashed #94a3b8; margin:14px auto; max-width:${wrapW}px; }
   </style></head><body>${body}</body></html>`,
   );
   w.document.close();
@@ -1638,45 +1811,54 @@ function printWindowHtml(title: string, body: string) {
 
 const stripTear = (html: string) => html.replace(/<div class="tear"><\/div>\s*$/, "");
 
-/** Print a batch of bills (two per A4 page when twoUp). */
-export function billsPrintBatch(items: BillBatchItem[], twoUp = false): void {
-  const blocks = items.map((it) => stripTear(billHtml(it.data)));
+/** Print a batch of bills (two compact bills per A4 page when twoUp). */
+export function billsPrintBatch(items: BillBatchItem[], twoUp = false, margins?: PageMargins): void {
+  const blocks = items.map((it) => stripTear(billHtml(it.data, twoUp)));
   printWindowHtml(
     "Bills",
     twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    margins,
   );
 }
 
 /** Print a batch of receipts (two per A4 page when twoUp). */
-export function receiptsPrintBatch(items: ReceiptBatchItem[], twoUp = false): void {
+export function receiptsPrintBatch(items: ReceiptBatchItem[], twoUp = false, margins?: PageMargins): void {
   const blocks = items.map((it) =>
     receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }),
   );
   printWindowHtml(
     "Receipts",
     twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    margins,
   );
 }
 
-/** Print a batch of vouchers (two per A4 page when twoUp). */
-export function vouchersPrintBatch(items: VoucherBatchItem[], twoUp = false): void {
-  const blocks = items.map((it) => stripTear(voucherHtml(it.data)));
+/** Print a batch of vouchers (two compact vouchers per A4 page when twoUp). */
+export function vouchersPrintBatch(items: VoucherBatchItem[], twoUp = false, margins?: PageMargins): void {
+  const blocks = items.map((it) => stripTear(voucherHtml(it.data, twoUp)));
   printWindowHtml(
     "Vouchers",
     twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    margins,
   );
 }
 
-/** Print bill + receipt pairs — one combo (bill above receipt) per page. */
+/** Print bill + receipt pairs — one compact combo (bill above receipt) per
+ *  page. Bills without a receipt print with a clear placeholder below. */
 export function billWithReceiptPrint(
-  pairs: { bill: LegacyBillData; receipt: LegacyReceiptData }[],
+  pairs: { bill: LegacyBillData; receipt?: LegacyReceiptData }[],
+  margins?: PageMargins,
 ): void {
-  const blocks = pairs.map(
-    (p) =>
-      `${stripTear(billHtml(p.bill))}<div class="tear"></div>${stripTear(receiptHtml(p.receipt))}`,
-  );
+  const blocks = pairs.map((p) => {
+    const bill = stripTear(billHtml(p.bill, true));
+    const receipt = p.receipt
+      ? stripTear(receiptHtml(p.receipt, true))
+      : `<div class="wrap compact" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
+    return `${bill}<div class="tear"></div>${receipt}`;
+  });
   printWindowHtml(
     "Bills with Receipts",
     blocks.join('<div style="page-break-before:always"></div>'),
+    margins,
   );
 }

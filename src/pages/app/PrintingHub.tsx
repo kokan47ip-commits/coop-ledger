@@ -26,6 +26,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, IconTile, PageHeader } from "@/components/PageParts";
 import {
+  DEFAULT_MARGINS,
   billWithReceiptPdf,
   billWithReceiptPrint,
   billWithReceiptWord,
@@ -43,6 +44,7 @@ import {
   type BillBatchItem,
   type LegacyBillData,
   type LegacyReceiptData,
+  type PageMargins,
   type ReceiptBatchItem,
   type VoucherBatchItem,
   type VoucherDocData,
@@ -56,6 +58,7 @@ import {
   Loader2,
   Printer,
   Receipt as ReceiptIcon,
+  Ruler,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
@@ -96,6 +99,8 @@ export default function PrintingHub() {
   const [twoUp, setTwoUp] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [margins, setMargins] = useState<PageMargins>({ ...DEFAULT_MARGINS });
+  const [monthTouched, setMonthTouched] = useState(false);
 
   const memberOf = (id: Id<"members"> | undefined) =>
     members?.find((m) => m._id === id);
@@ -103,11 +108,34 @@ export default function PrintingHub() {
   const flatOf = (m?: Member) =>
     [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined;
 
+  /** Months that hold ANY printable document — bills, receipts or vouchers —
+   *  plus the current month, newest first. */
   const monthOptions = useMemo(() => {
     const set = new Set<string>((bills ?? []).map((b) => b.period));
+    for (const v of vouchers ?? []) set.add(v.date.slice(0, 7));
     set.add(currentPeriod());
     return [...set].sort((a, b) => b.localeCompare(a));
-  }, [bills]);
+  }, [bills, vouchers]);
+
+  /** Before the user picks a month themselves, default to the newest month
+   *  that actually has documents so the hub never opens on an empty month. */
+  const newestDocMonth = useMemo(() => {
+    const months = [
+      ...(bills ?? []).map((b) => b.period),
+      ...(vouchers ?? []).map((v) => v.date.slice(0, 7)),
+    ].sort((a, b) => b.localeCompare(a));
+    return months[0];
+  }, [bills, vouchers]);
+  const activeMonth = monthTouched ? month : newestDocMonth ?? month;
+  const pickMonth = (m: string) => {
+    setMonth(m);
+    setMonthTouched(true);
+  };
+
+  const setMargin = (key: keyof PageMargins, raw: string) => {
+    const v = Math.max(0, Math.min(50, Number(raw) || 0));
+    setMargins((m) => ({ ...m, [key]: v }));
+  };
 
   const inRange = (date: string) => date >= from && date <= to;
   const inRcptRange = (date: string) => date >= rcptFrom && date <= rcptTo;
@@ -145,35 +173,35 @@ export default function PrintingHub() {
 
   /** Bills in the chosen scope (month / date range / manual selection). */
   const scopedBills = useMemo(() => {
-    if (docType === "combo") return allBillsSorted.filter((b) => b.period === month);
-    if (scope === "month") return allBillsSorted.filter((b) => b.period === month);
+    if (docType === "combo") return allBillsSorted.filter((b) => b.period === activeMonth);
+    if (scope === "month") return allBillsSorted.filter((b) => b.period === activeMonth);
     if (scope === "range") return allBillsSorted.filter((b) => inRange(b.issueDate));
     return allBillsSorted.filter((b) => selected.has(b._id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allBillsSorted, docType, scope, month, from, to, selected]);
+  }, [allBillsSorted, docType, scope, activeMonth, from, to, selected]);
 
   /** Receipts in the chosen scope (receipt date). */
   const scopedReceipts = useMemo(() => {
     if (docType === "combo") return allReceiptsSorted.filter((v) => inRcptRange(v.date));
     if (scope === "month") {
-      const r = monthRangeISO(month);
+      const r = monthRangeISO(activeMonth);
       return allReceiptsSorted.filter((v) => v.date >= r.from && v.date <= r.to);
     }
     if (scope === "range") return allReceiptsSorted.filter((v) => inRange(v.date));
     return allReceiptsSorted.filter((v) => selected.has(v._id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allReceiptsSorted, docType, scope, month, from, to, rcptFrom, rcptTo, selected]);
+  }, [allReceiptsSorted, docType, scope, activeMonth, from, to, rcptFrom, rcptTo, selected]);
 
   /** Vouchers (all types) in the chosen scope. */
   const scopedVouchers = useMemo(() => {
     if (scope === "month") {
-      const r = monthRangeISO(month);
+      const r = monthRangeISO(activeMonth);
       return allVouchersSorted.filter((v) => v.date >= r.from && v.date <= r.to);
     }
     if (scope === "range") return allVouchersSorted.filter((v) => inRange(v.date));
     return allVouchersSorted.filter((v) => selected.has(v._id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allVouchersSorted, scope, month, from, to, selected]);
+  }, [allVouchersSorted, scope, activeMonth, from, to, selected]);
 
   /** Legacy-format bill document data (mirrors the Bill Register export). */
   const buildBillData = (b: Bill): LegacyBillData => {
@@ -340,7 +368,7 @@ export default function PrintingHub() {
   };
 
   const scopeLabel =
-    scope === "month" ? month : scope === "range" ? `${from}-to-${to}` : "selection";
+    scope === "month" ? activeMonth : scope === "range" ? `${from}-to-${to}` : "selection";
 
   const doExport = async (kind: "pdf" | "word" | "print") => {
     if (!society) return;
@@ -348,36 +376,38 @@ export default function PrintingHub() {
     try {
       if (docType === "bills" || (docType === "combo" && comboContent === "bills")) {
         if (billItems.length === 0) throw new Error("No bills match the selection.");
-        if (kind === "pdf") billsPdfBatch(billItems, `bills-${scopeLabel}.pdf`, twoUp);
+        if (kind === "pdf") billsPdfBatch(billItems, `bills-${scopeLabel}.pdf`, twoUp, margins);
         else if (kind === "word") {
           await preloadBillQrs();
-          billsWordBatch(billItems, `bills-${scopeLabel}`, twoUp);
+          billsWordBatch(billItems, `bills-${scopeLabel}`, twoUp, margins);
         } else {
           await preloadBillQrs();
-          billsPrintBatch(billItems, twoUp);
+          billsPrintBatch(billItems, twoUp, margins);
         }
       } else if (docType === "receipts" || (docType === "combo" && comboContent === "receipts")) {
         if (receiptItems.length === 0) throw new Error("No receipts match the selection.");
-        if (kind === "pdf") receiptsPdfBatch(receiptItems, `receipts-${scopeLabel}.pdf`, twoUp);
-        else if (kind === "word") receiptsWordBatch(receiptItems, `receipts-${scopeLabel}`);
-        else receiptsPrintBatch(receiptItems, twoUp);
+        if (kind === "pdf") receiptsPdfBatch(receiptItems, `receipts-${scopeLabel}.pdf`, twoUp, margins);
+        else if (kind === "word") receiptsWordBatch(receiptItems, `receipts-${scopeLabel}`, margins);
+        else receiptsPrintBatch(receiptItems, twoUp, margins);
       } else if (docType === "vouchers") {
         if (voucherItems.length === 0) throw new Error("No vouchers match the selection.");
-        if (kind === "pdf") vouchersPdfBatch(voucherItems, `vouchers-${scopeLabel}.pdf`, twoUp);
-        else if (kind === "word") vouchersWordBatch(voucherItems, `vouchers-${scopeLabel}`, twoUp);
-        else vouchersPrintBatch(voucherItems, twoUp);
+        if (kind === "pdf") vouchersPdfBatch(voucherItems, `vouchers-${scopeLabel}.pdf`, twoUp, margins);
+        else if (kind === "word") vouchersWordBatch(voucherItems, `vouchers-${scopeLabel}`, twoUp, margins);
+        else vouchersPrintBatch(voucherItems, twoUp, margins);
       } else {
-        const pairs = comboPairs.filter((p) => p.receipt) as {
-          bill: LegacyBillData;
-          receipt: LegacyReceiptData;
-        }[];
-        if (pairs.length === 0)
-          throw new Error(
-            "No bill has a matching receipt in the receipt date range — widen the range or switch to Only bills.",
-          );
-        if (kind === "pdf") billWithReceiptPdf(pairs, `bills-with-receipts-${scopeLabel}.pdf`);
-        else if (kind === "word") billWithReceiptWord(pairs, `bills-with-receipts-${scopeLabel}`);
-        else billWithReceiptPrint(pairs);
+        // Every bill of the month prints — with its receipt when one exists,
+        // otherwise with a clear "no receipt yet" placeholder below it.
+        if (comboPairs.length === 0)
+          throw new Error(`No bills found for ${periodLabelLong(activeMonth)}.`);
+        if (kind === "pdf")
+          billWithReceiptPdf(comboPairs, `bills-with-receipts-${scopeLabel}.pdf`, margins);
+        else if (kind === "word") {
+          await preloadBillQrs();
+          billWithReceiptWord(comboPairs, `bills-with-receipts-${scopeLabel}`, margins);
+        } else {
+          await preloadBillQrs();
+          billWithReceiptPrint(comboPairs, margins);
+        }
       }
       toast.success(
         kind === "pdf"
@@ -393,15 +423,17 @@ export default function PrintingHub() {
     }
   };
 
+  /** Full pool of the active tab — "select all" ticks every document, and
+   *  selection-wise tables list all of them for ticking. */
   const allIds = useMemo(() => {
     const list: string[] =
       docType === "bills"
-        ? scopedBills.map((b) => String(b._id))
+        ? allBillsSorted.map((b) => String(b._id))
         : docType === "vouchers"
-          ? scopedVouchers.map((v) => String(v._id))
-          : scopedReceipts.map((v) => String(v._id));
+          ? allVouchersSorted.map((v) => String(v._id))
+          : allReceiptsSorted.map((v) => String(v._id));
     return new Set(list);
-  }, [docType, scopedBills, scopedVouchers, scopedReceipts]);
+  }, [docType, allBillsSorted, allVouchersSorted, allReceiptsSorted]);
 
   const allSelected = allIds.size > 0 && [...allIds].every((id) => selected.has(id));
   const toggleAll = (on: boolean) =>
@@ -425,77 +457,72 @@ export default function PrintingHub() {
         : docType === "vouchers"
           ? voucherItems.length
           : comboContent === "both"
-            ? comboPairs.filter((p) => p.receipt).length
+            ? comboPairs.length
             : comboContent === "bills"
               ? billItems.length
               : receiptItems.length;
 
-  const selectionTable =
-    docType === "bills" ? (
-      <SelectionTable
-        head={["Bill No", "Period", "Member", "Total due", "Paid", "Status"]}
-        rows={allBillsSorted.map((b) => {
-          const m = memberOf(b.memberId);
-          return {
-            id: b._id,
-            cells: [
-              b.billNo,
-              periodLabelLong(b.period),
-              m?.name ?? "—",
-              formatMoney(b.total),
-              formatMoney(b.paidAmount),
-              b.status,
-            ],
-          };
-        })}
-        selected={selected}
-        allSelected={allSelected}
-        onToggleAll={toggleAll}
-        onToggle={toggleOne}
-      />
-    ) : docType === "vouchers" ? (
-      <SelectionTable
-        head={["Voucher No", "Type", "Date", "Party", "Amount"]}
-        rows={allVouchersSorted.map((v) => {
-          const m = memberOf(v.memberId ?? undefined);
-          return {
-            id: v._id,
-            cells: [
-              v.voucherNo,
-              voucherTitleFor(v.type),
-              formatDate(v.date),
-              m?.name ?? "—",
-              formatMoney(v.total),
-            ],
-          };
-        })}
-        selected={selected}
-        allSelected={allSelected}
-        onToggleAll={toggleAll}
-        onToggle={toggleOne}
-      />
-    ) : (
-      <SelectionTable
-        head={["Receipt No", "Date", "Member", "Mode", "Amount"]}
-        rows={allReceiptsSorted.map((v) => {
-          const m = memberOf(v.memberId ?? undefined);
-          return {
-            id: v._id,
-            cells: [
-              v.voucherNo,
-              formatDate(v.date),
-              m?.name ?? "—",
-              v.mode ?? "—",
-              formatMoney(v.total),
-            ],
-          };
-        })}
-        selected={selected}
-        allSelected={allSelected}
-        onToggleAll={toggleAll}
-        onToggle={toggleOne}
-      />
+  /** Cells for the bills / vouchers / receipts table of the active tab. */
+  const cellsFor = (d: Bill | Voucher): (string | number)[] => {
+    const m = memberOf(
+      docType === "bills" ? (d as Bill).memberId : (d as Voucher).memberId ?? undefined,
     );
+    if (docType === "bills") {
+      const b = d as Bill;
+      return [
+        b.billNo,
+        periodLabelLong(b.period),
+        m?.name ?? "—",
+        formatMoney(b.total),
+        formatMoney(b.paidAmount),
+        b.status,
+      ];
+    }
+    const v = d as Voucher;
+    return docType === "vouchers"
+      ? [
+          v.voucherNo,
+          voucherTitleFor(v.type),
+          formatDate(v.date),
+          m?.name ?? "—",
+          formatMoney(v.total),
+        ]
+      : [v.voucherNo, formatDate(v.date), m?.name ?? "—", v.mode ?? "—", formatMoney(v.total)];
+  };
+
+  const tableHead =
+    docType === "bills"
+      ? ["Bill No", "Period", "Member", "Total due", "Paid", "Status"]
+      : docType === "vouchers"
+        ? ["Voucher No", "Type", "Date", "Party", "Amount"]
+        : ["Receipt No", "Date", "Member", "Mode", "Amount"];
+
+  /** Month/date-wise shows what will print (read-only); selection-wise lists
+   *  the full pool with tick boxes. */
+  const tableRows: (Bill | Voucher)[] =
+    scope === "selection"
+      ? docType === "bills"
+        ? allBillsSorted
+        : docType === "vouchers"
+          ? allVouchersSorted
+          : allReceiptsSorted
+      : docType === "bills"
+        ? scopedBills
+        : docType === "vouchers"
+          ? scopedVouchers
+          : scopedReceipts;
+
+  const docsTable = (
+    <SelectionTable
+      showChecks={scope === "selection"}
+      head={tableHead}
+      rows={tableRows.map((d) => ({ id: String(d._id), cells: cellsFor(d) }))}
+      selected={selected}
+      allSelected={allSelected}
+      onToggleAll={toggleAll}
+      onToggle={toggleOne}
+    />
+  );
 
   return (
     <div className="space-y-6">
@@ -533,7 +560,7 @@ export default function PrintingHub() {
                 <Label>
                   {docType === "bills" ? "Billing month" : "Month (document date)"}
                 </Label>
-                <Select value={month} onValueChange={setMonth}>
+                <Select value={activeMonth} onValueChange={pickMonth}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {monthOptions.map((m) => (
@@ -578,7 +605,7 @@ export default function PrintingHub() {
               {comboContent !== "receipts" && (
                 <div className="space-y-2">
                   <Label>Billing month (bills)</Label>
-                  <Select value={month} onValueChange={setMonth}>
+                  <Select value={activeMonth} onValueChange={pickMonth}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {monthOptions.map((m) => (
@@ -611,10 +638,10 @@ export default function PrintingHub() {
             </div>
             {comboContent === "both" && (
               <p className="text-xs leading-5 text-muted-foreground">
-                Each bill of {periodLabelLong(month)} is printed on the upper half of an A4
-                sheet with that member's latest receipt dated {formatDate(rcptFrom)} –{" "}
-                {formatDate(rcptTo)} below it. Bills without a receipt in the window are
-                skipped — switch to “Only bills” to print them all.
+                Every bill of {periodLabelLong(activeMonth)} is printed on the upper half of an A4
+                sheet, with that member's latest receipt dated {formatDate(rcptFrom)} –{" "}
+                {formatDate(rcptTo)} below it. Bills without a receipt in the window still print —
+                the lower half carries a “no receipt issued yet” note.
               </p>
             )}
           </div>
@@ -699,7 +726,7 @@ export default function PrintingHub() {
                         </span>
                       ) : (
                         <Badge variant="outline" className="text-muted-foreground">
-                          No receipt in range — skipped
+                          No receipt in range — bill prints alone
                         </Badge>
                       )}
                     </TableCell>
@@ -708,7 +735,7 @@ export default function PrintingHub() {
                 {comboPairs.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                      No bills for {periodLabelLong(month)}.
+                      No bills for {periodLabelLong(activeMonth)}.
                     </TableCell>
                   </TableRow>
                 )}
