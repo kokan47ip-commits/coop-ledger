@@ -396,7 +396,8 @@ export default function PrintingHub() {
       } else if (docType === "receipts" || (docType === "combo" && comboContent === "receipts")) {
         if (receiptItems.length === 0) throw new Error("No receipts match the selection.");
         if (kind === "pdf") receiptsPdfBatch(receiptItems, `receipts-${scopeLabel}.pdf`, twoUp, margins);
-        else if (kind === "word") receiptsWordBatch(receiptItems, `receipts-${scopeLabel}`, margins);
+        else if (kind === "word")
+          receiptsWordBatch(receiptItems, `receipts-${scopeLabel}`, margins, twoUp);
         else receiptsPrintBatch(receiptItems, twoUp, margins);
       } else if (docType === "vouchers") {
         if (voucherItems.length === 0) throw new Error("No vouchers match the selection.");
@@ -465,11 +466,22 @@ export default function PrintingHub() {
         ? receiptItems.length
         : docType === "vouchers"
           ? voucherItems.length
-          : comboContent === "both"
-            ? comboPairs.length
-            : comboContent === "bills"
-              ? billItems.length
-              : receiptItems.length;
+        : comboContent === "both"
+          ? comboPairs.length
+          : comboContent === "bills"
+            ? billItems.length
+            : receiptItems.length;
+
+  /** Pages the export produces — the combo layout always uses one full A4
+   *  sheet per pair, regardless of the two-up toggle hidden on that tab. */
+  const pageCount =
+    docType === "combo" && comboContent === "both"
+      ? effCount
+      : twoUp
+        ? Math.ceil(effCount / 2)
+        : effCount;
+  const showPages =
+    effCount > 0 && (twoUp || (docType === "combo" && comboContent === "both"));
 
   /** Cells for the bills / vouchers / receipts table of the active tab. */
   const cellsFor = (d: Bill | Voucher): (string | number)[] => {
@@ -703,7 +715,7 @@ export default function PrintingHub() {
             <Badge variant="outline" className="gap-1.5">
               <Files className="size-3.5" />
               {effCount} document{effCount === 1 ? "" : "s"}
-              {twoUp && effCount > 0 ? ` · ${Math.ceil(effCount / 2)} page(s)` : ""}
+              {showPages ? ` · ${pageCount} page(s)` : ""}
             </Badge>
             <Button variant="outline" disabled={busy || effCount === 0} onClick={() => doExport("pdf")}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />} PDF

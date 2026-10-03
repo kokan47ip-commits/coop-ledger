@@ -1322,19 +1322,22 @@ export function receiptsWordBatch(
   items: ReceiptWordItem[],
   filename: string,
   margins?: PageMargins,
+  /** Two compact receipts per A4 page — mirrors the PDF/print layout. */
+  twoUp = false,
 ): void {
   const M = withMargins(margins);
   const wrapW = Math.round((210 - M.left - M.right) * 3.7795);
-  const blocks = items
-    .map((it) => receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }))
-    .join('<div class="tear"></div>');
+  const blocks = items.map((it) =>
+    receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }),
+  );
+  const body = twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>');
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>Receipts</title><style>${docCss}
   @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
   body { margin: 0; }
   .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
 </style></head>
-<body>${blocks}<div class="tear"></div></body></html>`;
+<body>${body}</body></html>`;
   downloadDoc(html, filename);
 }
 
@@ -1342,10 +1345,22 @@ export function receiptsWordBatch(
 const WORD_PAGE_BREAK =
   '<br clear=all style="mso-special-character:line-break;page-break-before:always">';
 
+/** Remove a block's own trailing tear divider. Bills/vouchers end with
+ *  `<div class="tear"></div></body></html>`, so the pattern must cover the
+ *  closing tags too — otherwise batching adds a SECOND divider at every
+ *  boundary and 2-up pages pick up the extra height. */
+const stripTear = (html: string) =>
+  html.replace(/(<div class="tear"><\/div>\s*)(<\/body>\s*<\/html>\s*)?$/, "$2");
+
 /** Join document blocks two-per-page: a hard page break after every 2nd. */
 function joinTwoUp(blocks: string[]): string {
+  // No separator after the LAST block — it would only stack on top of a
+  // wrapper-level divider (Word) or dangle at the end of the print job.
   return blocks
-    .map((b, i) => b + ((i + 1) % 2 === 0 && i < blocks.length - 1 ? WORD_PAGE_BREAK : '<div class="tear"></div>'))
+    .map((b, i) => {
+      if (i >= blocks.length - 1) return b;
+      return b + ((i + 1) % 2 === 0 ? WORD_PAGE_BREAK : '<div class="tear"></div>');
+    })
     .join("");
 }
 
@@ -1359,7 +1374,7 @@ function batchWordDoc(title: string, body: string, margins?: PageMargins): void 
   body { margin: 0; }
   .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
 </style></head>
-<body>${body}<div class="tear"></div></body></html>`,
+<body>${body}</body></html>`,
     `${title}.doc`,
   );
 }
@@ -1371,7 +1386,7 @@ export function billsWordBatch(
   twoUp = false,
   margins?: PageMargins,
 ): void {
-  const blocks = items.map((it) => billHtml(it.data, twoUp));
+  const blocks = items.map((it) => stripTear(billHtml(it.data, twoUp)));
   batchWordDoc(
     filename,
     twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
@@ -1386,7 +1401,7 @@ export function vouchersWordBatch(
   twoUp = false,
   margins?: PageMargins,
 ): void {
-  const blocks = items.map((it) => voucherHtml(it.data, twoUp));
+  const blocks = items.map((it) => stripTear(voucherHtml(it.data, twoUp)));
   batchWordDoc(
     filename,
     twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
@@ -1404,9 +1419,9 @@ export function billWithReceiptWord(
   margins?: PageMargins,
 ): void {
   const blocks = pairs.map((p) => {
-    const bill = billHtml(p.bill, true).replace(/<div class="tear"><\/div>\s*$/, "");
+    const bill = stripTear(billHtml(p.bill, true));
     const receipt = p.receipt
-      ? receiptHtml(p.receipt, true).replace(/<div class="tear"><\/div>\s*$/, "")
+      ? stripTear(receiptHtml(p.receipt, true))
       : `<div class="wrap compact" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
     return `${bill}<div class="tear"></div>${receipt}`;
   });
@@ -1808,8 +1823,6 @@ function printWindowHtml(title: string, body: string, margins?: PageMargins) {
   w.focus();
   setTimeout(() => w.print(), 300);
 }
-
-const stripTear = (html: string) => html.replace(/<div class="tear"><\/div>\s*$/, "");
 
 /** Print a batch of bills (two compact bills per A4 page when twoUp). */
 export function billsPrintBatch(items: BillBatchItem[], twoUp = false, margins?: PageMargins): void {
