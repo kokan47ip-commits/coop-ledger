@@ -145,7 +145,7 @@ afterAll(() => {
 
 /* ------------------------------ assertions ------------------------------- */
 
-const tears = (html: string) => (html.match(/<div class="tear">/g) ?? []).length;
+const tears = (html: string) => (html.match(/<div class="tear"[ >]/g) ?? []).length;
 const pageBreaks = (html: string) => (html.match(/page-break-before/g) ?? []).length;
 const doubleTears = (html: string) =>
   (html.match(/<div class="tear"><\/div>\s*<div class="tear"><\/div>/g) ?? []).length;
@@ -208,6 +208,7 @@ describe("PDF batch page geometry", () => {
       EXTREME,
       ZERO,
       { top: 20, bottom: 12, centre: 12 } as PageMargins, // partial merge
+      { top: 10, bottom: 10, centre: 0 } as PageMargins, // touching halves
     ];
     for (const margins of cases) {
       const M = { ...DEFAULT_MARGINS, ...margins };
@@ -224,15 +225,21 @@ describe("PDF batch page geometry", () => {
   });
 
   test("combo PDF cut line lands on the exact midpoint too", () => {
-    const margins = { top: 20, bottom: 15, centre: 10 } as PageMargins;
-    const M = { ...DEFAULT_MARGINS, ...margins };
     const pairs = [
       { bill: makeBill("BILL-1"), receipt: makeReceipt() },
       { bill: makeBill("BILL-2") },
     ];
-    const lines = cutLines(billWithReceiptPdfBytes(pairs, margins));
-    expect(lines.length).toBe(2); // one cut per pair-page
-    for (const y of lines) expect(Math.abs(y - expectedCutY(M))).toBeLessThan(0.5);
+    // centre=10 uses the raw gap; centre=0 exercises the 6mm floor — both stay
+    // exact because the gap straddles the midpoint either way.
+    for (const margins of [
+      { top: 20, bottom: 15, centre: 10 } as PageMargins,
+      { top: 20, bottom: 15, centre: 0 } as PageMargins,
+    ]) {
+      const M = { ...DEFAULT_MARGINS, ...margins };
+      const lines = cutLines(billWithReceiptPdfBytes(pairs, margins));
+      expect(lines.length).toBe(2); // one cut per pair-page
+      for (const y of lines) expect(Math.abs(y - expectedCutY(M))).toBeLessThan(0.5);
+    }
   });
 });
 
@@ -328,7 +335,7 @@ describe("exact half-page centre split (Word/print)", () => {
     expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1); // 134.5mm
     expect(cssHeight(html, "teargap")).toBeCloseTo(DEFAULT_MARGINS.centre / 2, 1);
     // one exact tear per complete pair (n=4 → 2 mid-tears) + the per-box pin
-    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect((html.match(/class="teargap"/g) ?? []).length).toBe(2);
     expect((html.match(/class="wrap halfbox compact"/g) ?? []).length).toBe(4);
     expect(html).toContain("tearline"); // dashed cut inside the centre gap
   });
@@ -355,7 +362,7 @@ describe("exact half-page centre split (Word/print)", () => {
     billsPrintBatch(billItems(4), true);
     const html = read();
     expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1);
-    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect((html.match(/class="teargap"/g) ?? []).length).toBe(2);
     expect((html.match(/<div class="tearline"><\/div>/g) ?? []).length).toBe(2);
     receiptsPrintBatch(receiptItems(2), true);
     expect(read()).toContain("halfbox");
@@ -371,13 +378,45 @@ describe("exact half-page centre split (Word/print)", () => {
     billWithReceiptWord(pairs, "combo");
     let html = await takeWordHtml();
     expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1);
-    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect((html.match(/class="teargap"/g) ?? []).length).toBe(2);
     expect(html).toContain("No receipt issued yet");
 
     const read = installPrintWindow();
     billWithReceiptPrint(pairs);
     html = read();
     expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1);
-    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect((html.match(/class="teargap"/g) ?? []).length).toBe(2);
+  });
+
+  test("exact tear geometry is INLINE — block docCss copies must not inflate the gap", async () => {
+    // Every block embeds its own docCss; a wrapper stylesheet rule of equal
+    // specificity would lose the cascade and re-add 8px tear margins, pushing
+    // 2-up pages apart. Inline styles are immune.
+    billsWordBatch(billItems(4), "bills", true);
+    const html = await takeWordHtml();
+    expect(
+      (html.match(/<div class="tear" style="height:[\d.]+mm;margin:0 auto;border-bottom:0">/g) ?? []).length,
+    ).toBe(2);
+    const first = html.match(
+      /<div class="tear" style="height:([\d.]+)mm;margin:0 auto;border-bottom:0">/,
+    );
+    expect(first).not.toBeNull();
+    expect(parseFloat(first![1] as string)).toBeCloseTo(DEFAULT_MARGINS.centre, 1);
+
+    const read = installPrintWindow();
+    billsPrintBatch(billItems(4), true);
+    expect(
+      (read().match(/height:8mm;margin:0 auto;border-bottom:0"/g) ?? []).length,
+    ).toBe(2);
+  });
+
+  test("wrapper wrap-width override out-specifies the per-block docCss copy", async () => {
+    // Custom left/right margins must shrink the wrap in Word/print; the block
+    // docCss pins max-width:720px later in document order, so the wrapper rule
+    // needs the higher-specificity div.wrap selector.
+    const margins = { left: 25, right: 25 } as PageMargins; // wrapW = 604.7px
+    billsWordBatch(billItems(1), "bills", false, margins);
+    const html = await takeWordHtml();
+    expect(html).toContain("div.wrap { page-break-inside: avoid; max-width: 605px");
   });
 });
