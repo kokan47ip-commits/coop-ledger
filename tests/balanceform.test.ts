@@ -166,13 +166,66 @@ describe("Form N: Income & Expenditure", () => {
       "Contributions and Other Receipts",
       "Interest and Other Income",
     ]);
-    expect(ie.expenditure.map((r) => r.group)).toEqual([
+    // Ledger rows only — the system balancing account appended last carries
+    // no group heading of its own.
+    expect(ie.expenditure.filter((r) => !r.system).map((r) => r.group)).toEqual([
       "Repairs, Maintenance and Establishment Expenses",
       "Other Operating Expenses",
     ]);
     expect(ie.totalIncome).toBe(650);
     expect(ie.totalExpenditure).toBe(240);
     expect(ie.surplus).toBe(410);
+    // Surplus: the SYSTEM account "Income over Expenses" balances the
+    // expenditure side so both sides of the statement foot to the same total.
+    const sys = ie.expenditure.find((r) => r.system)!;
+    expect(sys.name).toBe("Income over Expenses");
+    expect(sys.debit).toBe(410);
+    expect(ie.income.some((r) => r.system)).toBe(false);
+    expect(ie.totalExpenditure + sys.debit).toBe(ie.totalIncome);
+  });
+
+  test("deficit shows the system account on the income side", () => {
+    const data = {
+      accounts: [
+        acct("interest", "income", { name: "Interest on Sinking Fund Investment" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 50,
+          lines: [
+            { accountId: "interest", debit: 0, credit: 50 },
+            { accountId: "bank", debit: 50, credit: 0 },
+          ],
+        },
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-20", voucherNo: "P1",
+          type: "payment", total: 200,
+          lines: [
+            { accountId: "repair", debit: 200, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const ie = computeIncomeExpenditure(data, "2026-04-01", "2026-06-30");
+    expect(ie.surplus).toBe(-150);
+    // Deficit: "Expenses over Income" sits on the income side and balances it.
+    const sys = ie.income.find((r) => r.system)!;
+    expect(sys.name).toBe("Expenses over Income");
+    expect(sys.credit).toBe(150);
+    expect(ie.expenditure.some((r) => r.system)).toBe(false);
+    expect(ie.totalIncome + sys.credit).toBe(ie.totalExpenditure);
+    expect(ie.income.filter((r) => !r.system).map((r) => r.name)).toEqual([
+      "Interest on Sinking Fund Investment",
+    ]);
   });
 });
 
@@ -245,28 +298,43 @@ describe("Form N: Balance Sheet", () => {
       accountGroups: [],
       members: [m1],
       vouchers: [
+        // Dr bank 100 / Cr recv 100 — collected from the member.
         {
           _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
           type: "member_receipt", memberId: "m1", bankCashAccountId: "bank", total: 100,
           lines: [
             { accountId: "bank", debit: 100, credit: 0 },
-            { accountId: "maint", debit: 0, credit: 100 },
+            { accountId: "recv", debit: 0, credit: 100 },
           ],
         },
       ],
-      bills: [],
+      bills: [
+        // Dr recv 100 / Cr maintenance income 100 — the bill that earned it.
+        // (Posting receipts straight to income would leave the member ledger
+        // and the GL receivable telling different stories; books stay
+        // consistent only when income accrues through the bill.)
+        {
+          _id: "b1", _creationTime: 0, societyId: "s1", billNo: "BILL-1", memberId: "m1",
+          period: "May,2026", issueDate: "2026-05-01", dueDate: "2026-05-10", total: 100,
+          paidAmount: 0, status: "unpaid",
+          lines: [{ accountId: "maint", name: "Maintenance", amount: 100 }],
+        },
+      ],
       society,
       tariffs: [],
     } as unknown as SocietyData;
 
     const bs = computeBalanceSheet(data, "2026-06-30");
+    // The member was billed 100 and paid 100 — nothing due, no Dues row; the
+    // income stays in the books as "Income over Expenses" (surplus) and bank
+    // holds the cash.
     expect(bs.assets.map((r) => r.name)).toEqual(["Bank of India"]);
     expect(bs.assets[0]!.amount).toBe(600); // 500 opening + 100 receipt
 
-    expect(bs.liabilities.map((r) => r.name)).toEqual(["Sinking Fund", "Surplus for the year"]);
+    expect(bs.liabilities.map((r) => r.name)).toEqual(["Sinking Fund", "Income over Expenses"]);
     expect(bs.liabilities[0]!.group).toBe("Reserve Funds and Other Funds");
     expect(bs.liabilities[1]!.group).toBe("Surplus / (Deficit)");
-    expect(bs.liabilities[1]!.amount).toBe(100); // income minus no expenditure
+    expect(bs.liabilities[1]!.amount).toBe(100); // bill income minus no expenditure
     // Balanced books: 500 openings + 100 surplus on both sides.
     expect(bs.totalLiabilities).toBe(600);
     expect(bs.totalAssets).toBe(600);
@@ -320,7 +388,7 @@ describe("Form N: Balance Sheet", () => {
     } as unknown as SocietyData;
 
     const bs = computeBalanceSheet(data, "2026-06-30");
-    const debtors = bs.assets.find((r) => r.name === "Members Receivable");
+    const debtors = bs.assets.find((r) => r.name === "Dues from Members");
     const advance = bs.liabilities.find((r) => r.name === "Advance from Members");
 
     // Gross on both sides — NOT the netted 100.
@@ -417,7 +485,18 @@ describe("Trial Balance (three columns)", () => {
 describe("Member dues & advance lists", () => {
   test("date-wise per-member position: dues, advance and neither", () => {
     const mA = member("mA", { code: "02", name: "Member A", wing: "A", flatNo: "101", openingBalance: 200 });
-        // Member A receives 300 against 1000 billed → 700 due.
+    const mB = member("mB", { code: "03", name: "Member B", wing: "B", flatNo: "102", openingBalance: 100 });
+    const mC = member("mC", { code: "04", name: "Member C", wing: "C", flatNo: "103" });
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India" }),
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable" }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [mA, mB, mC],
+      vouchers: [
+        // Member A receives 300 against 800 billed → 700 due (incl. 200 opening).
         {
           _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
           type: "member_receipt", memberId: "mA", bankCashAccountId: "bank", total: 300,
@@ -426,7 +505,8 @@ describe("Member dues & advance lists", () => {
             { accountId: "recv", debit: 0, credit: 300 },
           ],
         },
-        // Member B (100 due from opening) receives 400 → 300 in ADVANCE.        {
+        // Member B (100 due from opening) receives 400 → 300 in ADVANCE.
+        {
           _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-12", voucherNo: "R2",
           type: "member_receipt", memberId: "mB", bankCashAccountId: "bank", total: 400,
           lines: [
@@ -448,7 +528,7 @@ describe("Member dues & advance lists", () => {
           _id: "b1", _creationTime: 0, societyId: "s1", billNo: "BILL-1", memberId: "mA",
           period: "2026-05", issueDate: "2026-05-01", dueDate: "2026-05-10", total: 800,
           paidAmount: 0, status: "unpaid",
-          lines: [{ accountId: "recv", name: "Maintenance", amount: 800 }],
+          lines: [{ accountId: "maint", name: "Maintenance", amount: 800 }],
         },
       ],
       society,

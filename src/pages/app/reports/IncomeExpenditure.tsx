@@ -19,6 +19,10 @@ type IERow = {
   printNo?: string;
   /** Form N section heading this ledger files under. */
   group?: string;
+  /** System-generated balancing account ("Income over Expenses" when the
+   *  society is in surplus, "Expenses over Income" when in deficit) — no
+   *  ledger behind it, printed last without a serial or heading. */
+  system?: boolean;
 };
 
 type IEResult = {
@@ -32,6 +36,14 @@ type IEResult = {
 /** Statement serial: the user-defined Print No., else the running position. */
 function serialOf(printNo: string | undefined, position: number): string {
   return printNo ?? String(position);
+}
+
+/** Group-band trigger: first row of a Form N heading — never on the system
+ *  balancing account row, which carries no heading of its own. */
+function bandHead(rows: IERow[], i: number): boolean {
+  const r = rows[i];
+  if (!r || r.system) return false;
+  return i === 0 || rows[i - 1]!.group !== r.group;
 }
 
 const money = (n: number) =>
@@ -63,7 +75,9 @@ export default function IncomeExpenditure() {
     : null;
 
   /** Form N table: Expenditure on the left, Income on the right, with the
-   *  prescribed headings rendered as band rows where each group begins. */
+   *  prescribed headings rendered as band rows where each group begins. The
+   *  system account row ("Income over Expenses" / "Expenses over Income")
+   *  balances the two sides, so the totals foot to the same figure. */
   const buildTable = (): TableSpec => {
     const exp = ie?.expenditure ?? [];
     const inc = ie?.income ?? [];
@@ -73,8 +87,8 @@ export default function IncomeExpenditure() {
     for (let i = 0; i < maxLen; i++) {
       const e = exp[i];
       const c = inc[i];
-      const eHead = e ? (i === 0 || exp[i - 1]!.group !== e.group) : false;
-      const cHead = c ? (i === 0 || inc[i - 1]!.group !== c.group) : false;
+      const eHead = bandHead(exp, i);
+      const cHead = bandHead(inc, i);
       if (eHead || cHead) {
         rows.push([
           "",
@@ -88,21 +102,18 @@ export default function IncomeExpenditure() {
       }
       rows.push([
         "",
-        e ? serialOf(e.printNo, i + 1) : "",
-        e ? `    ${e.name}` : "",
+        e ? (e.system ? "" : serialOf(e.printNo, i + 1)) : "",
+        e ? (e.system ? e.name : `    ${e.name}`) : "",
         e ? e.debit : "",
-        c ? serialOf(c.printNo, i + 1) : "",
-        c ? `    ${c.name}` : "",
+        c ? (c.system ? "" : serialOf(c.printNo, i + 1)) : "",
+        c ? (c.system ? c.name : `    ${c.name}`) : "",
         c ? c.credit : "",
       ]);
     }
-    rows.push(["", "", "Total Expenditure", ie?.totalExpenditure ?? 0, "", "Total Income", ie?.totalIncome ?? 0]);
-    const surplus = ie?.surplus ?? 0;
-    if (surplus >= 0) {
-      rows.push(["", "", "", "", "", "Surplus for the period", surplus]);
-    } else {
-      rows.push(["", "", "Deficit for the period", -surplus, "", "", ""]);
-    }
+    // The two sides foot to the same total — the balancing system account is
+    // already part of the columns above.
+    const foot = Math.max(ie?.totalIncome ?? 0, ie?.totalExpenditure ?? 0);
+    rows.push(["", "", "Total", foot, "", "Total", foot]);
     return {
       head: ["", "S.No.", "Expenditure", "Amount (₹)", "S.No.", "Income", "Amount (₹)"],
       body: rows,
@@ -193,8 +204,8 @@ export default function IncomeExpenditure() {
               }).map((_, i) => {
                 const e = ie.expenditure[i];
                 const c = ie.income[i];
-                const eHead = e ? i === 0 || ie.expenditure[i - 1]!.group !== e.group : false;
-                const cHead = c ? i === 0 || ie.income[i - 1]!.group !== c.group : false;
+                const eHead = bandHead(ie.expenditure, i);
+                const cHead = bandHead(ie.income, i);
                 return (
                   <Fragment key={i}>
                     {(eHead || cHead) && (
@@ -207,49 +218,38 @@ export default function IncomeExpenditure() {
                         <td className="border-l" />
                       </tr>
                     )}
-                    <tr className="border-b last:border-0">
+                    <tr
+                      className={
+                        e?.system || c?.system
+                          ? "border-t-2 border-indigo-300 font-semibold text-[#312e81]"
+                          : "border-b last:border-0"
+                      }
+                    >
                       <td className="px-5 py-2.5">{e?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
-                        {e ? serialOf(e.printNo, i + 1) : ""}
+                        {e && !e.system ? serialOf(e.printNo, i + 1) : ""}
                       </td>
                       <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
                       <td className="border-l px-5 py-2.5">{c?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
-                        {c ? serialOf(c.printNo, i + 1) : ""}
+                        {c && !c.system ? serialOf(c.printNo, i + 1) : ""}
                       </td>
                       <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
                     </tr>
                   </Fragment>
                 );
               })}
-              <tr className="bg-indigo-50/70 font-semibold text-[#312e81]">
-                <td className="px-5 py-2.5">Total Expenditure</td>
+              <tr className="border-t bg-indigo-50/70 font-semibold text-[#312e81]">
+                <td className="px-5 py-2.5">Total</td>
                 <td />
-                <td className="px-5 py-2.5 text-right tabular-nums">{money(ie.totalExpenditure)}</td>
-                <td className="border-l px-5 py-2.5">Total Income</td>
+                <td className="px-5 py-2.5 text-right tabular-nums">
+                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                </td>
+                <td className="border-l px-5 py-2.5">Total</td>
                 <td />
-                <td className="border-l px-5 py-2.5 text-right tabular-nums">{money(ie.totalIncome)}</td>
-              </tr>
-              <tr className="bg-[#312e81] text-base font-semibold text-white">
-                {ie.surplus >= 0 ? (
-                  <>
-                    <td />
-                    <td />
-                    <td />
-                    <td className="border-l px-5 py-4">Surplus for the period</td>
-                    <td />
-                    <td className="border-l px-5 py-4 text-right tabular-nums">{money(ie.surplus)}</td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-5 py-4">Deficit for the period</td>
-                    <td />
-                    <td className="px-5 py-4 text-right tabular-nums">{money(-ie.surplus)}</td>
-                    <td className="border-l" />
-                    <td />
-                    <td className="border-l" />
-                  </>
-                )}
+                <td className="border-l px-5 py-2.5 text-right tabular-nums">
+                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                </td>
               </tr>
             </tbody>
           </table>

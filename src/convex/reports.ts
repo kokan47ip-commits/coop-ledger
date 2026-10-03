@@ -70,6 +70,9 @@ export type TrialBalanceRow = {
   credit: number;
   /** Form N section heading (I&E statements only). */
   group?: string;
+  /** System-generated balancing account row ("Income over Expenses" /
+   *  "Expenses over Income") — presentational, no ledger behind it. */
+  system?: boolean;
 };
 
 const TYPE_LABEL: Record<Doc<"vouchers">["type"] | "bill", string> = {
@@ -509,7 +512,7 @@ export type MemberBalanceRow = {
  * balance, plus bill charge amounts (carried opening lines excluded — they
  * restate the opening), minus receipts. One source of truth for the Member
  * Dues list, the Member Advance list and the Balance Sheet's member-level
- * Sundry Debtors / Advance from Members split, so they always agree.
+ * "Dues from Members" / "Advance from Members" split, so they always agree.
  */
 export function computeMemberBalances(
   data: SocietyData,
@@ -664,7 +667,35 @@ export function computeIncomeExpenditure(
   };
   ieOrder(expenditure, IE_EXPENSE_ORDER);
   ieOrder(income, IE_INCOME_ORDER);
+  // The period result is presented as its own SYSTEM-GENERATED account so the
+  // two sides foot to the same total: a surplus appears on the expenditure
+  // side as "Income over Expenses", a deficit on the income side as "Expenses
+  // over Income" — the same account the Balance Sheet carries. Appended AFTER
+  // the group sorting: the row has no ledger, hence no group or serial, and
+  // always prints last. totalIncome/totalExpenditure stay the pure ledger
+  // totals; the printed statement footing adds this row on top.
   const surplus = totalIncome - totalExpenditure;
+  if (surplus > 0) {
+    expenditure.push({
+      accountId: "" as Id<"accounts">,
+      code: "",
+      name: "Income over Expenses",
+      type: "expense",
+      debit: surplus,
+      credit: 0,
+      system: true,
+    });
+  } else if (surplus < 0) {
+    income.push({
+      accountId: "" as Id<"accounts">,
+      code: "",
+      name: "Expenses over Income",
+      type: "income",
+      debit: 0,
+      credit: -surplus,
+      system: true,
+    });
+  }
   return { income, expenditure, totalIncome, totalExpenditure, surplus };
 }
 
@@ -708,7 +739,7 @@ const FUND_ORDER = [
  * carrying the previous-year closing figure next to the current one.
  *
  * Member money is presented PER MEMBER, never netted: a member with dues
- * outstanding is an asset (Sundry Debtors); a member who has paid ahead of
+ * outstanding is an asset ("Dues from Members"); a member who has paid ahead of
  * billing — nothing due — has lent the society money, a liability ("Advance
  * from Members" under Current Liabilities). The figures come from the same
  * member-ledger arithmetic as the Member Dues / Member Advance lists, so the
@@ -757,7 +788,6 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   // the member-level split below.
   let receivableNet = 0;
   let receivableNetPrev = 0;
-  let receivableName = "Sundry Debtors";
   let receivablePrintNo: string | undefined;
 
   for (const a of data.accounts) {
@@ -769,7 +799,6 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       // advances), not from this netted GL balance.
       receivableNet += a.type === "asset" ? net : -net;
       receivableNetPrev += a.type === "asset" ? prev : -prev;
-      receivableName = a.name;
       receivablePrintNo = a.printNo;
       continue;
     }
@@ -807,7 +836,9 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   if (membersNow.dues !== 0 || membersPrev.dues !== 0) {
     assets.push({
       code: "",
-      name: receivableName,
+      // System-generated account (reference format 2): member opening DEBIT
+      // balances — money the members owe the society.
+      name: "Dues from Members",
       amount: membersNow.dues,
       type: "asset",
       printNo: receivablePrintNo,
@@ -818,6 +849,8 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   if (membersNow.advance !== 0 || membersPrev.advance !== 0) {
     liabilities.push({
       code: "",
+      // System-generated account (reference format 2): member opening CREDIT
+      // balances — money members paid ahead of billing.
       name: "Advance from Members",
       amount: membersNow.advance,
       type: "liability",
@@ -835,21 +868,25 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   const receivableGapPrev =
     receivableNetPrev - (membersPrev.dues - membersPrev.advance);
   if (Math.abs(receivableGap) > 0.005) {
-    const debitSide = receivableGap > 0;
-    assets.push({
+    // A positive gap (GL shows more receivable than the member split explains)
+    // is still a due on the asset side; a negative one is an unexplained
+    // credit, which is by nature a liability, not an asset.
+    const gapRow: Side = {
       code: "",
       name: "Members Receivable (unadjusted)",
       amount: Math.abs(receivableGap),
-      type: "asset",
+      type: receivableGap > 0 ? "asset" : "liability",
       printNo: receivablePrintNo,
-      group: "Assets",
+      group: receivableGap > 0 ? "Assets" : "Current Liabilities and Provisions",
       prev:
         Math.abs(receivableGapPrev) <= 0.005
           ? 0
           : Math.sign(receivableGap) === Math.sign(receivableGapPrev)
             ? Math.abs(receivableGapPrev)
             : -Math.abs(receivableGapPrev),
-    });
+    };
+    if (receivableGap > 0) assets.push(gapRow);
+    else liabilities.push(gapRow);
   }
 
   const ie = computeIncomeExpenditure(
@@ -865,7 +902,10 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   if (ie.surplus !== 0 || iePrev.surplus !== 0) {
     liabilities.push({
       code: "",
-      name: ie.surplus >= 0 ? "Surplus for the year" : "Deficit for the year",
+      // System-generated account (reference format 4): the period result
+      // presented as an account — surplus funds the society (liability), a
+      // deficit is owed to it (asset side row of the same name).
+      name: ie.surplus >= 0 ? "Income over Expenses" : "Expenses over Income",
       amount: Math.abs(ie.surplus),
       type: "liability",
       group: "Surplus / (Deficit)",
