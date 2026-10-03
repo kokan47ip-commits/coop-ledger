@@ -28,8 +28,10 @@ import {
   billsPrintBatch,
   billsWordBatch,
   receiptsPdfBatchBytes,
+  receiptsPrintBatch,
   receiptsWordBatch,
   vouchersPdfBatchBytes,
+  vouchersPrintBatch,
   vouchersWordBatch,
   type LegacyBillData,
   type LegacyReceiptData,
@@ -143,10 +145,33 @@ afterAll(() => {
 
 /* ------------------------------ assertions ------------------------------- */
 
-const tears = (html: string) => (html.match(/<div class="tear"><\/div>/g) ?? []).length;
+const tears = (html: string) => (html.match(/<div class="tear">/g) ?? []).length;
 const pageBreaks = (html: string) => (html.match(/page-break-before/g) ?? []).length;
 const doubleTears = (html: string) =>
   (html.match(/<div class="tear"><\/div>\s*<div class="tear"><\/div>/g) ?? []).length;
+
+/** y coordinate (PDF space, from page bottom) of every dashed cut line —
+ *  jsPDF writes the pattern as `[5. 4.] 0. d` right before the line op. */
+const cutLines = (bytes: Uint8Array): number[] => {
+  const s = new TextDecoder("latin1").decode(bytes);
+  const out: number[] = [];
+  const re = /\[5\. 4\.\]\s*0\.\s*d\s+([\d.]+) ([\d.]+) m\s+[\d.]+ \2 l\s+S/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) out.push(parseFloat(m[2] as string));
+  return out;
+};
+
+const MM_PT = 72 / 25.4;
+const A4_H_PT = 297 * MM_PT;
+/** Expected cut-line y: the midpoint BETWEEN the top and bottom margins. */
+const expectedCutY = (M: PageMargins): number =>
+  A4_H_PT - MM_PT * (M.top + (297 - M.top - M.bottom) / 2);
+
+/** First `height:` (mm) declared for a CSS class in the captured HTML. */
+const cssHeight = (html: string, cls: string): number | null => {
+  const m = html.match(new RegExp(`\\.${cls} \\{ height:([\\d.]+)mm`));
+  return m ? parseFloat(m[1] as string) : null;
+};
 
 /* --------------------------------- tests --------------------------------- */
 
@@ -175,6 +200,39 @@ describe("PDF batch page geometry", () => {
 
   test("defaults stay A4-friendly (10mm edges, 8mm centre gap)", () => {
     expect(DEFAULT_MARGINS).toEqual({ top: 10, bottom: 10, left: 10, right: 10, centre: 8 });
+  });
+
+  test("two-up cut line sits exactly halfway between top and bottom margins", () => {
+    const cases: PageMargins[] = [
+      DEFAULT_MARGINS,
+      EXTREME,
+      ZERO,
+      { top: 20, bottom: 12, centre: 12 } as PageMargins, // partial merge
+    ];
+    for (const margins of cases) {
+      const M = { ...DEFAULT_MARGINS, ...margins };
+      for (const bytes of [
+        billsPdfBatchBytes(billItems(2), true, margins),
+        receiptsPdfBatchBytes(receiptItems(2), true, margins),
+        vouchersPdfBatchBytes(voucherItems(2), true, margins),
+      ]) {
+        const lines = cutLines(bytes);
+        expect(lines.length).toBe(1);
+        expect(Math.abs(lines[0]! - expectedCutY(M))).toBeLessThan(0.5);
+      }
+    }
+  });
+
+  test("combo PDF cut line lands on the exact midpoint too", () => {
+    const margins = { top: 20, bottom: 15, centre: 10 } as PageMargins;
+    const M = { ...DEFAULT_MARGINS, ...margins };
+    const pairs = [
+      { bill: makeBill("BILL-1"), receipt: makeReceipt() },
+      { bill: makeBill("BILL-2") },
+    ];
+    const lines = cutLines(billWithReceiptPdfBytes(pairs, margins));
+    expect(lines.length).toBe(2); // one cut per pair-page
+    for (const y of lines) expect(Math.abs(y - expectedCutY(M))).toBeLessThan(0.5);
   });
 });
 
@@ -258,5 +316,68 @@ describe("Word/print separators (no doubled cut lines)", () => {
     expect(html).toContain("No receipt issued yet");
     expect(doubleTears(html)).toBe(0);
     expect(pageBreaks(html)).toBe(1);
+  });
+});
+
+describe("exact half-page centre split (Word/print)", () => {
+  const halfH = (M: PageMargins) => (297 - M.top - M.bottom - M.centre) / 2;
+
+  test("bills Word two-up pins each box to the exact half and centres the cut", async () => {
+    billsWordBatch(billItems(4), "bills", true);
+    const html = await takeWordHtml();
+    expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1); // 134.5mm
+    expect(cssHeight(html, "teargap")).toBeCloseTo(DEFAULT_MARGINS.centre / 2, 1);
+    // one exact tear per complete pair (n=4 → 2 mid-tears) + the per-box pin
+    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect((html.match(/class="wrap halfbox compact"/g) ?? []).length).toBe(4);
+    expect(html).toContain("tearline"); // dashed cut inside the centre gap
+  });
+
+  test("receipts Word two-up honours custom margins (top/bottom/centre)", async () => {
+    const margins = { top: 20, bottom: 15, centre: 10 } as PageMargins;
+    receiptsWordBatch(receiptItems(4), "receipts", margins, true);
+    const html = await takeWordHtml();
+    expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(margins), 1); // 126mm
+    expect(cssHeight(html, "teargap")).toBeCloseTo(5, 1);
+  });
+
+  test("one-up Word stays free-flowing (no half pins)", async () => {
+    billsWordBatch(billItems(2), "bills", false);
+    const html = await takeWordHtml();
+    expect(html).not.toContain("halfbox");
+    expect(html).not.toContain("teargap");
+    expect(html).not.toContain("tearline");
+    expect(tears(html)).toBe(1); // plain separator
+  });
+
+  test("print two-up mirrors the Word exact-half geometry", () => {
+    const read = installPrintWindow();
+    billsPrintBatch(billItems(4), true);
+    const html = read();
+    expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1);
+    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect((html.match(/<div class="tearline"><\/div>/g) ?? []).length).toBe(2);
+    receiptsPrintBatch(receiptItems(2), true);
+    expect(read()).toContain("halfbox");
+    vouchersPrintBatch(voucherItems(2), true);
+    expect(read()).toContain("tearline");
+  });
+
+  test("combo Word/print: each half pinned, exact tear between bill and receipt", async () => {
+    const pairs = [
+      { bill: makeBill("BILL-1"), receipt: makeReceipt() },
+      { bill: makeBill("BILL-2") },
+    ];
+    billWithReceiptWord(pairs, "combo");
+    let html = await takeWordHtml();
+    expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1);
+    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
+    expect(html).toContain("No receipt issued yet");
+
+    const read = installPrintWindow();
+    billWithReceiptPrint(pairs);
+    html = read();
+    expect(cssHeight(html, "halfbox")).toBeCloseTo(halfH(DEFAULT_MARGINS), 1);
+    expect((html.match(/<div class="tear"><div class="teargap">/g) ?? []).length).toBe(2);
   });
 });

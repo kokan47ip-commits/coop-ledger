@@ -456,6 +456,22 @@ function withMargins(m?: PageMargins): PageMargins {
   return { ...DEFAULT_MARGINS, ...(m ?? {}) };
 }
 
+/** A4 portrait height in mm — the page every batch export assumes. */
+const A4_HEIGHT_MM = 297;
+
+/**
+ * Exact-half split of the printable area: each half-page box is
+ * (A4 − top − bottom − centre) / 2 mm tall and the centre gap straddles the
+ * midpoint between the top and bottom margins, so the dashed cut line always
+ * lands on that exact midpoint. Shared by the PDF, Word and print engines so
+ * all three agree on where the page is cut.
+ */
+function halfPageGeometry(M: PageMargins) {
+  const usable = A4_HEIGHT_MM - M.top - M.bottom;
+  const firstH = (usable - M.centre) / 2;
+  return { usable, firstH, cutYFromTop: M.top + usable / 2 };
+}
+
 /** One compact half-page receipt box (gold rule + tear line omitted). */
 function drawReceiptBoxCompact(
   doc: jsPDF,
@@ -777,9 +793,12 @@ export function billsPdfBatchBytes(
   const top = mmToPt(M.top);
   const usableH = H - top - mmToPt(M.bottom);
   const gap = mmToPt(M.centre);
-  const boxH = twoUp ? Math.max(120, (usableH - gap) / 2) : usableH;
+  // Exact halves — no minimum clamp, so the cut line is always the true
+  // midpoint of the printable area (A4 + the 0-50mm UI range keeps boxH ≥ 200pt).
+  const boxH = twoUp ? (usableH - gap) / 2 : usableH;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? top : top + boxH + gap) : top);
+  const yFor = (slot: number) =>
+    twoUp ? (slot === 0 ? top : top + usableH / 2 + gap / 2) : top;
   let slot = 0;
   for (const item of items) {
     if (slot >= perPage) {
@@ -787,7 +806,7 @@ export function billsPdfBatchBytes(
       slot = 0;
     }
     if (twoUp && slot === 1) {
-      const cutY = top + boxH + gap / 2;
+      const cutY = top + usableH / 2;
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
@@ -857,7 +876,10 @@ export function billWithReceiptPdfBytes(
   const w = W - x - mmToPt(M.right);
   const top = mmToPt(M.top);
   const gap = mmToPt(Math.max(M.centre, 6));
-  const half = Math.max(120, (H - top - mmToPt(M.bottom) - gap) / 2);
+  // Exact halves — the cut line below lands on the midpoint between the top
+  // and bottom margins. The 6mm gap floor keeps a visible cut when centre=0;
+  // the halves stay equal because the gap straddles the midpoint.
+  const half = (H - top - mmToPt(M.bottom) - gap) / 2;
   let first = true;
   for (const p of pairs) {
     if (!first) doc.addPage();
@@ -1066,9 +1088,12 @@ export function receiptsPdfBatchBytes(
   const top = mmToPt(M.top);
   const usableH = H - top - mmToPt(M.bottom);
   const gap = mmToPt(M.centre);
-  const boxH = twoUp ? Math.max(110, (usableH - gap) / 2) : usableH;
+  // Exact halves — no minimum clamp, so the cut line is always the true
+  // midpoint of the printable area (A4 + the 0-50mm UI range keeps boxH ≥ 200pt).
+  const boxH = twoUp ? (usableH - gap) / 2 : usableH;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? top : top + boxH + gap) : top);
+  const yFor = (slot: number) =>
+    twoUp ? (slot === 0 ? top : top + usableH / 2 + gap / 2) : top;
   let slot = 0;
   for (const item of items) {
     if (slot >= perPage) {
@@ -1076,7 +1101,7 @@ export function receiptsPdfBatchBytes(
       slot = 0;
     }
     if (twoUp && slot === 1) {
-      const cutY = top + boxH + gap / 2;
+      const cutY = top + usableH / 2;
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
@@ -1121,9 +1146,12 @@ export function vouchersPdfBatchBytes(
   const top = mmToPt(M.top);
   const usableH = H - top - mmToPt(M.bottom);
   const gap = mmToPt(M.centre);
-  const boxH = twoUp ? Math.max(120, (usableH - gap) / 2) : usableH;
+  // Exact halves — no minimum clamp, so the cut line is always the true
+  // midpoint of the printable area (A4 + the 0-50mm UI range keeps boxH ≥ 200pt).
+  const boxH = twoUp ? (usableH - gap) / 2 : usableH;
   const perPage = twoUp ? 2 : 1;
-  const yFor = (slot: number) => (twoUp ? (slot === 0 ? top : top + boxH + gap) : top);
+  const yFor = (slot: number) =>
+    twoUp ? (slot === 0 ? top : top + usableH / 2 + gap / 2) : top;
   let slot = 0;
   for (const item of items) {
     if (slot >= perPage) {
@@ -1131,7 +1159,7 @@ export function vouchersPdfBatchBytes(
       slot = 0;
     }
     if (twoUp && slot === 1) {
-      const cutY = top + boxH + gap / 2;
+      const cutY = top + usableH / 2;
       stroke(doc, HAIRLINE);
       doc.setLineWidth(0.8);
       doc.setLineDashPattern([5, 4], 0);
@@ -1330,12 +1358,14 @@ export function receiptsWordBatch(
   const blocks = items.map((it) =>
     receiptHtmlCompact({ ...it.data, copyLabel: it.copyLabel ?? it.data.copyLabel }),
   );
-  const body = twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>');
+  const body = twoUp
+    ? joinTwoUp(blocks.map(withHalfBox), EXACT_TEAR)
+    : blocks.join('<div class="tear"></div>');
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
 <head><meta charset="utf-8"><title>Receipts</title><style>${docCss}
   @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
   body { margin: 0; }
-  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
+  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }${twoUp ? twoUpPageCss(M) : ""}
 </style></head>
 <body>${body}</body></html>`;
   downloadDoc(html, filename);
@@ -1352,19 +1382,44 @@ const WORD_PAGE_BREAK =
 const stripTear = (html: string) =>
   html.replace(/(<div class="tear"><\/div>\s*)(<\/body>\s*<\/html>\s*)?$/, "$2");
 
-/** Join document blocks two-per-page: a hard page break after every 2nd. */
-function joinTwoUp(blocks: string[]): string {
+/**
+ * Extra CSS that makes a 2-up / combo HTML page split the printable area into
+ * two EXACT halves (mirrors the PDF geometry): each box is a fixed
+ * (A4 − top − bottom − centre) / 2 mm tall block and the centre divider's
+ * dashed cut line sits exactly on the midpoint between the top and bottom
+ * margins. Browsers (the print path) honour the heights exactly; Word may
+ * still grow an over-full box, but compact content fits the half height.
+ */
+function twoUpPageCss(M: PageMargins): string {
+  const { firstH } = halfPageGeometry(M);
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return `\n  .halfbox { height:${r2(firstH)}mm; overflow:hidden; box-sizing:border-box; }\n  .compact .tear { height:${r2(M.centre)}mm; margin:0 auto; border-bottom:0; }\n  .teargap { height:${r2(M.centre / 2)}mm; }\n  .tearline { border-bottom:2px dashed #94a3b8; }`;
+}
+
+/** Centre divider for exact-half pages: an empty half-gap above the dashed
+ *  cut line, so the line lands on the printable area's exact midpoint. */
+const EXACT_TEAR =
+  '<div class="tear"><div class="teargap"></div><div class="tearline"></div></div>';
+
+/** Pin a document block to its exact half-page height (2-up / combo only). */
+const withHalfBox = (block: string) =>
+  block.replace('<div class="wrap', '<div class="wrap halfbox');
+
+/** Join document blocks two-per-page: a hard page break after every 2nd.
+ *  `midTear` separates the two halves inside a pair — pass EXACT_TEAR when
+ *  the page must cut at the exact midpoint of the printable area. */
+function joinTwoUp(blocks: string[], midTear = '<div class="tear"></div>'): string {
   // No separator after the LAST block — it would only stack on top of a
   // wrapper-level divider (Word) or dangle at the end of the print job.
   return blocks
     .map((b, i) => {
       if (i >= blocks.length - 1) return b;
-      return b + ((i + 1) % 2 === 0 ? WORD_PAGE_BREAK : '<div class="tear"></div>');
+      return b + ((i + 1) % 2 === 0 ? WORD_PAGE_BREAK : midTear);
     })
     .join("");
 }
 
-function batchWordDoc(title: string, body: string, margins?: PageMargins): void {
+function batchWordDoc(title: string, body: string, margins?: PageMargins, extraCss?: string): void {
   const M = withMargins(margins);
   const wrapW = Math.round((210 - M.left - M.right) * 3.7795);
   downloadDoc(
@@ -1372,7 +1427,7 @@ function batchWordDoc(title: string, body: string, margins?: PageMargins): void 
 <head><meta charset="utf-8"><title>${esc(title)}</title><style>${docCss}
   @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
   body { margin: 0; }
-  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
+  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }${extraCss ?? ""}
 </style></head>
 <body>${body}</body></html>`,
     `${title}.doc`,
@@ -1389,8 +1444,11 @@ export function billsWordBatch(
   const blocks = items.map((it) => stripTear(billHtml(it.data, twoUp)));
   batchWordDoc(
     filename,
-    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    twoUp
+      ? joinTwoUp(blocks.map(withHalfBox), EXACT_TEAR)
+      : blocks.join('<div class="tear"></div>'),
     margins,
+    twoUp ? twoUpPageCss(withMargins(margins)) : undefined,
   );
 }
 
@@ -1404,8 +1462,11 @@ export function vouchersWordBatch(
   const blocks = items.map((it) => stripTear(voucherHtml(it.data, twoUp)));
   batchWordDoc(
     filename,
-    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    twoUp
+      ? joinTwoUp(blocks.map(withHalfBox), EXACT_TEAR)
+      : blocks.join('<div class="tear"></div>'),
     margins,
+    twoUp ? twoUpPageCss(withMargins(margins)) : undefined,
   );
 }
 
@@ -1419,13 +1480,13 @@ export function billWithReceiptWord(
   margins?: PageMargins,
 ): void {
   const blocks = pairs.map((p) => {
-    const bill = stripTear(billHtml(p.bill, true));
+    const bill = withHalfBox(stripTear(billHtml(p.bill, true)));
     const receipt = p.receipt
-      ? stripTear(receiptHtml(p.receipt, true))
-      : `<div class="wrap compact" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
-    return `${bill}<div class="tear"></div>${receipt}`;
+      ? withHalfBox(stripTear(receiptHtml(p.receipt, true)))
+      : `<div class="wrap compact halfbox" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
+    return `${bill}${EXACT_TEAR}${receipt}`;
   });
-  batchWordDoc(filename, blocks.join(WORD_PAGE_BREAK), margins);
+  batchWordDoc(filename, blocks.join(WORD_PAGE_BREAK), margins, twoUpPageCss(withMargins(margins)));
 }
 
 function downloadDoc(html: string, filename: string): void {
@@ -1806,7 +1867,7 @@ export function voucherPrint(data: VoucherDocData): void {
 }
 
 /** Shared print-window helper for batch/combo documents. */
-function printWindowHtml(title: string, body: string, margins?: PageMargins) {
+function printWindowHtml(title: string, body: string, margins?: PageMargins, extraCss?: string) {
   const M = withMargins(margins);
   const wrapW = Math.round((210 - M.left - M.right) * 3.7795);
   const w = window.open("", "_blank", "width=860,height=900");
@@ -1815,7 +1876,7 @@ function printWindowHtml(title: string, body: string, margins?: PageMargins) {
     `<html><head><title>${esc(title)}</title><style>${docCss}
   @page { size: A4; margin: ${M.top}mm ${M.right}mm ${M.bottom}mm ${M.left}mm; }
   body { margin: 0; }
-  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }
+  .wrap { page-break-inside: avoid; max-width: ${wrapW}px; }${extraCss ?? ""}
   .tear { border-bottom:2px dashed #94a3b8; margin:14px auto; max-width:${wrapW}px; }
   </style></head><body>${body}</body></html>`,
   );
@@ -1829,8 +1890,11 @@ export function billsPrintBatch(items: BillBatchItem[], twoUp = false, margins?:
   const blocks = items.map((it) => stripTear(billHtml(it.data, twoUp)));
   printWindowHtml(
     "Bills",
-    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    twoUp
+      ? joinTwoUp(blocks.map(withHalfBox), EXACT_TEAR)
+      : blocks.join('<div class="tear"></div>'),
     margins,
+    twoUp ? twoUpPageCss(withMargins(margins)) : undefined,
   );
 }
 
@@ -1841,8 +1905,11 @@ export function receiptsPrintBatch(items: ReceiptBatchItem[], twoUp = false, mar
   );
   printWindowHtml(
     "Receipts",
-    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    twoUp
+      ? joinTwoUp(blocks.map(withHalfBox), EXACT_TEAR)
+      : blocks.join('<div class="tear"></div>'),
     margins,
+    twoUp ? twoUpPageCss(withMargins(margins)) : undefined,
   );
 }
 
@@ -1851,8 +1918,11 @@ export function vouchersPrintBatch(items: VoucherBatchItem[], twoUp = false, mar
   const blocks = items.map((it) => stripTear(voucherHtml(it.data, twoUp)));
   printWindowHtml(
     "Vouchers",
-    twoUp ? joinTwoUp(blocks) : blocks.join('<div class="tear"></div>'),
+    twoUp
+      ? joinTwoUp(blocks.map(withHalfBox), EXACT_TEAR)
+      : blocks.join('<div class="tear"></div>'),
     margins,
+    twoUp ? twoUpPageCss(withMargins(margins)) : undefined,
   );
 }
 
@@ -1863,15 +1933,16 @@ export function billWithReceiptPrint(
   margins?: PageMargins,
 ): void {
   const blocks = pairs.map((p) => {
-    const bill = stripTear(billHtml(p.bill, true));
+    const bill = withHalfBox(stripTear(billHtml(p.bill, true)));
     const receipt = p.receipt
-      ? stripTear(receiptHtml(p.receipt, true))
-      : `<div class="wrap compact" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
-    return `${bill}<div class="tear"></div>${receipt}`;
+      ? withHalfBox(stripTear(receiptHtml(p.receipt, true)))
+      : `<div class="wrap compact halfbox" style="border-style:dashed;padding:36px 16px;text-align:center;color:#64748b;font-size:9pt">No receipt issued yet for Bill No. ${esc(String(p.bill.billNo))} — the bill above stands on its own until a receipt is recorded.</div>`;
+    return `${bill}${EXACT_TEAR}${receipt}`;
   });
   printWindowHtml(
     "Bills with Receipts",
     blocks.join('<div style="page-break-before:always"></div>'),
     margins,
+    twoUpPageCss(withMargins(margins)),
   );
 }

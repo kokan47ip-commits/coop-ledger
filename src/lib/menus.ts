@@ -14,7 +14,9 @@ import {
   LayoutDashboard,
   Printer,
   Receipt,
+  Scale,
   ShieldCheck,
+  CreditCard,
   TrendingUp,
   UserCircle,
   Users,
@@ -42,6 +44,8 @@ export type MenuKey =
   | "member-ledger"
   | "general-ledger"
   | "cash-book"
+  | "trial-balance"
+  | "bank-book"
   | "income-expenditure"
   | "balance-sheet"
   | "receipt-payment"
@@ -91,6 +95,8 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "member-ledger", label: "Member Ledger", section: "Reports", path: "/app/member-ledger", icon: Users },
   { key: "general-ledger", label: "General Ledger", section: "Reports", path: "/app/general-ledger", icon: BarChart3 },
   { key: "cash-book", label: "Cash Book", section: "Reports", path: "/app/cash-book", icon: Landmark },
+  { key: "trial-balance", label: "Trial Balance", section: "Reports", path: "/app/trial-balance", icon: Scale },
+  { key: "bank-book", label: "Bank Book", section: "Reports", path: "/app/bank-book", icon: CreditCard },
   { key: "income-expenditure", label: "Income & Expenditure", section: "Reports", path: "/app/income-expenditure", icon: TrendingUp },
   { key: "balance-sheet", label: "Balance Sheet", section: "Reports", path: "/app/balance-sheet", icon: FileText },
   { key: "receipt-payment", label: "Receipt & Payment", section: "Reports", path: "/app/receipt-payment", icon: Wallet },
