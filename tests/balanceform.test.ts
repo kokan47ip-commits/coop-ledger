@@ -275,7 +275,7 @@ describe("Form N: Balance Sheet", () => {
     // → 1300 advance. Same figure the GL receivable nets to, so no
     // "Members Receivable (unadjusted)" row appears.
     expect(advance!.amount).toBe(1300);
-    expect(advance!.group).toBe("Current Liabilities and Provisions");
+    expect(advance!.group).toBe("VII. Current Liabilities and Provisions");
     expect(bs.liabilities.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
     expect(bs.totalAssets).toBe(1500);
     expect(bs.totalLiabilities).toBe(1300);
@@ -332,8 +332,8 @@ describe("Form N: Balance Sheet", () => {
     expect(bs.assets[0]!.amount).toBe(600); // 500 opening + 100 receipt
 
     expect(bs.liabilities.map((r) => r.name)).toEqual(["Sinking Fund", "Income over Expenses"]);
-    expect(bs.liabilities[0]!.group).toBe("Reserve Funds and Other Funds");
-    expect(bs.liabilities[1]!.group).toBe("Surplus / (Deficit)");
+    expect(bs.liabilities[0]!.group).toBe("II. Reserve Funds and Other Funds");
+    expect(bs.liabilities[1]!.group).toBe("XI. Profit and Loss Account");
     expect(bs.liabilities[1]!.amount).toBe(100); // bill income minus no expenditure
     // Balanced books: 500 openings + 100 surplus on both sides.
     expect(bs.totalLiabilities).toBe(600);
@@ -381,7 +381,7 @@ describe("Form N: Balance Sheet", () => {
     expect(bs.assets[0]!.amount).toBe(850);
     expect(bs.assets[1]!.amount).toBe(150);
     // Form N asset head X — Profit and Loss Account (the loss).
-    expect(bs.assets[1]!.group).toBe("Profit and Loss Account");
+    expect(bs.assets[1]!.group).toBe("X. Profit and Loss Account");
     // It must NOT appear as a liability.
     expect(bs.liabilities.some((r) => r.name === "Expenses over Income")).toBe(false);
     expect(bs.liabilities.map((r) => r.name)).toEqual(["Sinking Fund"]);
@@ -444,7 +444,7 @@ describe("Form N: Balance Sheet", () => {
     // Gross on both sides — NOT the netted 100.
     expect(debtors!.amount).toBe(500);
     expect(advance!.amount).toBe(400);
-    expect(advance!.group).toBe("Current Liabilities and Provisions");
+    expect(advance!.group).toBe("VII. Current Liabilities and Provisions");
     // GL receivable (800 billed − 700 received = 100) exactly explains the
     // member split (500 − 400), so no unadjusted reconciliation row appears.
     expect(bs.liabilities.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
@@ -454,6 +454,62 @@ describe("Form N: Balance Sheet", () => {
     // 400 + bill income surplus 800.
     expect(bs.totalAssets).toBe(1200);
     expect(bs.totalLiabilities).toBe(1200);
+  });
+
+  test("accounts file under the Roman-numbered statutory Form N heads, in order", () => {
+    const data = {
+      accounts: [
+        acct("share", "liability", { name: "Share Capital", openingBalance: 1000 }),
+        acct("reserve", "liability", { name: "Statutory Reserve Fund", openingBalance: 500 }),
+        acct("pf", "liability", { name: "Staff Provident Fund", openingBalance: 200 }),
+        acct("secured", "liability", { name: "Secured Loan from Bank", openingBalance: 300 }),
+        acct("unsecured", "liability", { name: "Unsecured Loan from Members", openingBalance: 400 }),
+        acct("deposit", "liability", { name: "Fixed Deposit from Members", openingBalance: 150 }),
+        acct("creditor", "liability", { name: "Sundry Creditors", openingBalance: 250 }),
+        acct("intacc", "liability", { name: "Interest Accrued but Not Paid", openingBalance: 50 }),
+        acct("other", "liability", { name: "Miscellaneous Liability", openingBalance: 100 }),
+        acct("cash", "asset", { kind: "bank_cash", name: "Cash in Hand", openingBalance: 500 }),
+        acct("inv", "asset", { name: "Sinking Fund Investment", openingBalance: 800 }),
+        acct("pfinv", "asset", { name: "Staff Provident Fund Investment", openingBalance: 200 }),
+        acct("loan", "asset", { name: "Loan to Member", openingBalance: 300 }),
+        acct("furn", "asset", { name: "Furniture and Fixtures", openingBalance: 150 }),
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    const liGroups = [...new Set(bs.liabilities.map((r) => r.group))];
+    const aGroups = [...new Set(bs.assets.map((r) => r.group))];
+
+    // Liabilities print under the prescribed heads, in statute order. Head
+    // VIII (Unpaid Dividends) simply has no balance here and is skipped.
+    expect(liGroups).toEqual([
+      "I. Share Capital",
+      "II. Reserve Funds and Other Funds",
+      "III. Staff Provident Fund",
+      "IV. Secured Loans",
+      "V. Unsecured Loans",
+      "VI. Deposits",
+      "VII. Current Liabilities and Provisions",
+      "IX. Interest Accrued but Not Paid",
+      "X. Other Liabilities",
+    ]);
+    // Assets print under the prescribed heads, in statute order.
+    expect(aGroups).toEqual([
+      "I. Cash and Bank Balances",
+      "II. Investments",
+      "III. Staff Provident Fund",
+      "IV. Loans and Advances",
+      "VII. Fixed Assets",
+    ]);
+    // No stray free-form "Assets" bucket remains.
+    expect(bs.assets.some((r) => r.group === "Assets")).toBe(false);
   });
 });
 

@@ -699,17 +699,72 @@ export function computeIncomeExpenditure(
   return { income, expenditure, totalIncome, totalExpenditure, surplus };
 }
 
-/** Form N section heading a liability ledger files under (MCS Rules groups). */
+/**
+ * Form N (MCS Rules 1961, Rule 4(1)1) LIABILITY headings, in statute order.
+ * The Balance Sheet is laid out under these Roman-numbered heads.
+ */
+export const FORM_N_LIABILITY_ORDER = [
+  "I. Share Capital",
+  "II. Reserve Funds and Other Funds",
+  "III. Staff Provident Fund",
+  "IV. Secured Loans",
+  "V. Unsecured Loans",
+  "VI. Deposits",
+  "VII. Current Liabilities and Provisions",
+  "VIII. Unpaid Dividends",
+  "IX. Interest Accrued but Not Paid",
+  "X. Other Liabilities",
+  "XI. Profit and Loss Account",
+];
+
+/**
+ * Form N ASSET headings, in statute order. Head X is the Profit and Loss
+ * Account — a loss not written off sits here, so both sides of the sheet
+ * still foot to the same total.
+ */
+export const FORM_N_ASSET_ORDER = [
+  "I. Cash and Bank Balances",
+  "II. Investments",
+  "III. Staff Provident Fund",
+  "IV. Loans and Advances",
+  "V. Sundry Debtors",
+  "VI. Current Assets",
+  "VII. Fixed Assets",
+  "VIII. Miscellaneous Expenses and Losses",
+  "IX. Other Items",
+  "X. Profit and Loss Account",
+  "XI. Current Losses",
+];
+
+/** The Form N liability head a ledger files under (Roman-numbered). */
 function fundGroupOf(data: SocietyData, a: Doc<"accounts">): string {
   const g = a.groupId
     ? data.accountGroups?.find((x) => x._id === a.groupId)
     : undefined;
   if (g) return g.name;
   const n = a.name.toLowerCase();
-  if (n.includes("share") && n.includes("capital")) return "Share Capital";
-  if (n.includes("sinking") || n.includes("building") || n.includes("development"))
-    return "Reserve Funds and Other Funds";
-  if (n.includes("deposit")) return "Deposits";
+  if (n.includes("share") && n.includes("capital")) return "I. Share Capital";
+  if (n.includes("provident")) return "III. Staff Provident Fund";
+  if (
+    n.includes("reserve") ||
+    n.includes("sinking") ||
+    n.includes("building fund") ||
+    n.includes("development") ||
+    n.includes("depreciation") ||
+    n.includes("equalisation") ||
+    n.includes("equalization")
+  )
+    return "II. Reserve Funds and Other Funds";
+  // "unsecured" contains "secured" — test it first.
+  if (n.includes("unsecured")) return "V. Unsecured Loans";
+  if (n.includes("secured") || n.includes("debenture")) return "IV. Secured Loans";
+  if (n.includes("deposit")) return "VI. Deposits";
+  if (n.includes("dividend")) return "VIII. Unpaid Dividends";
+  if (
+    n.includes("interest") &&
+    (n.includes("accrued") || n.includes("outstanding") || n.includes("payable"))
+  )
+    return "IX. Interest Accrued but Not Paid";
   if (
     n.includes("advance") ||
     n.includes("provision") ||
@@ -717,22 +772,63 @@ function fundGroupOf(data: SocietyData, a: Doc<"accounts">): string {
     n.includes("creditor") ||
     n.includes("outstanding")
   )
-    return "Current Liabilities and Provisions";
-  return "Other Liabilities";
+    return "VII. Current Liabilities and Provisions";
+  return "X. Other Liabilities";
 }
 
-/** Form N fund headings in statement order (assets sort after all of these). */
-const FUND_ORDER = [
-  "Share Capital",
-  "Reserve Funds and Other Funds",
-  "Staff Provident Fund",
-  "Secured Loans",
-  "Unsecured Loans",
-  "Deposits",
-  "Current Liabilities and Provisions",
-  "Other Liabilities",
-  "Surplus / (Deficit)",
-];
+/** The Form N asset head a ledger files under (Roman-numbered). */
+function assetGroupOf(a: Doc<"accounts">): string {
+  if (a.kind === "bank_cash") return "I. Cash and Bank Balances";
+  if (a.kind === "receivable") return "V. Sundry Debtors";
+  const n = a.name.toLowerCase();
+  if (n.includes("provident")) return "III. Staff Provident Fund";
+  if (
+    n.includes("investment") ||
+    n.includes("deposit") ||
+    n.includes("securities") ||
+    n.includes("shares") ||
+    n.includes("debenture")
+  )
+    return "II. Investments";
+  if (
+    n.includes("loan") ||
+    n.includes("advance") ||
+    n.includes("overdraft") ||
+    n.includes("hypothecation") ||
+    n.includes("pledge")
+  )
+    return "IV. Loans and Advances";
+  if (n.includes("debtor") || n.includes("receivable") || n.includes("due"))
+    return "V. Sundry Debtors";
+  if (n.includes("cash") || n.includes("bank")) return "I. Cash and Bank Balances";
+  if (
+    n.includes("stock") ||
+    n.includes("store") ||
+    n.includes("spare") ||
+    n.includes("work in progress")
+  )
+    return "VI. Current Assets";
+  if (
+    n.includes("land") ||
+    n.includes("building") ||
+    n.includes("furniture") ||
+    n.includes("fixture") ||
+    n.includes("machinery") ||
+    n.includes("vehicle") ||
+    n.includes("equipment") ||
+    n.includes("deadstock") ||
+    n.includes("computer") ||
+    n.includes("fixed asset")
+  )
+    return "VII. Fixed Assets";
+  if (
+    n.includes("goodwill") ||
+    n.includes("preliminary") ||
+    n.includes("deferred")
+  )
+    return "VIII. Miscellaneous Expenses and Losses";
+  return "IX. Other Items";
+}
 
 /**
  * Balance sheet in the Form N (MCS Rules) shape: liabilities and funds under
@@ -810,7 +906,7 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       amount: Math.abs(net),
       type: a.type,
       printNo: a.printNo,
-      group: a.type === "liability" ? fundGroupOf(data, a) : "Assets",
+      group: a.type === "liability" ? fundGroupOf(data, a) : assetGroupOf(a),
       prev:
         prev === 0
           ? 0
@@ -843,7 +939,7 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       amount: membersNow.dues,
       type: "asset",
       printNo: receivablePrintNo,
-      group: "Assets",
+      group: "V. Sundry Debtors",
       prev: membersPrev.dues,
     });
   }
@@ -855,7 +951,7 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       name: "Advance from Members",
       amount: membersNow.advance,
       type: "liability",
-      group: "Current Liabilities and Provisions",
+      group: "VII. Current Liabilities and Provisions",
       prev: membersPrev.advance,
     });
   }
@@ -878,7 +974,10 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       amount: Math.abs(receivableGap),
       type: receivableGap > 0 ? "asset" : "liability",
       printNo: receivablePrintNo,
-      group: receivableGap > 0 ? "Assets" : "Current Liabilities and Provisions",
+      group:
+        receivableGap > 0
+          ? "V. Sundry Debtors"
+          : "VII. Current Liabilities and Provisions",
       prev:
         Math.abs(receivableGapPrev) <= 0.005
           ? 0
@@ -915,7 +1014,7 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
         name: "Income over Expenses",
         amount: ie.surplus,
         type: "liability",
-        group: "Surplus / (Deficit)",
+        group: "XI. Profit and Loss Account",
         prev: prevResult,
       });
     } else {
@@ -926,22 +1025,23 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
         name: "Expenses over Income",
         amount: -ie.surplus,
         type: "asset",
-        group: "Profit and Loss Account",
+        group: "X. Profit and Loss Account",
         prev: prevResult,
       });
     }
   }
 
   const groupOrder = (g: string) => {
-    const i = FUND_ORDER.indexOf(g);
-    return i === -1 ? FUND_ORDER.length : i;
+    const i = FORM_N_LIABILITY_ORDER.indexOf(g);
+    return i === -1 ? FORM_N_LIABILITY_ORDER.length : i;
   };
-  // Assets sort by Form N asset heading (the loss head last), then serial /
-  // code order within each heading.
-  const assetGroupOrder = (g: string) => (g === "Profit and Loss Account" ? 1 : 0);
-  assets.sort(
-    (a, b) => assetGroupOrder(a.group) - assetGroupOrder(b.group) || byPrintOrder(a, b),
-  );
+  // Assets sort by Form N asset heading (the loss head X prints last, before
+  // Current Losses), then serial / code order within each heading.
+  const assetOrder = (g: string) => {
+    const i = FORM_N_ASSET_ORDER.indexOf(g);
+    return i === -1 ? FORM_N_ASSET_ORDER.length : i;
+  };
+  assets.sort((a, b) => assetOrder(a.group) - assetOrder(b.group) || byPrintOrder(a, b));
   liabilities.sort(
     (a, b) => groupOrder(a.group) - groupOrder(b.group) || byPrintOrder(a, b),
   );
