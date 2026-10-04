@@ -4,10 +4,10 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
 import { PageHeader, ReportLetterhead } from "@/components/PageParts";
-import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { exportExcel, exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate } from "@/lib/format";
-import { Download, FileText, Printer } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, Printer } from "lucide-react";
 import { Fragment, useState } from "react";
 import { useQuery } from "convex/react";
 
@@ -171,11 +171,12 @@ export default function IncomeExpenditure() {
     };
   };
 
-  const doExport = (kind: "pdf" | "word" | "print") => {
+  const doExport = (kind: "pdf" | "word" | "excel" | "print") => {
     if (!meta) return;
     const table = buildTable();
     if (kind === "pdf") exportPDF(meta, [table], "income-expenditure.pdf");
     else if (kind === "word") exportWord(meta, [table], "income-expenditure.doc");
+    else if (kind === "excel") exportExcel(meta, [table], "income-expenditure.xlsx");
     else printTables(meta, [table]);
   };
 
@@ -214,6 +215,14 @@ export default function IncomeExpenditure() {
             className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
           >
             <FileText className="size-4" /> Word
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("excel")}
+            className="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+          >
+            <FileSpreadsheet className="size-4" /> Excel
           </Button>
           <Button
             variant="outline"

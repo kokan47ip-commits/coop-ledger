@@ -233,6 +233,15 @@ function memberLabel(data: SocietyData, memberId: Id<"members"> | null | undefin
  * net movement, as at `toDate`. Each of the three is shown on its Dr or Cr
  * side, so the column totals below every Dr and every Cr total can be footed
  * (and closing Dr vs closing Cr re-checked) on the printed statement.
+ *
+ * The member receivable control is the one exception: it is presented from
+ * the MEMBER ledgers (opening balances on member records, bills, receipts) —
+ * the same arithmetic the Balance Sheet's "Dues from Members" / "Advance from
+ * Members" rows and the member lists use — so an opening member balance is IN
+ * the Trial Balance from the day it is entered, even before the first bill
+ * carries it into the GL receivable. GL movements on the control that member
+ * arithmetic does not mirror (journals and any other voucher shape touching
+ * it) are folded in, so no posting ever disappears from the statement.
  */
 export async function computeTrialBalance(
   data: SocietyData,
@@ -240,36 +249,87 @@ export async function computeTrialBalance(
   toDate: string,
 ): Promise<TrialBalanceColumnRow[]> {
   const { accounts } = data;
+  const receivableId = receivableIdOf(data);
   const movement = new Map<
     Id<"accounts">,
     { pre: number; dr: number; cr: number }
   >();
   for (const a of accounts) movement.set(a._id, { pre: 0, dr: 0, cr: 0 });
+  // GL-only movements on the member receivable control: entries the member
+  // ledgers do not mirror (bills and member receipts ARE the mirror).
+  const controlGlOnly = { pre: 0, dr: 0, cr: 0 };
   for (const e of unifiedEntries(data)) {
     if (e.date > toDate) continue;
     const prePeriod = e.date < fromDate;
     for (const l of e.lines) {
       const m = movement.get(l.accountId);
-      if (!m) continue;
-      if (prePeriod) m.pre += l.debit - l.credit;
-      else {
-        m.dr += l.debit;
-        m.cr += l.credit;
+      if (m) {
+        if (prePeriod) m.pre += l.debit - l.credit;
+        else {
+          m.dr += l.debit;
+          m.cr += l.credit;
+        }
       }
+      if (
+        receivableId &&
+        l.accountId === receivableId &&
+        e.type !== "bill" &&
+        e.type !== "member_receipt"
+      ) {
+        if (prePeriod) controlGlOnly.pre += l.debit - l.credit;
+        else {
+          controlGlOnly.dr += l.debit;
+          controlGlOnly.cr += l.credit;
+        }
+      }
+    }
+  }
+  // Member-ledger position, in the computeMemberBalances arithmetic: opening
+  // as at the day before `fromDate`, plus the period's bill charges and
+  // receipts. Carried opening-balance lines on bills restate the opening, so
+  // they are never counted twice.
+  let memberOpening = 0;
+  let memberBilled = 0;
+  let memberReceived = 0;
+  if (receivableId) {
+    for (const r of computeMemberBalances(data, fromDate, toDate)) {
+      memberOpening += r.opening;
+      memberBilled += r.billed;
+      memberReceived += r.received;
     }
   }
   const rows: TrialBalanceColumnRow[] = [];
   for (const a of accounts) {
     const m = movement.get(a._id)!;
     const debitPositive = a.type === "asset" || a.type === "expense";
-    const opening =
-      (debitPositive ? a.openingBalance : -a.openingBalance) + m.pre;
-    const closing = opening + m.dr - m.cr;
+    const isMemberControl =
+      receivableId !== undefined && a._id === receivableId && a.kind === "receivable";
+    let opening: number;
+    let dr: number;
+    let cr: number;
+    if (isMemberControl) {
+      // Member-ledger control: the society's member positions (including the
+      // opening balances typed on member records) plus anything the GL holds
+      // on the control that member arithmetic cannot see (its own opening
+      // balance, journals, adjustments).
+      opening =
+        memberOpening +
+        (debitPositive ? a.openingBalance : -a.openingBalance) +
+        controlGlOnly.pre;
+      dr = memberBilled + controlGlOnly.dr;
+      cr = memberReceived + controlGlOnly.cr;
+    } else {
+      opening =
+        (debitPositive ? a.openingBalance : -a.openingBalance) + m.pre;
+      dr = m.dr;
+      cr = m.cr;
+    }
+    const closing = opening + dr - cr;
     const openingDr = opening > 0 ? opening : 0;
     const openingCr = opening < 0 ? -opening : 0;
     const closingDr = closing > 0 ? closing : 0;
     const closingCr = closing < 0 ? -closing : 0;
-    if (openingDr === 0 && openingCr === 0 && m.dr === 0 && m.cr === 0) continue;
+    if (openingDr === 0 && openingCr === 0 && dr === 0 && cr === 0) continue;
     rows.push({
       accountId: a._id,
       code: a.code,
@@ -277,8 +337,8 @@ export async function computeTrialBalance(
       type: a.type,
       openingDr,
       openingCr,
-      periodDr: m.dr,
-      periodCr: m.cr,
+      periodDr: dr,
+      periodCr: cr,
       closingDr,
       closingCr,
       printNo: a.printNo,

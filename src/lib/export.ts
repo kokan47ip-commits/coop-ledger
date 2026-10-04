@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { CellHookData } from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import { formatDate, formatMoney } from "./format";
 
 export type ExportSignature = {
@@ -367,6 +368,116 @@ ${signaturesHtml(meta)}
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ---------- Excel (.xlsx) export ----------
+
+/** Rupees with Indian-style grouping; numbers stay real numbers in the sheet. */
+const EXCEL_NUMBER_FORMAT = "#,##0.00";
+
+/** Excel sheet names: max 31 chars, no \ / ? * [ ]. Unique within the book. */
+function excelSheetName(raw: string, used: Set<string>): string {
+  const base = raw.replace(/[\\/*?:[\]]/g, " ").trim().slice(0, 31) || "Sheet";
+  let name = base;
+  let i = 2;
+  while (used.has(name)) {
+    const suffix = ` (${i})`;
+    name = base.slice(0, 31 - suffix.length) + suffix;
+    i++;
+  }
+  used.add(name);
+  return name;
+}
+
+/**
+ * Excel workbook download: one sheet per table, each carrying the society
+ * letterhead (name, address, reg. no, title, subtitle), the optional group
+ * band (merged across its span), the column head, the body and the totals
+ * foot. Money cells stay numbers formatted #,##0.00 so Excel can sum and
+ * re-pivot the figures, and the committee signatures close each sheet.
+ */
+export function exportExcel(meta: ExportMeta, tables: TableSpec[], filename: string) {
+  const wb = XLSX.utils.book_new();
+  const used = new Set<string>();
+  for (const t of tables) {
+    const width = Math.max(
+      t.head.length,
+      ...t.body.map((r) => r.length),
+      ...(t.foot ?? []).map((r) => r.length),
+      1,
+    );
+    const rows: (string | number)[][] = [];
+    const merges: XLSX.Range[] = [];
+    // Letterhead band, each line merged across the table's full width.
+    const band = (label: string) => {
+      rows.push([label]);
+      if (width > 1) {
+        merges.push({ s: { r: rows.length - 1, c: 0 }, e: { r: rows.length - 1, c: width - 1 } });
+      }
+    };
+    band(meta.societyName.toUpperCase());
+    if (meta.societyAddress) band(meta.societyAddress);
+    if (meta.registrationNo) band(`Reg. No: ${meta.registrationNo}`);
+    band(meta.title.toUpperCase());
+    if (meta.subtitle) band(meta.subtitle);
+    rows.push([]);
+    if (t.sectionTitle) band(t.sectionTitle);
+    // Group band above the head, each label merged over its column span.
+    if (t.groupHead) {
+      const grow: string[] = [];
+      let col = 0;
+      for (const g of t.groupHead) {
+        grow.push(g.label);
+        if (g.span > 1) {
+          merges.push({
+            s: { r: rows.length, c: col },
+            e: { r: rows.length, c: Math.min(width - 1, col + g.span - 1) },
+          });
+          for (let i = 1; i < g.span; i++) grow.push("");
+        }
+        col += g.span;
+      }
+      while (grow.length < width) grow.push("");
+      rows.push(grow.slice(0, width));
+    }
+    const norm = (r: (string | number)[]): (string | number)[] => {
+      const out = r.slice(0, width);
+      while (out.length < width) out.push("");
+      return out;
+    };
+    rows.push(norm(t.head));
+    for (const r of t.body) rows.push(norm(r));
+    if (t.foot) for (const r of t.foot) rows.push(norm(r));
+    if (meta.signatures && meta.signatures.length > 0) {
+      rows.push([]);
+      const sigs = meta.signatures.slice(0, 3);
+      rows.push(norm(sigs.map((s) => s.name)));
+      rows.push(norm(sigs.map((s) => s.label)));
+    }
+    const ws: XLSX.WorkSheet = XLSX.utils.aoa_to_sheet(rows);
+    const ref = ws["!ref"];
+    if (ref) {
+      const range = XLSX.utils.decode_range(ref);
+      const widths: number[] = new Array<number>(width).fill(10);
+      for (let R = range.s.r; R <= range.e.r; R++) {
+        for (let C = 0; C < width; C++) {
+          const addr = XLSX.utils.encode_cell({ r: R, c: C });
+          const cell = ws[addr] as XLSX.CellObject | undefined;
+          if (!cell) continue;
+          if (cell.t === "n") {
+            cell.z = EXCEL_NUMBER_FORMAT;
+            widths[C] = Math.max(widths[C]!, String(cell.v).length + 2);
+          } else if (cell.t === "s") {
+            widths[C] = Math.max(widths[C]!, Math.min(55, String(cell.v ?? "").length + 2));
+          }
+        }
+      }
+      ws["!cols"] = widths.map((w) => ({ wch: w }));
+    }
+    ws["!merges"] = merges;
+    XLSX.utils.book_append_sheet(wb, ws, excelSheetName(t.sectionTitle ?? meta.title, used));
+  }
+  XLSX.writeFile(wb, filename);
 }
 
 // ---------- Print (opens a styled window) ----------

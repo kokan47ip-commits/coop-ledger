@@ -1,12 +1,15 @@
 /**
  * Backend report regression tests (bun:test).
  *
- * Guards the four Form N / register fixes:
+ * Guards the Form N / register fixes:
  *  - generated bills (accruals) never appear as Cash/Bank Book rows,
  *  - a credit (negative) receivable is presented as "Advance from Members"
  *    under Current Liabilities instead of netting into the asset side,
  *  - Income & Expenditure rows carry Form N group headings,
- *  - the Balance Sheet exposes fund groups and previous-year comparatives.
+ *  - the Balance Sheet exposes fund groups and previous-year comparatives,
+ *  - every Chart of Accounts ledger prints on the statements (nil ledgers too),
+ *  - member opening balances reach the Trial Balance: the member receivable
+ *    control follows the member ledgers, so the TB ties with the Balance Sheet.
  *
  * The compute functions take the loadSocietyData shape; fixtures below use
  * `as any` for Convex document boilerplate that these pure functions never
@@ -816,5 +819,211 @@ describe("Member dues & advance lists", () => {
     expect(advances.map((r) => r.flatNo)).toEqual(["B-102"]);
     expect(dues.reduce((s, r) => s + r.closing, 0)).toBe(700);
     expect(advances.reduce((s, r) => s - r.closing, 0)).toBe(300);
+  });
+});
+
+describe("Form N: every Chart of Accounts ledger prints (nil ledgers included)", () => {
+  test("nil income/expense ledgers print 0.00; totals keep pure ledger sums", () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India" }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+        acct("prof", "income", { name: "Professional Fees" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+        acct("audit", "expense", { name: "Audit Fees" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 600,
+          lines: [
+            { accountId: "maint", debit: 0, credit: 600 },
+            { accountId: "bank", debit: 600, credit: 0 },
+          ],
+        },
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-20", voucherNo: "P1",
+          type: "payment", total: 200,
+          lines: [
+            { accountId: "repair", debit: 200, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const ie = computeIncomeExpenditure(data, "2026-04-01", "2026-06-30");
+    const prof = ie.income.find((r) => r.name === "Professional Fees")!;
+    const audit = ie.expenditure.find((r) => r.name === "Audit Fees")!;
+    // Nil ledgers still print — with 0.00, never dropped from the statement.
+    expect(prof).toMatchObject({ credit: 0, debit: 0 });
+    expect(audit).toMatchObject({ debit: 0, credit: 0 });
+    // Totals remain the pure ledger sums; the system row balances the sides.
+    expect(ie.totalIncome).toBe(600);
+    expect(ie.totalExpenditure).toBe(200);
+    expect(ie.surplus).toBe(400);
+    const sys = ie.expenditure.find((r) => r.system)!;
+    expect(sys.debit).toBe(400);
+
+    // The comparative prints every ledger too, with the prior-year figure.
+    const cmp = computeIncomeExpenditureComparative(data, "2026-04-01", "2026-06-30");
+    expect(cmp.income.find((r) => r.name === "Professional Fees")!.prev).toBe(0);
+    expect(cmp.expenditure.find((r) => r.name === "Audit Fees")!.prev).toBe(0);
+  });
+
+  test("nil asset/liability ledgers still print on the Balance Sheet", () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("stock", "asset", { name: "Dead Stock" }),
+        acct("sink", "liability", { name: "Sinking Fund", openingBalance: 500 }),
+        acct("water", "liability", { name: "Water Charges Payable" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    const stock = bs.assets.find((r) => r.name === "Dead Stock")!;
+    const water = bs.liabilities.find((r) => r.name === "Water Charges Payable")!;
+    expect(stock).toMatchObject({ amount: 0, prev: 0, group: "VI. Current Assets" });
+    expect(water).toMatchObject({
+      amount: 0,
+      prev: 0,
+      group: "VII. Current Liabilities and Provisions",
+    });
+    // Nil ledgers do not disturb the totals.
+    expect(bs.totalAssets).toBe(1000);
+    expect(bs.totalLiabilities).toBe(500);
+  });
+
+  test("a ledger emptied to zero keeps its prior-year figure on its side", () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 500 }),
+        acct("loan", "liability", { name: "Loan from Member", openingBalance: 500 }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Repaid in-period: Dr loan 500 / Cr bank 500.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "P1",
+          type: "payment", total: 500,
+          lines: [
+            { accountId: "loan", debit: 500, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 500 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    const loan = bs.liabilities.find((r) => r.name === "Loan from Member")!;
+    const bank = bs.assets.find((r) => r.name === "Bank of India")!;
+    // Both emptied to zero this year, yet both still print — and last year's
+    // figure stays on its own side (the old sign-flip negated it).
+    expect(loan).toMatchObject({ amount: 0, prev: 500 });
+    expect(bank).toMatchObject({ amount: 0, prev: 500 });
+    expect(bs.totalLiabilitiesPrev).toBe(500);
+    expect(bs.totalAssetsPrev).toBe(500);
+  });
+});
+
+describe("Trial Balance — member opening balances", () => {
+  test("member openings reach the opening column and tie with the Balance Sheet", async () => {
+    const mA = member("mA", { code: "02", name: "Member A", wing: "A", flatNo: "101", openingBalance: 300 });
+    const mB = member("mB", { code: "03", name: "Member B", wing: "B", flatNo: "102", openingBalance: -150 });
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India" }),
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable" }),
+        acct("susp", "liability", { name: "Opening Balance Suspense", openingBalance: 150 }),
+      ],
+      accountGroups: [],
+      members: [mA, mB],
+      vouchers: [
+        // Member A pays 100 against his 300 opening due.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "member_receipt", memberId: "mA", bankCashAccountId: "bank", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "recv", debit: 0, credit: 100 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    const recv = tb.find((r) => r.accountId === "recv")!;
+    // Opening column: 300 due (A) less 150 advance (B) = 150 Dr — the member
+    // openings are IN the TB even though no bill has carried them into the
+    // GL receivable yet. Period: A's 100 receipt credits the control.
+    expect(recv).toMatchObject({
+      openingDr: 150, openingCr: 0,
+      periodDr: 0, periodCr: 100,
+      closingDr: 50, closingCr: 0,
+    });
+    // The suspense opening keeps the opening column footing Dr = Cr.
+    expect(tb.reduce((s, r) => s + r.openingDr, 0)).toBe(150);
+    expect(tb.reduce((s, r) => s + r.openingCr, 0)).toBe(150);
+
+    // The TB closing agrees with the Balance Sheet: A owes 200, B holds 150
+    // advance — net 50, exactly the receivable control's closing balance.
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    const dues = bs.assets.find((r) => r.name === "Dues from Members")!.amount;
+    const advance = bs.liabilities.find((r) => r.name === "Advance from Members")!.amount;
+    expect(dues).toBe(200);
+    expect(advance).toBe(150);
+    expect(dues - advance).toBe(recv.closingDr - recv.closingCr);
+  });
+
+  test("a carried opening bill restates — never doubles — the member opening", async () => {
+    const mA = member("mA", { code: "02", name: "Member A", wing: "A", flatNo: "101", openingBalance: 300 });
+    const data = {
+      accounts: [
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable" }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [mA],
+      vouchers: [],
+      bills: [
+        // Pre-period carried bill (the flow bills.ts uses): its receivable
+        // line restates the member's opening, it is not a second 300.
+        {
+          _id: "b0", _creationTime: 0, societyId: "s1", billNo: "BILL-0", memberId: "mA",
+          period: "2026-03", issueDate: "2026-03-15", dueDate: "2026-03-25", total: 300,
+          paidAmount: 0, status: "unpaid",
+          lines: [{ accountId: "recv", name: "Arrears — opening balance", amount: 300 }],
+        },
+      ],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    const recv = tb.find((r) => r.accountId === "recv")!;
+    expect(recv).toMatchObject({
+      openingDr: 300, openingCr: 0,
+      periodDr: 0, periodCr: 0,
+      closingDr: 300, closingCr: 0,
+    });
   });
 });
