@@ -927,6 +927,16 @@ export default function BillRegister() {
               <Trash2 className="size-4" /> {deletingMonth ? "Deleting…" : "Delete month"}
             </Button>
           )}
+          {canEdit && hasEdits && (
+            <>
+              <Button onClick={saveEdits} disabled={saving} size="sm" className="rounded-lg">
+                <Save className="size-4" /> {saving ? "Saving…" : `Save ${Object.keys(edits).length} ${Object.keys(edits).length === 1 ? "bill" : "bills"}`}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={clearEdits} disabled={saving}>
+                <X className="size-4" /> Discard
+              </Button>
+            </>
+          )}
           <Button
             variant="outline"
             size="sm"

@@ -234,14 +234,14 @@ function memberLabel(data: SocietyData, memberId: Id<"members"> | null | undefin
  * side, so the column totals below every Dr and every Cr total can be footed
  * (and closing Dr vs closing Cr re-checked) on the printed statement.
  *
- * The member receivable control is the one exception: it is presented from
- * the MEMBER ledgers (opening balances on member records, bills, receipts) —
- * the same arithmetic the Balance Sheet's "Dues from Members" / "Advance from
- * Members" rows and the member lists use — so an opening member balance is IN
- * the Trial Balance from the day it is entered, even before the first bill
- * carries it into the GL receivable. GL movements on the control that member
- * arithmetic does not mirror (journals and any other voucher shape touching
- * it) are folded in, so no posting ever disappears from the statement.
+ * The member receivable control follows ONE basis at a time — the same
+ * opening must never be counted twice: when the control ledger itself
+ * carries the opening balance (or pre-period postings), the row is the
+ * plain GL movement (member openings already reached the books through the
+ * carried bill line); only when the GL control knows nothing of the opening
+ * does the row present the MEMBER ledgers (openings typed per member, bills,
+ * receipts) — the same arithmetic as the Balance Sheet's Dues/Advance split
+ * — with GL-only adjustments (journals) folded in.
  */
 export async function computeTrialBalance(
   data: SocietyData,
@@ -304,23 +304,31 @@ export async function computeTrialBalance(
     const debitPositive = a.type === "asset" || a.type === "expense";
     const isMemberControl =
       receivableId !== undefined && a._id === receivableId && a.kind === "receivable";
+    const debitAdjusted = debitPositive ? a.openingBalance : -a.openingBalance;
     let opening: number;
     let dr: number;
     let cr: number;
     if (isMemberControl) {
-      // Member-ledger control: the society's member positions (including the
-      // opening balances typed on member records) plus anything the GL holds
-      // on the control that member arithmetic cannot see (its own opening
-      // balance, journals, adjustments).
-      opening =
-        memberOpening +
-        (debitPositive ? a.openingBalance : -a.openingBalance) +
-        controlGlOnly.pre;
-      dr = memberBilled + controlGlOnly.dr;
-      cr = memberReceived + controlGlOnly.cr;
+      // ONE basis at a time — mixing them counted the same opening twice
+      // whenever openings sat on the control ledger AND on the member records
+      // (or reached it through an opening journal).
+      const glCarriesOpening = debitAdjusted !== 0 || controlGlOnly.pre !== 0;
+      if (glCarriesOpening) {
+        // GL basis: the control ledger carries the opening (its own balance
+        // or pre-period postings) — the row is its plain GL movement.
+        opening = debitAdjusted + m.pre;
+        dr = m.dr;
+        cr = m.cr;
+      } else {
+        // Member basis: the GL knows nothing of the opening, so the row
+        // presents the member ledgers (openings per member, bills, receipts)
+        // plus the GL-only adjustments (journals) they cannot mirror.
+        opening = memberOpening;
+        dr = memberBilled + controlGlOnly.dr;
+        cr = memberReceived + controlGlOnly.cr;
+      }
     } else {
-      opening =
-        (debitPositive ? a.openingBalance : -a.openingBalance) + m.pre;
+      opening = debitAdjusted + m.pre;
       dr = m.dr;
       cr = m.cr;
     }
@@ -665,8 +673,8 @@ const IE_INCOME_ORDER = ["Contributions and Other Receipts", "Interest and Other
  * Net movement per income/expenditure ledger over [fromDate, toDate]. Every
  * ledger is returned — nil ones included — so the statements can print the
  * full Chart of Accounts (opening balance plus the period's postings), the
- * way the reference format shows every ledger with 0.00 when it has no
- * movement. Net is credit-positive for income, debit-positive for expense.
+ * way the reference format prints. Net is credit-positive for income,
+ * debit-positive for expense.
  */
 function ieNetsForPeriod(data: SocietyData, fromDate: string, toDate: string) {
   const nets = new Map<Id<"accounts">, number>();
@@ -711,6 +719,8 @@ export function computeIncomeExpenditure(
     if (a.type !== "income" && a.type !== "expense") continue;
     const isIncome = a.type === "income";
     const net = nets.get(a._id) ?? 0;
+    // Zero-value ledgers do not print (Crystal reference format).
+    if (net === 0) continue;
     if (isIncome) {
       income.push({
         accountId: a._id,
@@ -787,10 +797,10 @@ export type IeComparativeRow = TrialBalanceRow & {
 /**
  * Income & Expenditure with the previous-year comparative column. The prior
  * period is the same span shifted back one year, so an April–March financial
- * year is compared against the preceding April–March. Every income/
- * expenditure ledger is shown — including nil ones, which print 0.00 — and
- * the balancing system account carries the previous period's result on the
- * side it belongs to, so both columns foot together.
+ * year is compared against the preceding April–March. Ledgers with nothing
+ * to show in either year do not print; the balancing system account carries
+ * the previous period's result on the side it belongs to, so both columns
+ * foot together.
  */
 export function computeIncomeExpenditureComparative(
   data: SocietyData,
@@ -810,6 +820,9 @@ export function computeIncomeExpenditureComparative(
     const isIncome = a.type === "income";
     const net = cur.nets.get(a._id) ?? 0;
     const prior = prev.nets.get(a._id) ?? 0;
+    // Zero-value ledgers do not print (Crystal reference format) — but a
+    // ledger with a prior-year figure always does, comparative or not.
+    if (net === 0 && prior === 0) continue;
     const row: IeComparativeRow = {
       accountId: a._id,
       code: a.code,
@@ -1082,6 +1095,11 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     if (a.type === "liability" && n === "income over expenses") continue;
     const net = netOf(a, toDate);
     const prev = netOf(a, prevToDate);
+    // Zero-value ledgers do not print (Crystal reference format): a ledger
+    // whose balance AND prior-year figure are both nil has nothing to show.
+    // One-sided-zero rows (e.g. repaid-to-zero with a prior figure) still
+    // print — the comparative is the point of the column.
+    if (net === 0 && prev === 0) continue;
     const row: Side = {
       code: a.code,
       name: a.name,
@@ -1293,7 +1311,7 @@ export function computeCashBook(
         : a.date.localeCompare(b.date),
     );
 
-  return bankAccounts.map((bank) => {
+  const sections = bankAccounts.map((bank) => {
     let opening = bank.openingBalance;
     let totalDebit = 0;
     let totalCredit = 0;
@@ -1362,4 +1380,7 @@ export function computeCashBook(
       closing: opening + totalDebit - totalCredit,
     };
   });
+  // A bank-cash ledger with no opening balance and no movements prints as an
+  // empty section — suppress it (the reference format prints active books).
+  return sections.filter((s) => s.opening !== 0 || s.rows.length > 0);
 }
