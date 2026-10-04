@@ -19,6 +19,8 @@ type IERow = {
   printNo?: string;
   /** Form N section heading this ledger files under. */
   group?: string;
+  /** Previous-year comparative figure (same side as credit/debit). */
+  prev?: number;
   /** System-generated balancing account ("Income over Expenses" when the
    *  society is in surplus, "Expenses over Income" when in deficit) — no
    *  ledger behind it, printed last without a serial or heading. */
@@ -31,6 +33,9 @@ type IEResult = {
   totalIncome: number;
   totalExpenditure: number;
   surplus: number;
+  /** Previous-year period totals for the comparative column. */
+  prevTotalIncome: number;
+  prevTotalExpenditure: number;
 };
 
 /** Statement serial: the user-defined Print No., else the running position. */
@@ -82,7 +87,7 @@ export default function IncomeExpenditure() {
     const exp = ie?.expenditure ?? [];
     const inc = ie?.income ?? [];
     const rows: (string | number)[][] = [];
-    rows.push(["", "", "EXPENDITURE", "", "", "INCOME", ""]);
+    rows.push(["", "", "EXPENDITURE", "", "", "", "INCOME", "", ""]);
     const maxLen = Math.max(exp.length, inc.length);
     for (let i = 0; i < maxLen; i++) {
       const e = exp[i];
@@ -96,7 +101,9 @@ export default function IncomeExpenditure() {
           eHead ? (e!.group ?? "").toUpperCase() : "",
           "",
           "",
+          "",
           cHead ? (c!.group ?? "").toUpperCase() : "",
+          "",
           "",
         ]);
       }
@@ -105,19 +112,38 @@ export default function IncomeExpenditure() {
         e ? (e.system ? "" : serialOf(e.printNo, i + 1)) : "",
         e ? (e.system ? e.name : `    ${e.name}`) : "",
         e ? e.debit : "",
+        e ? (e.prev ?? 0) : "",
         c ? (c.system ? "" : serialOf(c.printNo, i + 1)) : "",
         c ? (c.system ? c.name : `    ${c.name}`) : "",
         c ? c.credit : "",
+        c ? (c.prev ?? 0) : "",
       ]);
     }
     // The two sides foot to the same total — the balancing system account is
-    // already part of the columns above.
+    // already part of the columns above. The same holds for the comparative
+    // (previous-year) column.
     const foot = Math.max(ie?.totalIncome ?? 0, ie?.totalExpenditure ?? 0);
-    rows.push(["", "", "Total", foot, "", "Total", foot]);
+    const footPrev = Math.max(ie?.prevTotalIncome ?? 0, ie?.prevTotalExpenditure ?? 0);
+    rows.push(["", "", "Total", foot, footPrev, "", "Total", foot, footPrev]);
     return {
-      head: ["", "S.No.", "Expenditure", "Amount (₹)", "S.No.", "Income", "Amount (₹)"],
+      head: [
+        "",
+        "S.No.",
+        "Expenditure",
+        "Current Year (₹)",
+        "Previous Year (₹)",
+        "S.No.",
+        "Income",
+        "Current Year (₹)",
+        "Previous Year (₹)",
+      ],
       body: rows,
-      columnStyles: { 3: { halign: "right" }, 6: { halign: "right" } },
+      columnStyles: {
+        3: { halign: "right" },
+        4: { halign: "right" },
+        7: { halign: "right" },
+        8: { halign: "right" },
+      },
     };
   };
 
@@ -133,7 +159,7 @@ export default function IncomeExpenditure() {
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="Income & Expenditure"
-        description="Form N statement — expenditure and income on opposite sides, grouped under the prescribed headings, with the resulting surplus or deficit."
+        description="Form N statement — expenditure and income on opposite sides under the prescribed headings, each figure paired with its previous-year comparative, with the resulting surplus or deficit."
       />
 
       <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
@@ -192,10 +218,12 @@ export default function IncomeExpenditure() {
               <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
                 <td className="px-5 py-2.5">Expenditure</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-44 px-5 py-2.5 text-right">Amount (₹)</td>
+                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
+                <td className="w-28 px-5 py-2.5 text-right">Previous Year (₹)</td>
                 <td className="border-l px-5 py-2.5">Income</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-44 border-l px-5 py-2.5 text-right">Amount (₹)</td>
+                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
+                <td className="w-28 border-l px-5 py-2.5 text-right">Previous Year (₹)</td>
               </tr>
             </thead>
             <tbody>
@@ -213,8 +241,10 @@ export default function IncomeExpenditure() {
                         <td className="px-5 py-1.5">{eHead ? (e!.group ?? "") : ""}</td>
                         <td />
                         <td />
+                        <td />
                         <td className="border-l px-5 py-1.5">{cHead ? (c!.group ?? "") : ""}</td>
                         <td />
+                        <td className="border-l" />
                         <td className="border-l" />
                       </tr>
                     )}
@@ -230,11 +260,17 @@ export default function IncomeExpenditure() {
                         {e && !e.system ? serialOf(e.printNo, i + 1) : ""}
                       </td>
                       <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-muted-foreground">
+                        {e ? money(e.prev ?? 0) : ""}
+                      </td>
                       <td className="border-l px-5 py-2.5">{c?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
                         {c && !c.system ? serialOf(c.printNo, i + 1) : ""}
                       </td>
                       <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
+                      <td className="border-l px-5 py-2.5 text-right tabular-nums text-muted-foreground">
+                        {c ? money(c.prev ?? 0) : ""}
+                      </td>
                     </tr>
                   </Fragment>
                 );
@@ -245,10 +281,16 @@ export default function IncomeExpenditure() {
                 <td className="px-5 py-2.5 text-right tabular-nums">
                   {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
                 </td>
+                <td className="px-5 py-2.5 text-right tabular-nums">
+                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
+                </td>
                 <td className="border-l px-5 py-2.5">Total</td>
                 <td />
                 <td className="border-l px-5 py-2.5 text-right tabular-nums">
                   {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                </td>
+                <td className="border-l px-5 py-2.5 text-right tabular-nums">
+                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
                 </td>
               </tr>
             </tbody>

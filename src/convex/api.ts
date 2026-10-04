@@ -5,6 +5,7 @@ import {
   computeBalanceSheet,
   computeCashBook,
   computeIncomeExpenditure,
+  computeIncomeExpenditureComparative,
   computeMemberBalances,
   computeMemberLedger,
   computeReceiptPayment,
@@ -157,7 +158,8 @@ export const incomeExpenditure = query({
   },
   handler: async (ctx, { societyId, fromDate, toDate }) => {
     const data = await loadSocietyData(ctx, societyId);
-    return computeIncomeExpenditure(data, fromDate, toDate);
+    // Statement carries the previous-year comparative column.
+    return computeIncomeExpenditureComparative(data, fromDate, toDate);
   },
 });
 

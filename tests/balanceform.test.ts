@@ -17,6 +17,7 @@ import {
   computeBalanceSheet,
   computeCashBook,
   computeIncomeExpenditure,
+  computeIncomeExpenditureComparative,
   computeMemberBalances,
   computeTrialBalance,
   type SocietyData,
@@ -226,6 +227,101 @@ describe("Form N: Income & Expenditure", () => {
     expect(ie.income.filter((r) => !r.system).map((r) => r.name)).toEqual([
       "Interest on Sinking Fund Investment",
     ]);
+  });
+});
+
+describe("Form N: Income & Expenditure — previous-year comparative", () => {
+  test("rows carry the prior-year figure; both columns foot like-for-like", () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India" }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+        acct("interest", "income", { name: "Interest on Sinking Fund Investment" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Prior FY: maintenance 500, interest 50 (interest only exists last
+        // year), repairs 100.
+        {
+          _id: "p1", _creationTime: 0, societyId: "s1", date: "2025-05-10", voucherNo: "R0",
+          type: "other_receipt", total: 500,
+          lines: [
+            { accountId: "maint", debit: 0, credit: 500 },
+            { accountId: "bank", debit: 500, credit: 0 },
+          ],
+        },
+        {
+          _id: "p2", _creationTime: 0, societyId: "s1", date: "2025-06-01", voucherNo: "R0B",
+          type: "other_receipt", total: 50,
+          lines: [
+            { accountId: "interest", debit: 0, credit: 50 },
+            { accountId: "bank", debit: 50, credit: 0 },
+          ],
+        },
+        {
+          _id: "p3", _creationTime: 0, societyId: "s1", date: "2025-05-20", voucherNo: "P0",
+          type: "payment", total: 100,
+          lines: [
+            { accountId: "repair", debit: 100, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 100 },
+          ],
+        },
+        // Current FY: maintenance 600, repairs 200.
+        {
+          _id: "c1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 600,
+          lines: [
+            { accountId: "maint", debit: 0, credit: 600 },
+            { accountId: "bank", debit: 600, credit: 0 },
+          ],
+        },
+        {
+          _id: "c2", _creationTime: 0, societyId: "s1", date: "2026-05-20", voucherNo: "P1",
+          type: "payment", total: 200,
+          lines: [
+            { accountId: "repair", debit: 200, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const ie = computeIncomeExpenditureComparative(data, "2026-04-01", "2026-06-30");
+    const maint = ie.income.find((r) => r.name === "Maintenance Contributions")!;
+    const interest = ie.income.find((r) => r.name === "Interest on Sinking Fund Investment")!;
+    const repair = ie.expenditure.find((r) => r.name === "Repairs and Maintenance")!;
+
+    // Each ledger pairs this year's figure with last year's on the same side.
+    expect(maint).toMatchObject({ credit: 600, prev: 500 });
+    expect(repair).toMatchObject({ debit: 200, prev: 100 });
+    // A ledger active only last year still shows, with a nil current figure.
+    expect(interest).toMatchObject({ credit: 0, prev: 50 });
+    // Headings keep statute order for the comparative too.
+    expect(ie.income.filter((r) => !r.system).map((r) => r.name)).toEqual([
+      "Maintenance Contributions",
+      "Interest on Sinking Fund Investment",
+    ]);
+
+    expect(ie.totalIncome).toBe(600);
+    expect(ie.prevTotalIncome).toBe(550);
+    expect(ie.totalExpenditure).toBe(200);
+    expect(ie.prevTotalExpenditure).toBe(100);
+    expect(ie.surplus).toBe(400);
+    expect(ie.prevSurplus).toBe(450);
+
+    // The balancing row carries the prior-year result too, so both columns
+    // foot to the same total: 600 = 200 + 400 and 550 = 100 + 450.
+    const sys = ie.expenditure.find((r) => r.system)!;
+    expect(sys.name).toBe("Income over Expenses");
+    expect(sys.debit).toBe(400);
+    expect(sys.prev).toBe(450);
+    expect(ie.totalExpenditure + sys.debit).toBe(ie.totalIncome);
+    expect(ie.prevTotalExpenditure + sys.prev).toBe(ie.prevTotalIncome);
   });
 });
 

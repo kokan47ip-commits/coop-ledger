@@ -601,35 +601,56 @@ const IE_EXPENSE_ORDER = [
 ];
 const IE_INCOME_ORDER = ["Contributions and Other Receipts", "Interest and Other Income"];
 
+/** Net movement per income/expenditure ledger over [fromDate, toDate]. */
+function ieNetsForPeriod(data: SocietyData, fromDate: string, toDate: string) {
+  const nets = new Map<Id<"accounts">, number>();
+  const activity = new Map<Id<"accounts">, boolean>();
+  const entries = unifiedEntries(data).filter(
+    (e) => e.date >= fromDate && e.date <= toDate,
+  );
+  for (const a of data.accounts) {
+    if (a.type !== "income" && a.type !== "expense") continue;
+    // net: credit-positive for income, debit-positive for expense
+    let net = a.openingBalance;
+    let active = a.openingBalance !== 0;
+    for (const e of entries) {
+      for (const l of e.lines) {
+        if (l.accountId !== a._id) continue;
+        const delta = l.credit - l.debit;
+        net += a.type === "income" ? delta : -delta;
+        if (l.debit !== 0 || l.credit !== 0) active = true;
+      }
+    }
+    nets.set(a._id, net);
+    activity.set(a._id, active);
+  }
+  return { nets, activity };
+}
+
+/** Form N print order: prescribed headings first, then serial / code order. */
+function ieOrderRows(rows: TrialBalanceRow[], groups: string[]) {
+  const idx = (r: TrialBalanceRow) => {
+    const i = groups.indexOf(r.group ?? "");
+    return i === -1 ? groups.length : i;
+  };
+  rows.sort((a, b) => idx(a) - idx(b) || byPrintOrder(a, b));
+}
+
 export function computeIncomeExpenditure(
   data: SocietyData,
   fromDate: string,
   toDate: string,
 ) {
-  const { accounts } = data;
+  const { nets, activity } = ieNetsForPeriod(data, fromDate, toDate);
   const income: TrialBalanceRow[] = [];
-
   const expenditure: TrialBalanceRow[] = [];
   let totalIncome = 0;
   let totalExpenditure = 0;
-  const entries = unifiedEntries(data).filter(
-    (e) => e.date >= fromDate && e.date <= toDate,
-  );
-  for (const a of accounts) {
+  for (const a of data.accounts) {
     if (a.type !== "income" && a.type !== "expense") continue;
+    if (!activity.get(a._id)) continue;
     const isIncome = a.type === "income";
-    // net: credit-positive for income, debit-positive for expense
-    let net = isIncome ? a.openingBalance : a.openingBalance;
-    let activity = a.openingBalance !== 0;
-    for (const e of entries) {
-      for (const l of e.lines) {
-        if (l.accountId !== a._id) continue;
-        const delta = l.credit - l.debit;
-        net += isIncome ? delta : -delta;
-        if (l.debit !== 0 || l.credit !== 0) activity = true;
-      }
-    }
-    if (!activity) continue;
+    const net = nets.get(a._id) ?? 0;
     if (isIncome) {
       income.push({
         accountId: a._id,
@@ -656,17 +677,8 @@ export function computeIncomeExpenditure(
       totalExpenditure += net;
     }
   }
-  // Print order: Form N headings first, then serial-numbered / code order
-  // within each heading.
-  const ieOrder = (rows: TrialBalanceRow[], groups: string[]) => {
-    const idx = (r: TrialBalanceRow) => {
-      const i = groups.indexOf(ieGroupOf(data.accounts.find((a) => a._id === r.accountId)!));
-      return i === -1 ? groups.length : i;
-    };
-    rows.sort((a, b) => idx(a) - idx(b) || byPrintOrder(a, b));
-  };
-  ieOrder(expenditure, IE_EXPENSE_ORDER);
-  ieOrder(income, IE_INCOME_ORDER);
+  ieOrderRows(expenditure, IE_EXPENSE_ORDER);
+  ieOrderRows(income, IE_INCOME_ORDER);
   // The period result is presented as its own SYSTEM-GENERATED account so the
   // two sides foot to the same total: a surplus appears on the expenditure
   // side as "Income over Expenses", a deficit on the income side as "Expenses
@@ -697,6 +709,116 @@ export function computeIncomeExpenditure(
     });
   }
   return { income, expenditure, totalIncome, totalExpenditure, surplus };
+}
+
+/** Shift an ISO date by whole years (UTC, stable across leap days). */
+function shiftYear(dateStr: string, delta: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCFullYear(d.getUTCFullYear() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+/** An Income & Expenditure row carrying its previous-year comparative. */
+export type IeComparativeRow = TrialBalanceRow & {
+  /** Previous-year figure, same side/sign convention as debit or credit. */
+  prev: number;
+};
+
+/**
+ * Income & Expenditure with the previous-year comparative column. The prior
+ * period is the same span shifted back one year, so an April–March financial
+ * year is compared against the preceding April–March. A ledger active in
+ * either year is shown; the balancing system account carries the previous
+ * period's result on the side it belongs to, so both columns foot together.
+ */
+export function computeIncomeExpenditureComparative(
+  data: SocietyData,
+  fromDate: string,
+  toDate: string,
+) {
+  const cur = ieNetsForPeriod(data, fromDate, toDate);
+  const prev = ieNetsForPeriod(data, shiftYear(fromDate, -1), shiftYear(toDate, -1));
+  const income: IeComparativeRow[] = [];
+  const expenditure: IeComparativeRow[] = [];
+  let totalIncome = 0;
+  let totalExpenditure = 0;
+  let prevTotalIncome = 0;
+  let prevTotalExpenditure = 0;
+  for (const a of data.accounts) {
+    if (a.type !== "income" && a.type !== "expense") continue;
+    if (!cur.activity.get(a._id) && !prev.activity.get(a._id)) continue;
+    const isIncome = a.type === "income";
+    const net = cur.nets.get(a._id) ?? 0;
+    const prior = prev.nets.get(a._id) ?? 0;
+    const row: IeComparativeRow = {
+      accountId: a._id,
+      code: a.code,
+      name: a.name,
+      type: a.type,
+      debit: isIncome ? 0 : net,
+      credit: isIncome ? net : 0,
+      printNo: a.printNo,
+      group: ieGroupOf(a),
+      prev: prior,
+    };
+    if (isIncome) {
+      income.push(row);
+      totalIncome += net;
+      prevTotalIncome += prior;
+    } else {
+      expenditure.push(row);
+      totalExpenditure += net;
+      prevTotalExpenditure += prior;
+    }
+  }
+  ieOrderRows(expenditure, IE_EXPENSE_ORDER);
+  ieOrderRows(income, IE_INCOME_ORDER);
+  const surplus = totalIncome - totalExpenditure;
+  const prevSurplus = prevTotalIncome - prevTotalExpenditure;
+  // Show the balancing account whenever either year has a result. The current
+  // year picks the side; the prior-year figure is signed so it correctly reads
+  // as the opposite side when the result flipped between the two years.
+  if (surplus !== 0 || prevSurplus !== 0) {
+    const side = surplus !== 0 ? Math.sign(surplus) : Math.sign(prevSurplus);
+    const curAmount = Math.abs(surplus);
+    const prevAmount =
+      prevSurplus === 0 || Math.sign(prevSurplus) === side
+        ? Math.abs(prevSurplus)
+        : -Math.abs(prevSurplus);
+    if (side > 0) {
+      expenditure.push({
+        accountId: "" as Id<"accounts">,
+        code: "",
+        name: "Income over Expenses",
+        type: "expense",
+        debit: curAmount,
+        credit: 0,
+        prev: prevAmount,
+        system: true,
+      });
+    } else if (side < 0) {
+      income.push({
+        accountId: "" as Id<"accounts">,
+        code: "",
+        name: "Expenses over Income",
+        type: "income",
+        debit: 0,
+        credit: curAmount,
+        prev: prevAmount,
+        system: true,
+      });
+    }
+  }
+  return {
+    income,
+    expenditure,
+    totalIncome,
+    totalExpenditure,
+    surplus,
+    prevTotalIncome,
+    prevTotalExpenditure,
+    prevSurplus,
+  };
 }
 
 /**
