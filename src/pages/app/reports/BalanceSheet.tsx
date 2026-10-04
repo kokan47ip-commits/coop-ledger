@@ -66,7 +66,17 @@ export default function BalanceSheet() {
   const buildTable = (): TableSpec => {
     const rows: (string | number)[][] = [];
     const maxLen = Math.max(bs?.assets.length ?? 0, bs?.liabilities.length ?? 0);
-    rows.push(["", "", "LIABILITIES & FUNDS", "Amount (₹)", "Last Year", "", "ASSETS", "Amount (₹)", "Last Year"]);
+    rows.push([
+      "",
+      "",
+      "LIABILITIES & FUNDS",
+      "Current Year (₹)",
+      "Previous Year (₹)",
+      "",
+      "ASSETS",
+      "Current Year (₹)",
+      "Previous Year (₹)",
+    ]);
     for (let i = 0; i < maxLen; i++) {
       const li = bs?.liabilities[i];
       const a = bs?.assets[i];
@@ -113,12 +123,12 @@ export default function BalanceSheet() {
         "",
         "S.No.",
         "Liabilities & Funds",
-        "Amount (₹)",
-        "Last Year (₹)",
+        "Current Year (₹)",
+        "Previous Year (₹)",
         "S.No.",
         "Assets",
-        "Amount (₹)",
-        "Last Year (₹)",
+        "Current Year (₹)",
+        "Previous Year (₹)",
       ],
       body: rows,
       columnStyles: {
@@ -142,7 +152,7 @@ export default function BalanceSheet() {
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="Balance Sheet"
-        description="Form N statement — funds and liabilities under the prescribed headings on one side, assets on the other, each with last year's comparative figure."
+        description="Form N statement — funds and liabilities under the prescribed Roman-numbered headings on one side, assets on the other, each opening/closing figure paired with its previous-year comparative."
       />
 
       <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
@@ -197,12 +207,12 @@ export default function BalanceSheet() {
               <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
                 <td className="px-5 py-2.5">Liabilities &amp; Funds</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-36 px-5 py-2.5 text-right">Amount (₹)</td>
-                <td className="w-28 px-5 py-2.5 text-right">Last Year (₹)</td>
+                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
+                <td className="w-28 px-5 py-2.5 text-right">Previous Year (₹)</td>
                 <td className="border-l px-5 py-2.5">Assets</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-36 border-l px-5 py-2.5 text-right">Amount (₹)</td>
-                <td className="w-28 border-l px-5 py-2.5 text-right">Last Year (₹)</td>
+                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
+                <td className="w-28 border-l px-5 py-2.5 text-right">Previous Year (₹)</td>
               </tr>
             </thead>
             <tbody>
@@ -232,13 +242,13 @@ export default function BalanceSheet() {
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{li ? serialOf(li.printNo, i + 1) : ""}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums">{li ? money(li.amount) : ""}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {li?.prev ? money(li.prev) : ""}
+                        {li ? money(li.prev ?? 0) : ""}
                       </td>
                       <td className="border-l px-5 py-2.5">{a?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{a ? serialOf(a.printNo, i + 1) : ""}</td>
                       <td className="border-l px-5 py-2.5 text-right tabular-nums">{a ? money(a.amount) : ""}</td>
                       <td className="border-l px-5 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {a?.prev ? money(a.prev) : ""}
+                        {a ? money(a.prev ?? 0) : ""}
                       </td>
                     </tr>
                   </Fragment>

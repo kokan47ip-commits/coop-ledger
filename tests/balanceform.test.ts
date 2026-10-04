@@ -510,6 +510,16 @@ describe("Form N: Balance Sheet", () => {
     ]);
     // No stray free-form "Assets" bucket remains.
     expect(bs.assets.some((r) => r.group === "Assets")).toBe(false);
+
+    // Opening/closing comparative: each row carries its previous-year figure
+    // (the day before the FY opened — i.e. last year's closing = this year's
+    // opening) alongside the current one. With no entries, prev = opening.
+    expect(bs.liabilities.find((r) => r.group === "I. Share Capital")!.prev).toBe(1000);
+    expect(
+      bs.liabilities.find((r) => r.group === "VII. Current Liabilities and Provisions")!.prev,
+    ).toBe(250);
+    expect(bs.assets.find((r) => r.group === "II. Investments")!.prev).toBe(800);
+    expect(bs.assets.find((r) => r.group === "I. Cash and Bank Balances")!.prev).toBe(500);
   });
 });
 
