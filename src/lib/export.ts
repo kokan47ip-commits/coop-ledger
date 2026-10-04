@@ -390,13 +390,14 @@ function excelSheetName(raw: string, used: Set<string>): string {
 }
 
 /**
- * Excel workbook download: one sheet per table, each carrying the society
- * letterhead (name, address, reg. no, title, subtitle), the optional group
- * band (merged across its span), the column head, the body and the totals
- * foot. Money cells stay numbers formatted #,##0.00 so Excel can sum and
- * re-pivot the figures, and the committee signatures close each sheet.
+ * Build the Excel workbook model (pure — no download, unit-testable): one
+ * sheet per table, each carrying the society letterhead (name, address,
+ * reg. no, title, subtitle), the optional group band (merged across its
+ * span), the column head, the body and the totals foot. Money cells stay
+ * numbers formatted #,##0.00 so Excel can sum and re-pivot the figures, and
+ * the committee signatures close each sheet.
  */
-export function exportExcel(meta: ExportMeta, tables: TableSpec[], filename: string) {
+export function buildExcelWorkbook(meta: ExportMeta, tables: TableSpec[]): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
   const used = new Set<string>();
   for (const t of tables) {
@@ -477,7 +478,12 @@ export function exportExcel(meta: ExportMeta, tables: TableSpec[], filename: str
     ws["!merges"] = merges;
     XLSX.utils.book_append_sheet(wb, ws, excelSheetName(t.sectionTitle ?? meta.title, used));
   }
-  XLSX.writeFile(wb, filename);
+  return wb;
+}
+
+/** Excel workbook download: build the model, then hand it to the browser. */
+export function exportExcel(meta: ExportMeta, tables: TableSpec[], filename: string) {
+  XLSX.writeFile(buildExcelWorkbook(meta, tables), filename);
 }
 
 // ---------- Print (opens a styled window) ----------

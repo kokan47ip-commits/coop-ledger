@@ -1026,4 +1026,58 @@ describe("Trial Balance — member opening balances", () => {
       closingDr: 300, closingCr: 0,
     });
   });
+
+  test("GL-only movements on the control (journals) fold into the member columns", async () => {
+    const data = {
+      accounts: [
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable", openingBalance: 50 }),
+        acct("susp", "liability", { name: "Opening Balance Suspense", openingBalance: 50 }),
+        acct("misc", "income", { name: "Miscellaneous Income" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Pre-period journal: Dr receivable 10 / Cr misc 10.
+        {
+          _id: "j0", _creationTime: 0, societyId: "s1", date: "2026-03-20", voucherNo: "J0",
+          type: "journal", total: 10,
+          lines: [
+            { accountId: "recv", debit: 10, credit: 0 },
+            { accountId: "misc", debit: 0, credit: 10 },
+          ],
+        },
+        // In-period journal: Dr receivable 200 / Cr misc 200.
+        {
+          _id: "j1", _creationTime: 0, societyId: "s1", date: "2026-05-05", voucherNo: "J1",
+          type: "journal", total: 200,
+          lines: [
+            { accountId: "recv", debit: 200, credit: 0 },
+            { accountId: "misc", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    const recv = tb.find((r) => r.accountId === "recv")!;
+    // The control's own opening 50 and the pre-period journal 10 fold into
+    // the member column (no member openings here), then the in-period
+    // journal debits it — no GL posting on the control may vanish.
+    expect(recv).toMatchObject({
+      openingDr: 60, openingCr: 0,
+      periodDr: 200, periodCr: 0,
+      closingDr: 260, closingCr: 0,
+    });
+    // The statement keeps footing: opening Dr = opening Cr and closing
+    // Dr = closing Cr across all rows.
+    expect(tb.reduce((s, r) => s + r.openingDr, 0)).toBe(
+      tb.reduce((s, r) => s + r.openingCr, 0),
+    );
+    expect(tb.reduce((s, r) => s + r.closingDr, 0)).toBe(
+      tb.reduce((s, r) => s + r.closingCr, 0),
+    );
+  });
 });
