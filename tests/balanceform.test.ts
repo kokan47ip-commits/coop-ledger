@@ -340,6 +340,56 @@ describe("Form N: Balance Sheet", () => {
     expect(bs.totalAssets).toBe(600);
   });
 
+  test("deficit lands on the ASSETS side so the sheet still ties", () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("sink", "liability", { name: "Sinking Fund", openingBalance: 1000 }),
+        acct("interest", "income", { name: "Interest on Sinking Fund Investment" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Dr bank 50 / Cr interest 50 — small income.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 50,
+          lines: [
+            { accountId: "bank", debit: 50, credit: 0 },
+            { accountId: "interest", debit: 0, credit: 50 },
+          ],
+        },
+        // Dr repair 200 / Cr bank 200 — larger expense → 150 deficit.
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-20", voucherNo: "P1",
+          type: "payment", total: 200,
+          lines: [
+            { accountId: "repair", debit: 200, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    // Bank 1000 − 200 + 50 = 850, plus the 150 loss carried as an asset row.
+    expect(bs.assets.map((r) => r.name)).toEqual(["Bank of India", "Expenses over Income"]);
+    expect(bs.assets[0]!.amount).toBe(850);
+    expect(bs.assets[1]!.amount).toBe(150);
+    // Form N asset head X — Profit and Loss Account (the loss).
+    expect(bs.assets[1]!.group).toBe("Profit and Loss Account");
+    // It must NOT appear as a liability.
+    expect(bs.liabilities.some((r) => r.name === "Expenses over Income")).toBe(false);
+    expect(bs.liabilities.map((r) => r.name)).toEqual(["Sinking Fund"]);
+    // Both sides tie: 850 + 150 = 1000.
+    expect(bs.totalAssets).toBe(1000);
+    expect(bs.totalLiabilities).toBe(1000);
+  });
+
   test("member dues and advances are shown GROSS, never netted", () => {
     // Member A owes 500 (billed 800, received 300); member B paid 400 with
     // nothing due. Netting would show a single 100 debtor and hide both the

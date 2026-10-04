@@ -706,6 +706,7 @@ function fundGroupOf(data: SocietyData, a: Doc<"accounts">): string {
     : undefined;
   if (g) return g.name;
   const n = a.name.toLowerCase();
+  if (n.includes("share") && n.includes("capital")) return "Share Capital";
   if (n.includes("sinking") || n.includes("building") || n.includes("development"))
     return "Reserve Funds and Other Funds";
   if (n.includes("deposit")) return "Deposits";
@@ -900,31 +901,47 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     prevToDate,
   );
   if (ie.surplus !== 0 || iePrev.surplus !== 0) {
-    liabilities.push({
-      code: "",
-      // System-generated account (reference format 4): the period result
-      // presented as an account — surplus funds the society (liability), a
-      // deficit is owed to it (asset side row of the same name).
-      name: ie.surplus >= 0 ? "Income over Expenses" : "Expenses over Income",
-      amount: Math.abs(ie.surplus),
-      type: "liability",
-      group: "Surplus / (Deficit)",
-      prev:
-        iePrev.surplus === 0
-          ? 0
-          : Math.sign(ie.surplus) === Math.sign(iePrev.surplus)
-            ? Math.abs(iePrev.surplus)
-            : -Math.abs(iePrev.surplus),
-    });
+    const prevResult =
+      iePrev.surplus === 0
+        ? 0
+        : Math.sign(ie.surplus) === Math.sign(iePrev.surplus)
+          ? Math.abs(iePrev.surplus)
+          : -Math.abs(iePrev.surplus);
+    if (ie.surplus >= 0) {
+      // Surplus funds the society: a Form N fund on the liabilities side
+      // (head XI — Profit and Loss Account).
+      liabilities.push({
+        code: "",
+        name: "Income over Expenses",
+        amount: ie.surplus,
+        type: "liability",
+        group: "Surplus / (Deficit)",
+        prev: prevResult,
+      });
+    } else {
+      // Deficit is a loss not written off: on the ASSETS side (Form N asset
+      // head X — Profit and Loss Account) so the two sides still tie.
+      assets.push({
+        code: "",
+        name: "Expenses over Income",
+        amount: -ie.surplus,
+        type: "asset",
+        group: "Profit and Loss Account",
+        prev: prevResult,
+      });
+    }
   }
 
   const groupOrder = (g: string) => {
     const i = FUND_ORDER.indexOf(g);
     return i === -1 ? FUND_ORDER.length : i;
   };
-  // Print order: Form N fund headings first, then serial-numbered / code order
-  // within each heading.
-  assets.sort(byPrintOrder);
+  // Assets sort by Form N asset heading (the loss head last), then serial /
+  // code order within each heading.
+  const assetGroupOrder = (g: string) => (g === "Profit and Loss Account" ? 1 : 0);
+  assets.sort(
+    (a, b) => assetGroupOrder(a.group) - assetGroupOrder(b.group) || byPrintOrder(a, b),
+  );
   liabilities.sort(
     (a, b) => groupOrder(a.group) - groupOrder(b.group) || byPrintOrder(a, b),
   );
