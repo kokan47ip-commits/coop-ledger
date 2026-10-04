@@ -70,12 +70,12 @@ export default function BalanceSheet() {
       "",
       "",
       "LIABILITIES & FUNDS",
-      "Current Year (₹)",
       "Previous Year (₹)",
+      "Current Year (₹)",
       "",
       "ASSETS",
-      "Current Year (₹)",
       "Previous Year (₹)",
+      "Current Year (₹)",
     ]);
     for (let i = 0; i < maxLen; i++) {
       const li = bs?.liabilities[i];
@@ -99,36 +99,36 @@ export default function BalanceSheet() {
         "",
         li ? serialOf(li.printNo, i + 1) : "",
         li ? `    ${li.name}` : "",
-        li ? li.amount : "",
         li ? (li.prev ?? 0) : "",
+        li ? li.amount : "",
         a ? serialOf(a.printNo, i + 1) : "",
         a ? `    ${a.name}` : "",
-        a ? a.amount : "",
         a ? (a.prev ?? 0) : "",
+        a ? a.amount : "",
       ]);
     }
     rows.push([
       "",
       "",
       "Total",
-      bs?.totalLiabilities ?? 0,
       bs?.totalLiabilitiesPrev ?? 0,
+      bs?.totalLiabilities ?? 0,
       "",
       "Total",
-      bs?.totalAssets ?? 0,
       bs?.totalAssetsPrev ?? 0,
+      bs?.totalAssets ?? 0,
     ]);
     return {
       head: [
         "",
         "S.No.",
         "Liabilities & Funds",
-        "Current Year (₹)",
         "Previous Year (₹)",
+        "Current Year (₹)",
         "S.No.",
         "Assets",
-        "Current Year (₹)",
         "Previous Year (₹)",
+        "Current Year (₹)",
       ],
       body: rows,
       columnStyles: {
@@ -207,12 +207,12 @@ export default function BalanceSheet() {
               <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
                 <td className="px-5 py-2.5">Liabilities &amp; Funds</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
                 <td className="w-28 px-5 py-2.5 text-right">Previous Year (₹)</td>
+                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
                 <td className="border-l px-5 py-2.5">Assets</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
                 <td className="w-28 border-l px-5 py-2.5 text-right">Previous Year (₹)</td>
+                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
               </tr>
             </thead>
             <tbody>
@@ -240,16 +240,16 @@ export default function BalanceSheet() {
                     <tr className="border-b last:border-0">
                       <td className="px-5 py-2.5">{li?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{li ? serialOf(li.printNo, i + 1) : ""}</td>
-                      <td className="px-5 py-2.5 text-right tabular-nums">{li ? money(li.amount) : ""}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums text-muted-foreground">
                         {li ? money(li.prev ?? 0) : ""}
                       </td>
+                      <td className="px-5 py-2.5 text-right tabular-nums">{li ? money(li.amount) : ""}</td>
                       <td className="border-l px-5 py-2.5">{a?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{a ? serialOf(a.printNo, i + 1) : ""}</td>
-                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{a ? money(a.amount) : ""}</td>
                       <td className="border-l px-5 py-2.5 text-right tabular-nums text-muted-foreground">
                         {a ? money(a.prev ?? 0) : ""}
                       </td>
+                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{a ? money(a.amount) : ""}</td>
                     </tr>
                   </Fragment>
                 );
@@ -257,12 +257,12 @@ export default function BalanceSheet() {
               <tr className="bg-indigo-50 text-base font-semibold text-[#312e81]">
                 <td className="px-5 py-4">Total</td>
                 <td />
-                <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilities)}</td>
                 <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilitiesPrev)}</td>
+                <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilities)}</td>
                 <td className="border-l px-5 py-4">Total</td>
                 <td />
-                <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssets)}</td>
                 <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssetsPrev)}</td>
+                <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssets)}</td>
               </tr>
             </tbody>
           </table>

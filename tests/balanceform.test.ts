@@ -22,6 +22,7 @@ import {
   computeTrialBalance,
   type SocietyData,
 } from "../src/convex/reports";
+import { FORM_N_LEDGERS } from "../src/convex/accounts";
 
 const acct = (
   id: string,
@@ -370,9 +371,12 @@ describe("Form N: Balance Sheet", () => {
     // Member-level: opening −800 (paid ahead), no charge lines, 500 received
     // → 1300 advance. Same figure the GL receivable nets to, so no
     // "Members Receivable (unadjusted)" row appears.
+    // Member advances are presented per member, not through the GL control
+    // ledger, and there is no "unadjusted" residual row.
     expect(advance!.amount).toBe(1300);
     expect(advance!.group).toBe("VII. Current Liabilities and Provisions");
     expect(bs.liabilities.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
+    expect(bs.assets.find((r) => r.name === "Members Receivable (unadjusted)")).toBeUndefined();
     expect(bs.totalAssets).toBe(1500);
     expect(bs.totalLiabilities).toBe(1300);
 
@@ -616,6 +620,44 @@ describe("Form N: Balance Sheet", () => {
     ).toBe(250);
     expect(bs.assets.find((r) => r.group === "II. Investments")!.prev).toBe(800);
     expect(bs.assets.find((r) => r.group === "I. Cash and Bank Balances")!.prev).toBe(500);
+  });
+
+  test("GL controls for Dues / Advance / Income-over-Expenses are excluded from the sheet", () => {
+    // A society that created the system ledgers (Chart of Accounts) and posted
+    // to them: the statements still derive those figures from the member
+    // ledgers / I&E, so the GL control balances must NOT print again.
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("recv", "asset", { kind: "receivable", name: "Members Receivable", openingBalance: 350 }),
+        acct("dues", "asset", { kind: "receivable", name: "Dues from Members", openingBalance: 200 }),
+        acct("adv", "liability", { name: "Advance from Members", openingBalance: 75 }),
+        acct("ioe", "liability", { name: "Income over Expenses", openingBalance: 40 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    // Receivable-kind controls (Members Receivable AND the Dues ledger) never
+    // print as asset rows; the member arithmetic (0 dues here) decides.
+    expect(bs.assets.map((r) => r.name)).toEqual(["Bank of India"]);
+    expect(bs.assets.find((r) => r.name === "Dues from Members")).toBeUndefined();
+    // GL Advance / Income-over-Expenses balances are excluded as well.
+    expect(bs.liabilities.map((r) => r.name)).toEqual([]);
+    expect(bs.totalAssets).toBe(1000);
+    expect(bs.totalLiabilities).toBe(0);
+    // The seed definitions used by the Chart of Accounts stay in sync.
+    expect(FORM_N_LEDGERS.map((l) => l.name)).toEqual([
+      "Dues from Members",
+      "Advance from Members",
+      "Income over Expenses",
+    ]);
   });
 });
 

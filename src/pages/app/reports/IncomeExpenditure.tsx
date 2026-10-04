@@ -102,6 +102,7 @@ export default function IncomeExpenditure() {
           "",
           "",
           "",
+          "",
           cHead ? (c!.group ?? "").toUpperCase() : "",
           "",
           "",
@@ -111,12 +112,12 @@ export default function IncomeExpenditure() {
         "",
         e ? (e.system ? "" : serialOf(e.printNo, i + 1)) : "",
         e ? (e.system ? e.name : `    ${e.name}`) : "",
-        e ? e.debit : "",
         e ? (e.prev ?? 0) : "",
+        e ? e.debit : "",
         c ? (c.system ? "" : serialOf(c.printNo, i + 1)) : "",
         c ? (c.system ? c.name : `    ${c.name}`) : "",
-        c ? c.credit : "",
         c ? (c.prev ?? 0) : "",
+        c ? c.credit : "",
       ]);
     }
     // The two sides foot to the same total — the balancing system account is
@@ -124,18 +125,18 @@ export default function IncomeExpenditure() {
     // (previous-year) column.
     const foot = Math.max(ie?.totalIncome ?? 0, ie?.totalExpenditure ?? 0);
     const footPrev = Math.max(ie?.prevTotalIncome ?? 0, ie?.prevTotalExpenditure ?? 0);
-    rows.push(["", "", "Total", foot, footPrev, "", "Total", foot, footPrev]);
+    rows.push(["", "", "Total", footPrev, foot, "", "Total", footPrev, foot]);
     return {
       head: [
         "",
         "S.No.",
         "Expenditure",
-        "Current Year (₹)",
         "Previous Year (₹)",
+        "Current Year (₹)",
         "S.No.",
         "Income",
-        "Current Year (₹)",
         "Previous Year (₹)",
+        "Current Year (₹)",
       ],
       body: rows,
       columnStyles: {
@@ -218,12 +219,12 @@ export default function IncomeExpenditure() {
               <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
                 <td className="px-5 py-2.5">Expenditure</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
                 <td className="w-28 px-5 py-2.5 text-right">Previous Year (₹)</td>
+                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
                 <td className="border-l px-5 py-2.5">Income</td>
                 <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
                 <td className="w-28 border-l px-5 py-2.5 text-right">Previous Year (₹)</td>
+                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
               </tr>
             </thead>
             <tbody>
@@ -259,18 +260,18 @@ export default function IncomeExpenditure() {
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
                         {e && !e.system ? serialOf(e.printNo, i + 1) : ""}
                       </td>
-                      <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums text-muted-foreground">
                         {e ? money(e.prev ?? 0) : ""}
                       </td>
+                      <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
                       <td className="border-l px-5 py-2.5">{c?.name ?? ""}</td>
                       <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
                         {c && !c.system ? serialOf(c.printNo, i + 1) : ""}
                       </td>
-                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
                       <td className="border-l px-5 py-2.5 text-right tabular-nums text-muted-foreground">
                         {c ? money(c.prev ?? 0) : ""}
                       </td>
+                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
                     </tr>
                   </Fragment>
                 );
@@ -279,18 +280,18 @@ export default function IncomeExpenditure() {
                 <td className="px-5 py-2.5">Total</td>
                 <td />
                 <td className="px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
                 </td>
                 <td className="px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
+                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
                 </td>
                 <td className="border-l px-5 py-2.5">Total</td>
                 <td />
                 <td className="border-l px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
                 </td>
                 <td className="border-l px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
+                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
                 </td>
               </tr>
             </tbody>

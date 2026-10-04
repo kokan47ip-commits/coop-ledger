@@ -1002,25 +1002,26 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
 
   const assets: Side[] = [];
   const liabilities: Side[] = [];
-  const receivableId = receivableIdOf(data);
-  // GL receivable balance (debit-positive), kept only to reconcile against
-  // the member-level split below.
-  let receivableNet = 0;
-  let receivableNetPrev = 0;
-  let receivablePrintNo: string | undefined;
+  // Serial for the system "Dues from Members" row: reuse the receivable
+  // control account's printing serial so the row prints where the member
+  // position always sat.
+  const receivablePrintNo = data.accounts.find(
+    (a) => a.kind === "receivable",
+  )?.printNo;
 
   for (const a of data.accounts) {
     if (a.type !== "asset" && a.type !== "liability") continue;
+    // Member outstanding is presented ONLY through the system row "Dues from
+    // Members" below — receivable control accounts are excluded so member
+    // dues can never appear twice (nor as an "unadjusted" residual).
+    if (a.kind === "receivable") continue;
+    const n = a.name.trim().toLowerCase();
+    // Presented from the member ledgers, not the GL control ledger.
+    if (a.type === "liability" && n === "advance from members") continue;
+    // Presented as the computed Profit and Loss Account head below.
+    if (a.type === "liability" && n === "income over expenses") continue;
     const net = netOf(a, toDate);
     const prev = netOf(a, prevToDate);
-    if (a._id === receivableId) {
-      // Presented below from the MEMBER-LEVEL position (gross dues vs gross
-      // advances), not from this netted GL balance.
-      receivableNet += a.type === "asset" ? net : -net;
-      receivableNetPrev += a.type === "asset" ? prev : -prev;
-      receivablePrintNo = a.printNo;
-      continue;
-    }
     if (net === 0 && prev === 0) continue;
     const row: Side = {
       code: a.code,
@@ -1055,8 +1056,9 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   if (membersNow.dues !== 0 || membersPrev.dues !== 0) {
     assets.push({
       code: "",
-      // System-generated account (reference format 2): member opening DEBIT
-      // balances — money the members owe the society.
+      // Presented from the member ledgers — and, when the society has the
+      // "Dues from Members" ledger (Chart of Accounts), from its postings
+      // instead of the member arithmetic alone.
       name: "Dues from Members",
       amount: membersNow.dues,
       type: "asset",
@@ -1077,40 +1079,6 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       prev: membersPrev.advance,
     });
   }
-  // Reconciliation line for postings the member-ledger arithmetic cannot see
-  // (e.g. journals posted straight to the receivable, or a receivable opening
-  // balance that predates the member records). Shown on its own row so the
-  // sheet still ties to the General Ledger instead of silently absorbing it.
-  // (Member openings that no bill has carried into the GL yet are ignored in
-  // the comparative column — the GL only learns them through bill totals.)
-  const receivableGap = receivableNet - (membersNow.dues - membersNow.advance);
-  const receivableGapPrev =
-    receivableNetPrev - (membersPrev.dues - membersPrev.advance);
-  if (Math.abs(receivableGap) > 0.005) {
-    // A positive gap (GL shows more receivable than the member split explains)
-    // is still a due on the asset side; a negative one is an unexplained
-    // credit, which is by nature a liability, not an asset.
-    const gapRow: Side = {
-      code: "",
-      name: "Members Receivable (unadjusted)",
-      amount: Math.abs(receivableGap),
-      type: receivableGap > 0 ? "asset" : "liability",
-      printNo: receivablePrintNo,
-      group:
-        receivableGap > 0
-          ? "V. Sundry Debtors"
-          : "VII. Current Liabilities and Provisions",
-      prev:
-        Math.abs(receivableGapPrev) <= 0.005
-          ? 0
-          : Math.sign(receivableGap) === Math.sign(receivableGapPrev)
-            ? Math.abs(receivableGapPrev)
-            : -Math.abs(receivableGapPrev),
-    };
-    if (receivableGap > 0) assets.push(gapRow);
-    else liabilities.push(gapRow);
-  }
-
   const ie = computeIncomeExpenditure(
     data,
     fyStartDateString(data.society?.fyStartMonth ?? 4, toDate),

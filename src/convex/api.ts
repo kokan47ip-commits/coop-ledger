@@ -196,8 +196,10 @@ export const dashboard = query({
     const bs = computeBalanceSheet(data, toDate);
     const rp = computeReceiptPayment(data, fromDate, toDate);
     const activeMembers = data.members.filter((m) => m.isActive).length;
+    // Member outstanding = the "Dues from Members" row (member-ledger gross
+    // position), matching what the Balance Sheet shows under Sundry Debtors.
     const outstanding = bs.assets
-      .filter((a) => a.name.toLowerCase().includes("receivable"))
+      .filter((a) => a.name === "Dues from Members")
       .reduce((s, a) => s + a.amount, 0);
     const recentVouchers = [...data.vouchers]
       .sort((a, b) =>

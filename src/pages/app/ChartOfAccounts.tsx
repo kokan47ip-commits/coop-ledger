@@ -30,7 +30,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { formatINR } from "@/lib/format";
 import { FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -84,6 +84,7 @@ export default function ChartOfAccounts() {
   const upsertGroup = useMutation(api.accountGroups.upsert);
   const removeGroup = useMutation(api.accountGroups.remove);
   const seedGroups = useMutation(api.accountGroups.seedDefaults);
+  const ensureSystem = useMutation(api.accounts.ensureSystem);
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
@@ -98,6 +99,15 @@ export default function ChartOfAccounts() {
   });
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupForm, setGroupForm] = useState(EMPTY_GROUP_FORM);
+
+  // Create the system Form N ledgers (Dues from Members, Advance from
+  // Members, Income over Expenses) once per society. Idempotent.
+  useEffect(() => {
+    if (!societyId || !canEdit) return;
+    ensureSystem({ societyId }).catch(() => {
+      // Non-fatal: the statements still work without the ledgers.
+    });
+  }, [societyId, canEdit, ensureSystem]);
 
   const groupName = (id?: Id<"accountGroups">) =>
     id ? groups?.find((g) => g._id === id)?.name ?? "—" : "—";

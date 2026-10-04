@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
+import { ensureFormNLedgers } from "./accounts";
 import {
   DEFAULT_ACCOUNTS,
   isSoftwareAdmin,
@@ -145,6 +146,9 @@ export const create = mutation({
         groupId: groups.find((g) => g.name === a.group)?._id,
       });
     }
+    // The system Form N ledgers (Dues from Members / Advance from Members /
+    // Income over Expenses) are part of every society's chart from day one.
+    await ensureFormNLedgers(ctx, societyId);
     return { societyId, claimCode: claimCode ?? null };
   },
 });
