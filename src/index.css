@@ -273,4 +273,29 @@
     /* Reserve room so the horizontal bar is never covered by the vertical one. */
     scrollbar-gutter: stable;
   }
+  /* Freeze the headings of every shadcn table while its rows scroll. Solid
+     backing so translucent header tints never let rows bleed through. */
+  [data-slot="table-container"] thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--card);
+  }
+
+  /*
+   * Scroll frame for the statement pages that hand-roll <table> (Balance
+   * Sheet, Income & Expenditure, Receipt & Payment): the same slider
+   * behaviour as the shadcn tables — capped height, pinned horizontal
+   * scrollbar, and column headings that stay frozen while rows scroll.
+   */
+  .report-scroll {
+    max-height: max(60vh, calc(100vh - 320px));
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+  .report-scroll thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
 }

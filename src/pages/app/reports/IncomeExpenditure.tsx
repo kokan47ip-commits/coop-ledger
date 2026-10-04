@@ -38,17 +38,33 @@ type IEResult = {
   prevTotalExpenditure: number;
 };
 
-/** Statement serial: the user-defined Print No., else the running position. */
-function serialOf(printNo: string | undefined, position: number): string {
-  return printNo ?? String(position);
-}
-
 /** Group-band trigger: first row of a Form N heading — never on the system
  *  balancing account row, which carries no heading of its own. */
 function bandHead(rows: IERow[], i: number): boolean {
   const r = rows[i];
   if (!r || r.system) return false;
   return i === 0 || rows[i - 1]!.group !== r.group;
+}
+
+/** Per-group subtotal of current-year figures (the statement TOTAL column);
+ *  the system balancing row belongs to no group. */
+function groupTotals(rows: IERow[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    if (r.system) continue;
+    const g = r.group ?? "";
+    m.set(g, (m.get(g) ?? 0) + (r.credit || r.debit));
+  }
+  return m;
+}
+
+/** True when row i is the last ledger of its group — where the group's TOTAL
+ *  prints. The system row has no group and bounds the last real group. */
+function groupLast(rows: IERow[], i: number): boolean {
+  const r = rows[i];
+  if (!r || r.system) return false;
+  const next = rows[i + 1];
+  return !next || !!next.system || next.group !== r.group;
 }
 
 const money = (n: number) =>
@@ -79,15 +95,18 @@ export default function IncomeExpenditure() {
       }
     : null;
 
-  /** Form N table: Expenditure on the left, Income on the right, with the
-   *  prescribed headings rendered as band rows where each group begins. The
-   *  system account row ("Income over Expenses" / "Expenses over Income")
-   *  balances the two sides, so the totals foot to the same figure. */
+  /** Form N table: Expenditure on the left, Income on the right. Columns per
+   *  side run Previous Year | Particulars | Current Year | Total, with the
+   *  prescribed headings as band rows and each group's TOTAL against its last
+   *  ledger. The system account row ("Income over Expenses" / "Expenses over
+   *  Income") balances the two sides, so the totals foot to the same figure. */
   const buildTable = (): TableSpec => {
     const exp = ie?.expenditure ?? [];
     const inc = ie?.income ?? [];
+    const eTotals = groupTotals(exp);
+    const cTotals = groupTotals(inc);
     const rows: (string | number)[][] = [];
-    rows.push(["", "", "EXPENDITURE", "", "", "", "INCOME", "", ""]);
+    rows.push(["", "", "EXPENDITURE", "", "", "", "", "INCOME", "", ""]);
     const maxLen = Math.max(exp.length, inc.length);
     for (let i = 0; i < maxLen; i++) {
       const e = exp[i];
@@ -110,14 +129,15 @@ export default function IncomeExpenditure() {
       }
       rows.push([
         "",
-        e ? (e.system ? "" : serialOf(e.printNo, i + 1)) : "",
-        e ? (e.system ? e.name : `    ${e.name}`) : "",
         e ? (e.prev ?? 0) : "",
+        e ? (e.system ? e.name : `    ${e.name}`) : "",
         e ? e.debit : "",
-        c ? (c.system ? "" : serialOf(c.printNo, i + 1)) : "",
-        c ? (c.system ? c.name : `    ${c.name}`) : "",
+        e && groupLast(exp, i) ? (eTotals.get(e.group ?? "") ?? 0) : "",
+        "",
         c ? (c.prev ?? 0) : "",
+        c ? (c.system ? c.name : `    ${c.name}`) : "",
         c ? c.credit : "",
+        c && groupLast(inc, i) ? (cTotals.get(c.group ?? "") ?? 0) : "",
       ]);
     }
     // The two sides foot to the same total — the balancing system account is
@@ -125,25 +145,28 @@ export default function IncomeExpenditure() {
     // (previous-year) column.
     const foot = Math.max(ie?.totalIncome ?? 0, ie?.totalExpenditure ?? 0);
     const footPrev = Math.max(ie?.prevTotalIncome ?? 0, ie?.prevTotalExpenditure ?? 0);
-    rows.push(["", "", "Total", footPrev, foot, "", "Total", footPrev, foot]);
+    rows.push(["", footPrev, "Total", foot, "", "", footPrev, "Total", foot, ""]);
     return {
       head: [
         "",
-        "S.No.",
+        "Previous Year (₹)",
         "Expenditure",
-        "Previous Year (₹)",
         "Current Year (₹)",
-        "S.No.",
+        "Total",
+        "",
+        "Previous Year (₹)",
         "Income",
-        "Previous Year (₹)",
         "Current Year (₹)",
+        "Total",
       ],
       body: rows,
       columnStyles: {
+        1: { halign: "right" },
         3: { halign: "right" },
         4: { halign: "right" },
-        7: { halign: "right" },
+        6: { halign: "right" },
         8: { halign: "right" },
+        9: { halign: "right" },
       },
     };
   };
@@ -156,11 +179,14 @@ export default function IncomeExpenditure() {
     else printTables(meta, [table]);
   };
 
+  const eTotals = ie ? groupTotals(ie.expenditure) : new Map<string, number>();
+  const cTotals = ie ? groupTotals(ie.income) : new Map<string, number>();
+
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="Income & Expenditure"
-        description="Form N statement — expenditure and income on opposite sides under the prescribed headings, each figure paired with its previous-year comparative, with the resulting surplus or deficit."
+        description="Form N statement — expenditure and income on opposite sides, columns running Previous Year | Particulars | Current Year | Total. Every Chart of Accounts ledger is printed (0.00 when nil), group totals foot the Total column, and the resulting surplus or deficit balances the sides."
       />
 
       <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
@@ -193,7 +219,7 @@ export default function IncomeExpenditure() {
             variant="outline"
             size="sm"
             onClick={() => doExport("print")}
-            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:text-violet-300"
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
           >
             <Printer className="size-4" /> Print
           </Button>
@@ -201,7 +227,7 @@ export default function IncomeExpenditure() {
       </div>
 
       {!ie ? null : (
-        <div className="panel overflow-hidden">
+        <div className="panel">
           <ReportLetterhead
             className="mx-0 mt-0"
             name={society?.name ?? ""}
@@ -214,88 +240,92 @@ export default function IncomeExpenditure() {
             title="Income & Expenditure"
             subtitle={`For the period ${formatDate(from)} to ${formatDate(to)}`}
           />
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
-                <td className="px-5 py-2.5">Expenditure</td>
-                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-28 px-5 py-2.5 text-right">Previous Year (₹)</td>
-                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
-                <td className="border-l px-5 py-2.5">Income</td>
-                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-28 border-l px-5 py-2.5 text-right">Previous Year (₹)</td>
-                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({
-                length: Math.max(ie.expenditure.length, ie.income.length, 1),
-              }).map((_, i) => {
-                const e = ie.expenditure[i];
-                const c = ie.income[i];
-                const eHead = bandHead(ie.expenditure, i);
-                const cHead = bandHead(ie.income, i);
-                return (
-                  <Fragment key={i}>
-                    {(eHead || cHead) && (
-                      <tr className="border-y bg-indigo-50/60 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#312e81]/80">
-                        <td className="px-5 py-1.5">{eHead ? (e!.group ?? "") : ""}</td>
-                        <td />
-                        <td />
-                        <td />
-                        <td className="border-l px-5 py-1.5">{cHead ? (c!.group ?? "") : ""}</td>
-                        <td />
-                        <td className="border-l" />
-                        <td className="border-l" />
+          {/* Scroll frame: the report slides horizontally when wider than the
+              screen, headings stay frozen, vertical bar stays in view. */}
+          <div className="report-scroll">
+            <table className="w-full min-w-[60rem] text-sm">
+              <thead>
+                <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
+                  <td className="w-32 px-3 py-2.5 text-right">Previous Year (₹)</td>
+                  <td className="px-5 py-2.5">Expenditure</td>
+                  <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
+                  <td className="w-28 px-5 py-2.5 text-right">Total</td>
+                  <td className="w-32 border-l px-3 py-2.5 text-right">Previous Year (₹)</td>
+                  <td className="border-l px-5 py-2.5">Income</td>
+                  <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
+                  <td className="w-28 border-l px-5 py-2.5 text-right">Total</td>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({
+                  length: Math.max(ie.expenditure.length, ie.income.length, 1),
+                }).map((_, i) => {
+                  const e = ie.expenditure[i];
+                  const c = ie.income[i];
+                  const eHead = bandHead(ie.expenditure, i);
+                  const cHead = bandHead(ie.income, i);
+                  return (
+                    <Fragment key={i}>
+                      {(eHead || cHead) && (
+                        <tr className="border-y bg-indigo-50/60 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#312e81]/80">
+                          <td />
+                          <td className="px-5 py-1.5">{eHead ? (e!.group ?? "").toUpperCase() : ""}</td>
+                          <td />
+                          <td />
+                          <td className="border-l" />
+                          <td className="border-l px-5 py-1.5">{cHead ? (c!.group ?? "").toUpperCase() : ""}</td>
+                          <td className="border-l" />
+                          <td className="border-l" />
+                        </tr>
+                      )}
+                      <tr
+                        className={
+                          e?.system || c?.system
+                            ? "border-t-2 border-indigo-300 font-semibold text-[#312e81]"
+                            : "border-b last:border-0"
+                        }
+                      >
+                        <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {e ? money(e.prev ?? 0) : ""}
+                        </td>
+                        <td className="px-5 py-2.5">{e?.name ?? ""}</td>
+                        <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
+                        <td className="px-5 py-2.5 text-right tabular-nums">
+                          {e && groupLast(ie.expenditure, i) ? money(eTotals.get(e.group ?? "") ?? 0) : ""}
+                        </td>
+                        <td className="border-l px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {c ? money(c.prev ?? 0) : ""}
+                        </td>
+                        <td className="border-l px-5 py-2.5">{c?.name ?? ""}</td>
+                        <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
+                        <td className="border-l px-5 py-2.5 text-right tabular-nums">
+                          {c && groupLast(ie.income, i) ? money(cTotals.get(c.group ?? "") ?? 0) : ""}
+                        </td>
                       </tr>
-                    )}
-                    <tr
-                      className={
-                        e?.system || c?.system
-                          ? "border-t-2 border-indigo-300 font-semibold text-[#312e81]"
-                          : "border-b last:border-0"
-                      }
-                    >
-                      <td className="px-5 py-2.5">{e?.name ?? ""}</td>
-                      <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
-                        {e && !e.system ? serialOf(e.printNo, i + 1) : ""}
-                      </td>
-                      <td className="px-5 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {e ? money(e.prev ?? 0) : ""}
-                      </td>
-                      <td className="px-5 py-2.5 text-right tabular-nums">{e ? money(e.debit) : ""}</td>
-                      <td className="border-l px-5 py-2.5">{c?.name ?? ""}</td>
-                      <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">
-                        {c && !c.system ? serialOf(c.printNo, i + 1) : ""}
-                      </td>
-                      <td className="border-l px-5 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {c ? money(c.prev ?? 0) : ""}
-                      </td>
-                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{c ? money(c.credit) : ""}</td>
-                    </tr>
-                  </Fragment>
-                );
-              })}
-              <tr className="border-t bg-indigo-50/70 font-semibold text-[#312e81]">
-                <td className="px-5 py-2.5">Total</td>
-                <td />
-                <td className="px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
-                </td>
-                <td className="px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
-                </td>
-                <td className="border-l px-5 py-2.5">Total</td>
-                <td />
-                <td className="border-l px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
-                </td>
-                <td className="border-l px-5 py-2.5 text-right tabular-nums">
-                  {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                    </Fragment>
+                  );
+                })}
+                <tr className="border-t bg-indigo-50/70 font-semibold text-[#312e81]">
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
+                  </td>
+                  <td className="px-5 py-2.5">Total</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">
+                    {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                  </td>
+                  <td />
+                  <td className="border-l px-3 py-2.5 text-right tabular-nums">
+                    {money(Math.max(ie.prevTotalIncome, ie.prevTotalExpenditure))}
+                  </td>
+                  <td className="border-l px-5 py-2.5">Total</td>
+                  <td className="border-l px-5 py-2.5 text-right tabular-nums">
+                    {money(Math.max(ie.totalIncome, ie.totalExpenditure))}
+                  </td>
+                  <td className="border-l" />
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

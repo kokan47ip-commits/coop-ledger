@@ -31,9 +31,14 @@ type BSResult = {
   totalLiabilitiesPrev: number;
 };
 
-/** Statement serial: the user-defined Print No., else the running position. */
-function serialOf(printNo: string | undefined, position: number): string {
-  return printNo ?? String(position);
+/**
+ * Per-group subtotal of the current-year figures — the statement's TOTAL
+ * column, printed against the last ledger of each group (reference format).
+ */
+function groupTotals(rows: Row[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.group!, (m.get(r.group!) ?? 0) + r.amount);
+  return m;
 }
 
 const money = (n: number) =>
@@ -64,24 +69,19 @@ export default function BalanceSheet() {
     : null;
 
   const buildTable = (): TableSpec => {
+    const liRows = bs?.liabilities ?? [];
+    const aRows = bs?.assets ?? [];
+    const liTotals = groupTotals(liRows);
+    const aTotals = groupTotals(aRows);
     const rows: (string | number)[][] = [];
-    const maxLen = Math.max(bs?.assets.length ?? 0, bs?.liabilities.length ?? 0);
-    rows.push([
-      "",
-      "",
-      "LIABILITIES & FUNDS",
-      "Previous Year (₹)",
-      "Current Year (₹)",
-      "",
-      "ASSETS",
-      "Previous Year (₹)",
-      "Current Year (₹)",
-    ]);
+    // Column order per side: Previous Year | Particulars | Current Year | Total.
+    rows.push(["", "", "LIABILITIES & FUNDS", "", "", "", "", "ASSETS", "", ""]);
+    const maxLen = Math.max(liRows.length, aRows.length);
     for (let i = 0; i < maxLen; i++) {
-      const li = bs?.liabilities[i];
-      const a = bs?.assets[i];
-      const liHead = li ? (i === 0 || bs!.liabilities[i - 1]!.group !== li.group) : false;
-      const aHead = a ? (i === 0 || bs!.assets[i - 1]!.group !== a.group) : false;
+      const li = liRows[i];
+      const a = aRows[i];
+      const liHead = li ? (i === 0 || liRows[i - 1]!.group !== li.group) : false;
+      const aHead = a ? (i === 0 || aRows[i - 1]!.group !== a.group) : false;
       if (liHead || aHead) {
         rows.push([
           "",
@@ -90,52 +90,61 @@ export default function BalanceSheet() {
           "",
           "",
           "",
+          "",
           aHead ? (a!.group ?? "ASSETS").toUpperCase() : "",
           "",
           "",
         ]);
       }
+      // The group's TOTAL figure prints against its last ledger.
+      const liLast = li && (i === liRows.length - 1 || liRows[i + 1]!.group !== li.group);
+      const aLast = a && (i === aRows.length - 1 || aRows[i + 1]!.group !== a.group);
       rows.push([
         "",
-        li ? serialOf(li.printNo, i + 1) : "",
-        li ? `    ${li.name}` : "",
         li ? (li.prev ?? 0) : "",
+        li ? `    ${li.name}` : "",
         li ? li.amount : "",
-        a ? serialOf(a.printNo, i + 1) : "",
-        a ? `    ${a.name}` : "",
+        li && liLast ? (liTotals.get(li.group!) ?? 0) : "",
+        "",
         a ? (a.prev ?? 0) : "",
+        a ? `    ${a.name}` : "",
         a ? a.amount : "",
+        a && aLast ? (aTotals.get(a.group!) ?? 0) : "",
       ]);
     }
     rows.push([
       "",
-      "",
-      "Total",
       bs?.totalLiabilitiesPrev ?? 0,
+      "Total",
       bs?.totalLiabilities ?? 0,
       "",
-      "Total",
+      "",
       bs?.totalAssetsPrev ?? 0,
+      "Total",
       bs?.totalAssets ?? 0,
+      "",
     ]);
     return {
       head: [
         "",
-        "S.No.",
+        "Previous Year (₹)",
         "Liabilities & Funds",
-        "Previous Year (₹)",
         "Current Year (₹)",
-        "S.No.",
+        "Total",
+        "",
+        "Previous Year (₹)",
         "Assets",
-        "Previous Year (₹)",
         "Current Year (₹)",
+        "Total",
       ],
       body: rows,
       columnStyles: {
+        1: { halign: "right" },
         3: { halign: "right" },
         4: { halign: "right" },
-        7: { halign: "right" },
+        6: { halign: "right" },
         8: { halign: "right" },
+        9: { halign: "right" },
       },
     };
   };
@@ -148,11 +157,14 @@ export default function BalanceSheet() {
     else printTables(meta, [table]);
   };
 
+  const liTotals = bs ? groupTotals(bs.liabilities) : new Map<string, number>();
+  const aTotals = bs ? groupTotals(bs.assets) : new Map<string, number>();
+
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="Balance Sheet"
-        description="Form N statement — funds and liabilities under the prescribed Roman-numbered headings on one side, assets on the other, each opening/closing figure paired with its previous-year comparative."
+        description="Form N statement — funds and liabilities under the prescribed Roman-numbered headings on one side, assets on the other. Columns run Previous Year | Particulars | Current Year | Total, every Chart of Accounts ledger is printed (0.00 when nil), and group totals foot the Total column."
       />
 
       <div className="panel mb-8 grid gap-4 p-5 sm:grid-cols-3">
@@ -181,7 +193,7 @@ export default function BalanceSheet() {
             variant="outline"
             size="sm"
             onClick={() => doExport("print")}
-            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:text-violet-300"
+            className="border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300"
           >
             <Printer className="size-4" /> Print
           </Button>
@@ -189,7 +201,7 @@ export default function BalanceSheet() {
       </div>
 
       {!bs ? null : (
-        <div className="panel overflow-hidden">
+        <div className="panel">
           <ReportLetterhead
             className="mx-0 mt-0"
             name={society?.name ?? ""}
@@ -202,70 +214,90 @@ export default function BalanceSheet() {
             title="Balance Sheet"
             subtitle={`As at ${formatDate(to)}`}
           />
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
-                <td className="px-5 py-2.5">Liabilities &amp; Funds</td>
-                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-28 px-5 py-2.5 text-right">Previous Year (₹)</td>
-                <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
-                <td className="border-l px-5 py-2.5">Assets</td>
-                <td className="w-12 px-2 py-2.5 text-center">S.No.</td>
-                <td className="w-28 border-l px-5 py-2.5 text-right">Previous Year (₹)</td>
-                <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({
-                length: Math.max(bs.assets.length, bs.liabilities.length, 1),
-              }).map((_, i) => {
-                const li = bs.liabilities[i];
-                const a = bs.assets[i];
-                const liHead = li ? (i === 0 || bs.liabilities[i - 1]!.group !== li.group) : false;
-                const aHead = a ? (i === 0 || bs.assets[i - 1]!.group !== a.group) : false;
-                return (
-                  <Fragment key={i}>
-                    {(liHead || aHead) && (
-                      <tr className="border-y bg-indigo-50/60 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#312e81]/80">
-                        <td className="px-5 py-1.5">{liHead ? (li!.group ?? "") : ""}</td>
-                        <td />
-                        <td />
-                        <td />
-                        <td className="border-l px-5 py-1.5">{aHead ? (a!.group ?? "Assets") : ""}</td>
-                        <td />
-                        <td className="border-l" />
-                        <td className="border-l" />
+          {/* Scroll frame: the report slides horizontally when wider than the
+              screen, headings stay frozen, vertical bar stays in view. */}
+          <div className="report-scroll">
+            <table className="w-full min-w-[60rem] text-sm">
+              <thead>
+                <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
+                  <td className="w-32 px-3 py-2.5 text-right">Previous Year (₹)</td>
+                  <td className="px-5 py-2.5">Liabilities &amp; Funds</td>
+                  <td className="w-36 px-5 py-2.5 text-right">Current Year (₹)</td>
+                  <td className="w-28 px-5 py-2.5 text-right">Total</td>
+                  <td className="w-32 border-l px-3 py-2.5 text-right">Previous Year (₹)</td>
+                  <td className="border-l px-5 py-2.5">Assets</td>
+                  <td className="w-36 border-l px-5 py-2.5 text-right">Current Year (₹)</td>
+                  <td className="w-28 border-l px-5 py-2.5 text-right">Total</td>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({
+                  length: Math.max(bs.assets.length, bs.liabilities.length, 1),
+                }).map((_, i) => {
+                  const li = bs.liabilities[i];
+                  const a = bs.assets[i];
+                  const liHead = li ? (i === 0 || bs.liabilities[i - 1]!.group !== li.group) : false;
+                  const aHead = a ? (i === 0 || bs.assets[i - 1]!.group !== a.group) : false;
+                  const liLast =
+                    li && (i === bs.liabilities.length - 1 || bs.liabilities[i + 1]!.group !== li.group);
+                  const aLast =
+                    a && (i === bs.assets.length - 1 || bs.assets[i + 1]!.group !== a.group);
+                  return (
+                    <Fragment key={i}>
+                      {(liHead || aHead) && (
+                        <tr className="border-y bg-indigo-50/60 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#312e81]/80">
+                          <td />
+                          <td className="px-5 py-1.5">{liHead ? (li!.group ?? "").toUpperCase() : ""}</td>
+                          <td />
+                          <td />
+                          <td className="border-l" />
+                          <td className="border-l px-5 py-1.5">{aHead ? (a!.group ?? "Assets").toUpperCase() : ""}</td>
+                          <td className="border-l" />
+                          <td className="border-l" />
+                        </tr>
+                      )}
+                      <tr className="border-b last:border-0">
+                        <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {li ? money(li.prev ?? 0) : ""}
+                        </td>
+                        <td className="px-5 py-2.5">{li?.name ?? ""}</td>
+                        <td className="px-5 py-2.5 text-right tabular-nums">{li ? money(li.amount) : ""}</td>
+                        <td
+                          className={`px-5 py-2.5 text-right tabular-nums ${
+                            liLast ? "font-semibold text-[#312e81]" : ""
+                          }`}
+                        >
+                          {li && liLast ? money(liTotals.get(li.group!) ?? 0) : ""}
+                        </td>
+                        <td className="border-l px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                          {a ? money(a.prev ?? 0) : ""}
+                        </td>
+                        <td className="border-l px-5 py-2.5">{a?.name ?? ""}</td>
+                        <td className="border-l px-5 py-2.5 text-right tabular-nums">{a ? money(a.amount) : ""}</td>
+                        <td
+                          className={`border-l px-5 py-2.5 text-right tabular-nums ${
+                            aLast ? "font-semibold text-[#312e81]" : ""
+                          }`}
+                        >
+                          {a && aLast ? money(aTotals.get(a.group!) ?? 0) : ""}
+                        </td>
                       </tr>
-                    )}
-                    <tr className="border-b last:border-0">
-                      <td className="px-5 py-2.5">{li?.name ?? ""}</td>
-                      <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{li ? serialOf(li.printNo, i + 1) : ""}</td>
-                      <td className="px-5 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {li ? money(li.prev ?? 0) : ""}
-                      </td>
-                      <td className="px-5 py-2.5 text-right tabular-nums">{li ? money(li.amount) : ""}</td>
-                      <td className="border-l px-5 py-2.5">{a?.name ?? ""}</td>
-                      <td className="w-12 px-2 py-2.5 text-center font-mono text-xs">{a ? serialOf(a.printNo, i + 1) : ""}</td>
-                      <td className="border-l px-5 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {a ? money(a.prev ?? 0) : ""}
-                      </td>
-                      <td className="border-l px-5 py-2.5 text-right tabular-nums">{a ? money(a.amount) : ""}</td>
-                    </tr>
-                  </Fragment>
-                );
-              })}
-              <tr className="bg-indigo-50 text-base font-semibold text-[#312e81]">
-                <td className="px-5 py-4">Total</td>
-                <td />
-                <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilitiesPrev)}</td>
-                <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilities)}</td>
-                <td className="border-l px-5 py-4">Total</td>
-                <td />
-                <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssetsPrev)}</td>
-                <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssets)}</td>
-              </tr>
-            </tbody>
-          </table>
+                    </Fragment>
+                  );
+                })}
+                <tr className="bg-indigo-50 text-base font-semibold text-[#312e81]">
+                  <td className="px-3 py-4 text-right tabular-nums">{money(bs.totalLiabilitiesPrev)}</td>
+                  <td className="px-5 py-4">Total</td>
+                  <td className="px-5 py-4 text-right tabular-nums">{money(bs.totalLiabilities)}</td>
+                  <td />
+                  <td className="border-l px-3 py-4 text-right tabular-nums">{money(bs.totalAssetsPrev)}</td>
+                  <td className="border-l px-5 py-4">Total</td>
+                  <td className="border-l px-5 py-4 text-right tabular-nums">{money(bs.totalAssets)}</td>
+                  <td className="border-l" />
+                </tr>
+              </tbody>
+            </table>
+          </div>
           {Math.abs(bs.totalAssets - bs.totalLiabilities) > 0.01 && (
             <p className="border-t bg-destructive/5 px-5 py-3 text-xs text-destructive">
               Difference of {money(Math.abs(bs.totalAssets - bs.totalLiabilities))} — check opening balances

@@ -601,30 +601,31 @@ const IE_EXPENSE_ORDER = [
 ];
 const IE_INCOME_ORDER = ["Contributions and Other Receipts", "Interest and Other Income"];
 
-/** Net movement per income/expenditure ledger over [fromDate, toDate]. */
+/**
+ * Net movement per income/expenditure ledger over [fromDate, toDate]. Every
+ * ledger is returned — nil ones included — so the statements can print the
+ * full Chart of Accounts (opening balance plus the period's postings), the
+ * way the reference format shows every ledger with 0.00 when it has no
+ * movement. Net is credit-positive for income, debit-positive for expense.
+ */
 function ieNetsForPeriod(data: SocietyData, fromDate: string, toDate: string) {
   const nets = new Map<Id<"accounts">, number>();
-  const activity = new Map<Id<"accounts">, boolean>();
   const entries = unifiedEntries(data).filter(
     (e) => e.date >= fromDate && e.date <= toDate,
   );
   for (const a of data.accounts) {
     if (a.type !== "income" && a.type !== "expense") continue;
-    // net: credit-positive for income, debit-positive for expense
     let net = a.openingBalance;
-    let active = a.openingBalance !== 0;
     for (const e of entries) {
       for (const l of e.lines) {
         if (l.accountId !== a._id) continue;
         const delta = l.credit - l.debit;
         net += a.type === "income" ? delta : -delta;
-        if (l.debit !== 0 || l.credit !== 0) active = true;
       }
     }
     nets.set(a._id, net);
-    activity.set(a._id, active);
   }
-  return { nets, activity };
+  return { nets };
 }
 
 /** Form N print order: prescribed headings first, then serial / code order. */
@@ -641,14 +642,13 @@ export function computeIncomeExpenditure(
   fromDate: string,
   toDate: string,
 ) {
-  const { nets, activity } = ieNetsForPeriod(data, fromDate, toDate);
+  const { nets } = ieNetsForPeriod(data, fromDate, toDate);
   const income: TrialBalanceRow[] = [];
   const expenditure: TrialBalanceRow[] = [];
   let totalIncome = 0;
   let totalExpenditure = 0;
   for (const a of data.accounts) {
     if (a.type !== "income" && a.type !== "expense") continue;
-    if (!activity.get(a._id)) continue;
     const isIncome = a.type === "income";
     const net = nets.get(a._id) ?? 0;
     if (isIncome) {
@@ -727,9 +727,10 @@ export type IeComparativeRow = TrialBalanceRow & {
 /**
  * Income & Expenditure with the previous-year comparative column. The prior
  * period is the same span shifted back one year, so an April–March financial
- * year is compared against the preceding April–March. A ledger active in
- * either year is shown; the balancing system account carries the previous
- * period's result on the side it belongs to, so both columns foot together.
+ * year is compared against the preceding April–March. Every income/
+ * expenditure ledger is shown — including nil ones, which print 0.00 — and
+ * the balancing system account carries the previous period's result on the
+ * side it belongs to, so both columns foot together.
  */
 export function computeIncomeExpenditureComparative(
   data: SocietyData,
@@ -746,7 +747,6 @@ export function computeIncomeExpenditureComparative(
   let prevTotalExpenditure = 0;
   for (const a of data.accounts) {
     if (a.type !== "income" && a.type !== "expense") continue;
-    if (!cur.activity.get(a._id) && !prev.activity.get(a._id)) continue;
     const isIncome = a.type === "income";
     const net = cur.nets.get(a._id) ?? 0;
     const prior = prev.nets.get(a._id) ?? 0;
@@ -1022,7 +1022,6 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     if (a.type === "liability" && n === "income over expenses") continue;
     const net = netOf(a, toDate);
     const prev = netOf(a, prevToDate);
-    if (net === 0 && prev === 0) continue;
     const row: Side = {
       code: a.code,
       name: a.name,
@@ -1030,12 +1029,12 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       type: a.type,
       printNo: a.printNo,
       group: a.type === "liability" ? fundGroupOf(data, a) : assetGroupOf(a),
-      prev:
-        prev === 0
-          ? 0
-          : Math.sign(net) === Math.sign(prev)
-            ? Math.abs(prev)
-            : -Math.abs(prev),
+      // Prior-year figure keeps its natural sign: a row always prints on its
+      // own asset/liability side, so a positive prior balance belongs on this
+      // side and a negative one sat on the opposite side last year. (The old
+      // sign-flip here negated the figure whenever the ledger had emptied to
+      // zero this year — a repaid loan showed last year's balance backwards.)
+      prev,
     };
     if (a.type === "asset") assets.push(row);
     else liabilities.push(row);
@@ -1090,12 +1089,8 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     prevToDate,
   );
   if (ie.surplus !== 0 || iePrev.surplus !== 0) {
-    const prevResult =
-      iePrev.surplus === 0
-        ? 0
-        : Math.sign(ie.surplus) === Math.sign(iePrev.surplus)
-          ? Math.abs(iePrev.surplus)
-          : -Math.abs(iePrev.surplus);
+    // Prior-year result in this row's side convention: positive = same side.
+    const prevResult = ie.surplus >= 0 ? iePrev.surplus : -iePrev.surplus;
     if (ie.surplus >= 0) {
       // Surplus funds the society: a Form N fund on the liabilities side
       // (head XI — Profit and Loss Account).

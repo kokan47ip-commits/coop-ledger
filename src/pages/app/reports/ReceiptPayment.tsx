@@ -126,7 +126,7 @@ export default function ReceiptPayment() {
       </div>
 
       {!rp ? null : (
-        <div className="panel overflow-hidden">
+        <div className="panel">
           <ReportLetterhead
             className="mx-0 mt-0"
             name={society?.name ?? ""}
@@ -139,6 +139,9 @@ export default function ReceiptPayment() {
             title="Receipt & Payment"
             subtitle={`For the period ${formatDate(from)} to ${formatDate(to)}`}
           />
+          {/* Scroll frame: slides horizontally when wider than the screen;
+              column headings stay frozen while rows scroll. */}
+          <div className="report-scroll">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-[#312e81] text-xs font-semibold uppercase tracking-[0.14em] text-white">
@@ -205,6 +208,7 @@ export default function ReceiptPayment() {
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
