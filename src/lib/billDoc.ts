@@ -58,6 +58,17 @@ export type LegacyReceiptData = {
   copyLabel?: string;
 };
 
+/**
+ * The carried balance on a member's bill is usually "Arrears" — earlier unpaid
+ * amounts plus the opening balance. A member with an advance / credit balance
+ * carries a NEGATIVE figure: it must print as "Advance:" with its magnitude
+ * (and reduce Total Due), never as a negative "Arrears" amount. Shared by the
+ * full-page PDF, the compact combo box and the Word/print HTML.
+ */
+export function arrearsLabel(arrears: number): string {
+  return arrears < 0 ? "Advance:" : "Arrears:";
+}
+
 /** Trailing-zero-free rate text: 18 → "18", 19.5 → "19.5". */
 function rateText(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
@@ -339,9 +350,9 @@ function drawBillBox(
   doc.text(money(data.total), valX, ty, { align: "right" });
   ty += 17;
   ink(doc, MUTED);
-  doc.text("Arrears:", labelX, ty, { align: "right" });
+  doc.text(arrearsLabel(data.arrears), labelX, ty, { align: "right" });
   ink(doc, INK);
-  doc.text(money(data.arrears), valX, ty, { align: "right" });
+  doc.text(money(Math.abs(data.arrears)), valX, ty, { align: "right" });
   ty += 21;
   fill(doc, ACCENT);
   doc.rect(labelX - 16, ty - 15, valX - labelX + 28, 23, "F");
@@ -636,8 +647,8 @@ function drawBillBoxCompact(
   doc.setFontSize(9);
   doc.text("Total:", labelX, totY, { align: "right" });
   doc.text(money(data.total), valX, totY, { align: "right" });
-  doc.text("Arrears:", labelX, totY + 13, { align: "right" });
-  doc.text(money(data.arrears), valX, totY + 13, { align: "right" });
+  doc.text(arrearsLabel(data.arrears), labelX, totY + 13, { align: "right" });
+  doc.text(money(Math.abs(data.arrears)), valX, totY + 13, { align: "right" });
   fill(doc, ACCENT);
   doc.rect(labelX - 14, totY + 19, valX - labelX + 26, 20, "F");
   ink(doc, WHITE);
@@ -1256,7 +1267,7 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function billHtml(data: LegacyBillData, compact = false): string {
+export function billHtml(data: LegacyBillData, compact = false): string {
   // Word/print export embeds a QR only when its image was preloaded via
   // preloadQrImage() — data URLs can't be produced synchronously here.
   // `compact` drops the empty filler rows so two bills fit half a page each.
@@ -1280,7 +1291,7 @@ function billHtml(data: LegacyBillData, compact = false): string {
   </table>
   <table class="tot">
     <tr><td class="words" rowspan="2" style="width:52%">${esc(rupeesInWords(data.totalDue))}</td><td class="lbl">Total:</td><td class="val">${money(data.total)}</td></tr>
-    <tr><td class="lbl">Arrears:</td><td class="val">${money(data.arrears)}</td></tr>
+    <tr><td class="lbl">${arrearsLabel(data.arrears)}</td><td class="val">${money(Math.abs(data.arrears))}</td></tr>
     <tr class="grand"><td></td><td class="lbl">Total Due:</td><td class="val">${money(data.totalDue)}</td></tr>
   </table>
   <table class="foot">

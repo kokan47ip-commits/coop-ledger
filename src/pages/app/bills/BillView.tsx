@@ -228,8 +228,8 @@ export default function BillView() {
               <span className="tabular-nums">{fmt(data.total)}</span>
             </div>
             <div className="flex justify-between border-b border-slate-200 px-4 py-2">
-              <span className="text-slate-500">Arrears:</span>
-              <span className="tabular-nums">{fmt(data.arrears)}</span>
+              <span className="text-slate-500">{data.arrears < 0 ? "Advance:" : "Arrears:"}</span>
+              <span className="tabular-nums">{fmt(Math.abs(data.arrears))}</span>
             </div>
             <div className="flex justify-between bg-[#312e81] px-4 py-2.5 font-bold text-white">
               <span>Total Due:</span>

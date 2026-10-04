@@ -20,6 +20,7 @@
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import {
+  billHtml,
   DEFAULT_MARGINS,
   billWithReceiptPdfBytes,
   billWithReceiptPrint,
@@ -418,5 +419,29 @@ describe("exact half-page centre split (Word/print)", () => {
     billsWordBatch(billItems(1), "bills", false, margins);
     const html = await takeWordHtml();
     expect(html).toContain("div.wrap { page-break-inside: avoid; max-width: 605px");
+  });
+});
+
+describe("advance / credit balance on printed bills", () => {
+  test("a negative carried balance prints as Advance (magnitude), not negative Arrears", () => {
+    const bill = makeBill("B-ADV");
+    bill.lines = [{ name: "Maintenance", amount: 500, serial: "1" }];
+    bill.total = 500;
+    bill.arrears = -300; // member paid 300 ahead — credit balance carried
+    bill.totalDue = 200; // 500 charges − 300 advance
+    const html = billHtml(bill);
+    expect(html).toContain("Advance:");
+    expect(html).toContain(">300.00<"); // magnitude, no minus sign
+    expect(html).not.toContain("Arrears:");
+  });
+
+  test("positive arrears keep the Arrears label (both paths unchanged)", () => {
+    const bill = makeBill("B-ARR");
+    bill.arrears = 150;
+    bill.totalDue = 650;
+    const html = billHtml(bill);
+    expect(html).toContain("Arrears:");
+    expect(html).toContain(">150.00<");
+    expect(html).not.toContain("Advance:");
   });
 });

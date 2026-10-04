@@ -30,11 +30,11 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
-import { exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
+import { exportExcel, exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
-import { BookText, Download, FileText, HandCoins, Mail, MessageCircle, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { BookText, Download, FileSpreadsheet, FileText, HandCoins, Mail, MessageCircle, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -307,6 +307,8 @@ export default function BillRegister() {
     const arrearsOnBill = (b.lines ?? [])
       .filter((l) => isArrearsLine(l.name))
       .reduce((s, l) => s + l.amount, 0);
+    // A negative carried line is the member's advance / credit balance —
+    // handed to the renderer signed so the printed label reads "Advance:".
     const arrears = arrearsFromBills + arrearsOnBill;
     const currentCharges = (b.lines ?? [])
       .filter((l) => !isArrearsLine(l.name))
@@ -409,12 +411,13 @@ export default function BillRegister() {
     };
   };
 
-  const doExport = (kind: "pdf" | "word" | "print") => {
+  const doExport = (kind: "pdf" | "word" | "excel" | "print") => {
     const meta = registerMeta();
     if (!meta) return;
     const table = buildRegisterTable();
     if (kind === "pdf") exportPDF(meta, [table], `bills-register-${periodFilter}.pdf`);
     else if (kind === "word") exportWord(meta, [table], `bills-register-${periodFilter}.doc`);
+    else if (kind === "excel") exportExcel(meta, [table], `bills-register-${periodFilter}.xlsx`);
     else printTables(meta, [table]);
   };
 
@@ -939,6 +942,14 @@ export default function BillRegister() {
             className="border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300"
           >
             <FileText className="size-4" /> Word
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => doExport("excel")}
+            className="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+          >
+            <FileSpreadsheet className="size-4" /> Excel
           </Button>
           <Button
             variant="outline"

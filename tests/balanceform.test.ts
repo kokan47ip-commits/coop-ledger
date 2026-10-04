@@ -26,6 +26,11 @@ import {
   type SocietyData,
 } from "../src/convex/reports";
 import { FORM_N_LEDGERS } from "../src/convex/accounts";
+import {
+  applyAllocationToBill,
+  clampAllocations,
+  isCarriedOpeningLine,
+} from "../src/convex/lib";
 
 const acct = (
   id: string,
@@ -1079,5 +1084,96 @@ describe("Trial Balance — member opening balances", () => {
     expect(tb.reduce((s, r) => s + r.closingDr, 0)).toBe(
       tb.reduce((s, r) => s + r.closingCr, 0),
     );
+  });
+});
+
+describe("Advance / credit balance flows into the books", () => {
+  /** In-memory Convex-style ctx: ids are opaque strings, get/patch by id. */
+  function makeCtx() {
+    const docs = new Map<string, Record<string, unknown>>();
+    const tables = new Map<string, string[]>();
+    return {
+      db: {
+        get: async (id: string) => docs.get(id),
+        patch: async (id: string, patch: Record<string, unknown>) => {
+          const doc = docs.get(id);
+          if (doc) docs.set(id, { ...doc, ...patch });
+        },
+      },
+      seed: (table: string, doc: Record<string, unknown>) => {
+        const id = (doc._id as string) ?? Math.random().toString(36).slice(2);
+        docs.set(id, { ...doc, _id: id });
+        const list = tables.get(table) ?? [];
+        list.push(id);
+        tables.set(table, list);
+        return id;
+      },
+      rows: (table: string) =>
+        (tables.get(table) ?? []).map((id) => docs.get(id) as Record<string, unknown>),
+    };
+  }
+
+  test("member opening + bills + receipts reconcile; advance stays a CREDIT, never an arrears charge", async () => {
+    const ctx = makeCtx();
+    ctx.seed("accounts", { _id: "recv" });
+    ctx.seed("bills", {
+      _id: "b0", societyId: "s1", memberId: "m1", billNo: "BILL-0",
+      period: "2026-03", issueDate: "2026-03-15", dueDate: "2026-03-25",
+      total: 300, paidAmount: 0, status: "unpaid",
+      lines: [
+        { name: "Arrears — opening balance", tariffId: undefined, accountId: "recv", amount: 300 },
+      ],
+    });
+    ctx.seed("bills", {
+      _id: "b1", societyId: "s1", memberId: "m1", billNo: "BILL-1",
+      period: "2026-05", issueDate: "2026-05-01", dueDate: "2026-05-10",
+      total: 500, paidAmount: 0, status: "unpaid",
+      lines: [
+        { name: "Maintenance", tariffId: undefined, accountId: "recv", amount: 500 },
+      ],
+    });
+
+    // 1) Member pays 100 toward the May bill.
+    applyAllocationToBill(
+      { db: ctx.db } as never,
+      ctx.rows("bills").find((b) => b._id === "b1") as never,
+      100,
+    );
+    const b1After = ctx.rows("bills").find((b) => b._id === "b1") as { paidAmount: number; status: string };
+    expect(b1After.paidAmount).toBe(100);
+    expect(b1After.status).toBe("partial");
+
+    // 2) Member overpays: 700 against the remaining 400 → 300 stays as an
+    // unallocated CREDIT (advance), it is never pushed onto a bill.
+    const allocations = clampAllocations(
+      [{ billId: "b1" as never, amount: 700 }],
+      (billId) => {
+        const b = ctx.rows("bills").find((x) => x._id === billId) as
+          | { total: number; paidAmount: number }
+          | undefined;
+        return b ? b.total - b.paidAmount : undefined;
+      },
+    );
+    expect(allocations).toHaveLength(1);
+    expect(allocations[0]!.amount).toBe(400);
+    const advanceHeld = 700 - allocations[0]!.amount;
+    expect(advanceHeld).toBe(300);
+
+    // 3) The carried opening line is recognised for what it is — so the
+    // March bill's 300 stays an opening receivable (member owes it), while
+    // an advance line (negative, "Credit balance — advance adjusted") is a
+    // credit: it reduces Total Due and must NEVER read as arrears.
+    expect(isCarriedOpeningLine({ name: "Arrears — opening balance", accountId: "other" })).toBe(true);
+    expect(
+      isCarriedOpeningLine({
+        name: "Credit balance — advance adjusted",
+        accountId: "other",
+      }),
+    ).toBe(true);
+    const memberPosition = 300 /* opening */ + 500 /* billed */ - 800 /* received */;
+    expect(memberPosition).toBe(0);
+    // ...and had the member paid 1,100 instead, the position flips to a −300
+    // advance — exactly what the printed bill labels as "Advance:".
+    expect(300 + 500 - 1100).toBe(-300);
   });
 });

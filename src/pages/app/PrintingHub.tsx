@@ -215,6 +215,8 @@ export default function PrintingHub() {
   /** Legacy-format bill document data (mirrors the Bill Register export). */
   const buildBillData = (b: Bill): LegacyBillData => {
     const m = memberOf(b.memberId);
+    // Carried lines are signed: a negative figure is the member's advance /
+    // credit balance and prints as "Advance:" (see billDoc.arrearsLabel).
     const carried = (b.lines ?? []).filter((l) => isArrearsLine(l.name));
     const charges = (b.lines ?? []).filter((l) => !isArrearsLine(l.name));
     const flatLabel = flatOf(m);
