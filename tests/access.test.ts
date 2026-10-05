@@ -353,6 +353,31 @@ describe("Users & Rights — editing an existing grant", () => {
     expect(grantRow(w, w.editorGrantId).menus).toBeUndefined();
   });
 
+  test("other-email flow: re-grant with menus omitted restores ALL menus (reset path)", async () => {
+    const w = await seedWorld();
+    const ctx = w.ctxFor(w.ownerUserId);
+    const grant = fn(accessMod, "grant");
+
+    // Start restricted.
+    await grant(ctx, {
+      societyId: w.societyId,
+      email: "audit@x.com",
+      role: "editor",
+      menus: ["dashboard"],
+    });
+    expect(grantRow(w, w.viewerGrantId).menus).toEqual(["dashboard"]);
+
+    // Re-grant without a menu list = all menus again, same row.
+    await grant(ctx, {
+      societyId: w.societyId,
+      email: "audit@x.com",
+      role: "editor",
+    });
+    const row = grantRow(w, w.viewerGrantId);
+    expect(row.menus).toBeUndefined();
+    expect(row.role).toBe("editor");
+  });
+
   test("edit dialog: switching to Member portal binds a flat; switching back clears it", async () => {
     const w = await seedWorld();
     const ctx = w.ctxFor(w.ownerUserId);
@@ -507,6 +532,19 @@ describe("Users & Rights — edited rights reach the user", () => {
     expect(ownerMine.menus).toBeNull();
     expect(ownerMine.admin).toBe(true);
   });
+
+  test("a software admin who is not the owner stays unrestricted on any society", async () => {
+    const w = await seedWorld();
+    const adminId = await w.db.insert("users", {
+      email: "sa@x.com",
+      softwareAdmin: true,
+    });
+    const mine = (await fn(accessMod, "myMenus")(w.ctxFor(adminId), {
+      societyId: w.societyId,
+    })) as { menus: string[] | null; admin: boolean };
+    expect(mine.menus).toBeNull();
+    expect(mine.admin).toBe(true);
+  });
 });
 
 describe("Users & Rights — who may edit", () => {
@@ -545,6 +583,18 @@ describe("Users & Rights — who may edit", () => {
     const row = grantRow(w, w.editorGrantId);
     expect(row.role).toBe("viewer");
     expect(row.menus).toEqual(["dashboard"]);
+  });
+
+  test("granting to the society owner's own email is rejected", async () => {
+    const w = await seedWorld();
+    expect(
+      fn(accessMod, "grant")(w.ctxFor(w.ownerUserId), {
+        societyId: w.societyId,
+        email: "owner@x.com",
+        role: "editor",
+      }),
+    ).rejects.toThrow(/already owns the society/);
+    expect(w.dump("membersAccess").length).toBe(3);
   });
 });
 

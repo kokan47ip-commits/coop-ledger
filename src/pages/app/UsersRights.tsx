@@ -693,6 +693,7 @@ const MENU_SECTIONS = {
   Transactions: null,
   Reports: null,
   Data: null,
+  Settings: null,
 } as const;
 type MenuSectionKey = keyof typeof MENU_SECTIONS;
 
