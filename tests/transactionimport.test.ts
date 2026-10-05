@@ -1,0 +1,135 @@
+/**
+ * Transaction Import preview-model tests (bun:test, run with `bun test tests/`).
+ *
+ * Pins the grid's display contract against the save rules in
+ * uploads.uploadTransactions:
+ *  • Cash/Bank shows the resolved society account NAME (bank or "Cash"),
+ *    never the sheet's code; a blank cell shows the default bank/cash
+ *    account the row will save to; an unmatched code keeps the raw text and
+ *    flags the row.
+ *  • Bank Name shows the member's bank exactly as uploaded, blank when the
+ *    sheet has none — the system never overwrites it.
+ *  • Ledger Name still resolves from the system for member receipts.
+ *
+ * Not part of the vite build (tsconfig.app includes only src/); run via bun.
+ */
+import { describe, expect, test } from "bun:test";
+import { buildRowsOut, resolveKeys } from "../src/lib/transactionImport";
+
+type Acct = {
+  _id: string;
+  _creationTime: number;
+  societyId: string;
+  kind: string;
+  code: string;
+  name: string;
+};
+type Mem = {
+  _id: string;
+  _creationTime: number;
+  societyId: string;
+  name: string;
+  code: string;
+  wing?: string;
+  flatNo?: string;
+  isActive: boolean;
+};
+
+// List order matters: the first bank_cash account is the save-time default.
+const accounts: Acct[] = [
+  { _id: "a_cash", _creationTime: 1, societyId: "s1", kind: "bank_cash", code: "C1", name: "Cash" },
+  { _id: "a_bank", _creationTime: 2, societyId: "s1", kind: "bank_cash", code: "B1", name: "HDFC Current" },
+  { _id: "a_rec", _creationTime: 3, societyId: "s1", kind: "receivable", code: "R1", name: "Members Receivable" },
+];
+const members: Mem[] = [
+  { _id: "m1", _creationTime: 1, societyId: "s1", name: "Ravi Kumar", code: "A-101", wing: "A", flatNo: "101", isActive: true },
+];
+
+const HEADERS = [
+  "Date",
+  "Voucher Type",
+  "Ledger Code",
+  "Ledger Name",
+  "Amount",
+  "Cash/Bank",
+  "Bank Name",
+];
+const resolved = resolveKeys(HEADERS);
+
+const row = (over: Record<string, unknown>) => ({
+  Date: "01/04/2026",
+  "Voucher Type": "Receipt",
+  "Ledger Code": "A-101",
+  "Ledger Name": "whatever the sheet says",
+  Amount: 1000,
+  ...over,
+});
+
+const cellsFor = (over: Record<string, unknown>) =>
+  buildRowsOut([row(over)], resolved, accounts as never, members as never, "receipt")[0];
+
+describe("Transaction Import — Cash/Bank column shows the account name", () => {
+  test("a bank code resolves to the society bank's NAME, not the code", () => {
+    const r = cellsFor({ "Cash/Bank": "b1" });
+    expect(r.cells[6]).toBe("HDFC Current");
+    expect(r.problems).toEqual([]);
+  });
+
+  test("the cash account code shows as Cash", () => {
+    const r = cellsFor({ "Cash/Bank": "C1" });
+    expect(r.cells[6]).toBe("Cash");
+    expect(r.problems).toEqual([]);
+  });
+
+  test("a blank Cash/Bank cell shows the default (first) bank/cash account", () => {
+    const r = cellsFor({});
+    expect(r.cells[6]).toBe("Cash");
+    expect(r.problems).toEqual([]);
+  });
+
+  test("an unmatched code keeps the raw text and flags the row", () => {
+    const r = cellsFor({ "Cash/Bank": "ZZ9" });
+    expect(r.cells[6]).toBe("ZZ9");
+    expect(r.problems).toContain("Bank");
+  });
+
+  test("a full account name in the Cash/Bank cell also resolves (legacy sheets)", () => {
+    const r = cellsFor({ "Cash/Bank": "HDFC Current" });
+    expect(r.cells[6]).toBe("HDFC Current");
+    expect(r.problems).toEqual([]);
+  });
+});
+
+describe("Transaction Import — Bank Name column is the member's bank, as uploaded", () => {
+  test("the member's bank text is shown untouched, not the society account", () => {
+    const r = cellsFor({ "Cash/Bank": "B1", "Bank Name": "State Bank of India" });
+    expect(r.cells[10]).toBe("State Bank of India");
+    expect(r.cells[6]).toBe("HDFC Current"); // society account stays in Cash/Bank
+  });
+
+  test("blank in the sheet stays blank in the grid", () => {
+    const r = cellsFor({ "Cash/Bank": "B1" });
+    expect(r.cells[10]).toBe("");
+  });
+
+  test("the Bank Name text never leaks into Cash/Bank and vice versa", () => {
+    const r = cellsFor({ "Cash/Bank": "", "Bank Name": "ICICI" });
+    // Blank Cash/Bank saves against the default account; the member's bank
+    // stays in its own column.
+    expect(r.cells[6]).toBe("Cash");
+    expect(r.cells[10]).toBe("ICICI");
+  });
+});
+
+describe("Transaction Import — ledger resolution is unchanged", () => {
+  test("receipts show the system member name for the flat code", () => {
+    const r = cellsFor({ "Cash/Bank": "B1" });
+    expect(r.cells[4]).toBe("Ravi Kumar");
+    expect(r.cells[3]).toBe("A-101");
+  });
+
+  test("resolveKeys maps the Cash/Bank and Bank Name headers independently", () => {
+    expect(resolved["Cash/Bank"]).toBe("Cash/Bank");
+    expect(resolved["Bank Name"]).toBe("Bank Name");
+  });
+});
