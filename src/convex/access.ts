@@ -34,6 +34,18 @@ async function requireRightsManager(
   return callerId;
 }
 
+/**
+ * The account row for a login email, or undefined when that person has not
+ * signed up yet. Grant rows are keyed by email, but they resolve faster and
+ * more reliably once bound to a user id — call sites heal stale bindings.
+ */
+async function userByEmail(ctx: QueryCtx, email: string) {
+  return ctx.db
+    .query("users")
+    .withIndex("email", (q) => q.eq("email", email))
+    .unique();
+}
+
 /** All grants for a society — owner/software-admin only. */
 export const listForSociety = query({
   args: { societyId: v.id("societies") },
@@ -278,19 +290,23 @@ export const grant = mutation({
       .collect();
     const existing = grants.find((g) => g.email === normalized);
     if (existing) {
+      // Update path — this is how an admin edits an existing user's rights.
+      // One grant per email per society: role, menus and flat binding are
+      // replaced wholesale (omitted menus = all menus).
+      const healUserId = existing.userId
+        ? undefined
+        : (await userByEmail(ctx, normalized))?._id;
       await ctx.db.patch(existing._id, {
         role,
         menus,
+        ...(healUserId ? { userId: healUserId } : {}),
         // Rebinding to a different flat on update; cleared for non-member roles.
         memberId: role === "member" ? memberId : undefined,
       });
       return { id: existing._id, updated: true };
     }
 
-    const targetUser = await ctx.db
-      .query("users")
-      .withIndex("email", (q) => q.eq("email", normalized))
-      .unique();
+    const targetUser = await userByEmail(ctx, normalized);
 
     const id = await ctx.db.insert("membersAccess", {
       societyId,
@@ -345,19 +361,22 @@ export const grantFromMember = mutation({
       .collect();
     const existing = grants.find((g) => g.email === normalized);
     if (existing) {
+      // Update path — see the note on `grant`: one grant per email per
+      // society, replaced wholesale. Stale user bindings are healed too.
+      const healUserId = existing.userId
+        ? undefined
+        : (await userByEmail(ctx, normalized))?._id;
       await ctx.db.patch(existing._id, {
         role,
         menus,
+        ...(healUserId ? { userId: healUserId } : {}),
         // Rebinds to a different flat on update; cleared for non-member roles.
         memberId: role === "member" ? memberId : undefined,
       });
       return { id: existing._id, updated: true };
     }
 
-    const targetUser = await ctx.db
-      .query("users")
-      .withIndex("email", (q) => q.eq("email", normalized))
-      .unique();
+    const targetUser = await userByEmail(ctx, normalized);
 
     const id = await ctx.db.insert("membersAccess", {
       societyId,
@@ -373,22 +392,35 @@ export const grantFromMember = mutation({
   },
 });
 
-/** Change an existing grant's role (and flat binding for member role). */
+/**
+ * Change an existing grant: role, menu rights and (for the member role) the
+ * bound flat. The edit dialog calls this — everything an admin may adjust
+ * about a granted user lives here. Omitting `menus` keeps the current menu
+ * list; passing an empty list restores all menus.
+ */
 export const setRole = mutation({
   args: {
     societyId: v.id("societies"),
     id: v.id("membersAccess"),
     role: v.union(v.literal("editor"), v.literal("viewer"), v.literal("member")),
-    /** Required when role is "member": the flat to bind. */
+    /** Required when role is "member" and the grant has no flat yet. */
     memberId: v.optional(v.id("members")),
+    /** Replacement menu list; omit to keep the current menus untouched. */
+    menus: menuKeysField,
   },
-  handler: async (ctx, { societyId, id, role, memberId }) => {
+  handler: async (ctx, { societyId, id, role, memberId, menus }) => {
     const society = await requireSociety(ctx, societyId);
     await requireRightsManager(ctx, society);
     const grantRow = await ctx.db.get(id);
     if (!grantRow || grantRow.societyId !== societyId) {
       throw new Error("Grant not found.");
     }
+    const patch: {
+      role: "editor" | "viewer" | "member";
+      memberId?: Id<"members"> | undefined;
+      menus?: string[] | undefined;
+      userId?: Id<"users"> | undefined;
+    } = { role };
     if (role === "member") {
       const bound = memberId ?? grantRow.memberId;
       if (!bound) {
@@ -400,10 +432,22 @@ export const setRole = mutation({
       if (!m || m.societyId !== societyId) {
         throw new Error("Member not found in this society.");
       }
-      await ctx.db.patch(id, { role, memberId: bound });
+      patch.memberId = bound;
     } else {
-      await ctx.db.patch(id, { role, memberId: undefined });
+      // Leaving the member role unbinds the flat.
+      patch.memberId = undefined;
     }
+    if (menus !== undefined) {
+      // Empty list = all non-admin menus (server default), so store undefined.
+      patch.menus = menus.length > 0 ? menus : undefined;
+    }
+    // Heal grants created before the invitee signed up: bind the account now
+    // so rights resolve by user id as well as email on every later check.
+    if (!grantRow.userId) {
+      const u = await userByEmail(ctx, grantRow.email);
+      if (u) patch.userId = u._id;
+    }
+    await ctx.db.patch(id, patch);
   },
 });
 
@@ -421,8 +465,16 @@ export const setMenus = mutation({
     if (!grantRow || grantRow.societyId !== societyId) {
       throw new Error("Grant not found.");
     }
-    // Empty list = all non-admin menus (server default), so store undefined.
-    await ctx.db.patch(id, { menus: menus.length > 0 ? menus : undefined });
+    const patch: { menus?: string[] | undefined; userId?: Id<"users"> | undefined } = {
+      // Empty list = all non-admin menus (server default), so store undefined.
+      menus: menus.length > 0 ? menus : undefined,
+    };
+    // Heal grants created before the invitee signed up (same as setRole).
+    if (!grantRow.userId) {
+      const u = await userByEmail(ctx, grantRow.email);
+      if (u) patch.userId = u._id;
+    }
+    await ctx.db.patch(id, patch);
   },
 });
 

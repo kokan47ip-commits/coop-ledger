@@ -89,6 +89,7 @@ export default function UsersRights() {
   const [email, setEmail] = useState("");
   const [formRole, setFormRole] = useState<"editor" | "viewer" | "member">("editor");
   const [formMenus, setFormMenus] = useState<string[]>([]); // empty = all menus
+  const [formMemberId, setFormMemberId] = useState(""); // flat bound to member-portal logins
   const [editing, setEditing] = useState<Grant | null>(null);
   const [busy, setBusy] = useState(false);
   const [menuTarget, setMenuTarget] = useState<Grant | null>(null);
@@ -106,6 +107,17 @@ export default function UsersRights() {
     setEmail("");
     setFormRole("editor");
     setFormMenus([]);
+    setFormMemberId("");
+    setOpen(true);
+  };
+
+  /** Full rights editor: pre-fills role, menus and flat from the grant row. */
+  const openEdit = (g: Grant) => {
+    setEditing(g);
+    setEmail(g.email);
+    setFormRole(g.role);
+    setFormMenus(g.menus ?? []);
+    setFormMemberId(g.memberId ?? "");
     setOpen(true);
   };
 
@@ -138,8 +150,24 @@ export default function UsersRights() {
     setBusy(true);
     try {
       if (editing) {
-        await setRole({ societyId, id: editing._id, role: formRole });
-        toast.success(`${editing.email} is now ${formRole}`);
+        if (formRole === "member" && !formMemberId) {
+          throw new Error(
+            "Pick the flat this member portal login is linked to.",
+          );
+        }
+        await setRole({
+          societyId,
+          id: editing._id,
+          role: formRole,
+          memberId:
+            formRole === "member" ? (formMemberId as Id<"members">) : undefined,
+          menus: formMenus, // replacement list — ticks here become the user's rights
+        });
+        toast.success(
+          formMenus.length === 0
+            ? `${editing.email} updated — ${formRole} with all menus`
+            : `${editing.email} updated — ${formRole} with ${formMenus.length} menu(s)`,
+        );
       } else if (mode === "member") {
         if (!memberId) throw new Error("Pick a member from the list.");
         const member = memberOptions.find((m) => m._id === memberId);
@@ -336,12 +364,8 @@ export default function UsersRights() {
                         variant="ghost"
                         size="icon"
                         className="size-8"
-                        onClick={() => {
-                          setEditing(g);
-                          setEmail(g.email);
-                          setFormRole(g.role);
-                          setOpen(true);
-                        }}
+                        title="Edit role, menus and flat"
+                        onClick={() => openEdit(g)}
                       >
                         <Pencil className="size-3.5" />
                       </Button>
@@ -365,7 +389,7 @@ export default function UsersRights() {
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? "Change role" : "Add user"}</DialogTitle>
+            <DialogTitle>{editing ? "Edit user access" : "Add user"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
             {!editing && (
@@ -477,6 +501,32 @@ export default function UsersRights() {
                 </p>
               </div>
             )}
+            {editing && formRole === "member" && (
+              <div className="space-y-2">
+                <Label>Flat *</Label>
+                <Select
+                  value={formMemberId || undefined}
+                  onValueChange={(v) => setFormMemberId(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick the flat this login can see" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {memberOptions.map((m) => (
+                      <SelectItem key={m._id} value={m._id}>
+                        {m.flatNo ? `${m.flatNo} — ` : ""}
+                        {m.name}
+                        {m.code ? ` (${m.code})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  The portal login sees only this flat's ledger, bills and
+                  receipts. Re-pick to re-bind it to another flat.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Role</Label>
               <Select
@@ -496,12 +546,14 @@ export default function UsersRights() {
                 {ROLE_HELP[formRole]}
               </p>
             </div>
-            {!editing && formRole !== "member" && (
+            {formRole !== "member" && (
               <div className="space-y-2 rounded-lg border border-dashed p-3">
                 <p className="text-xs font-medium">Menu access</p>
                 <p className="text-xs leading-5 text-muted-foreground">
                   {formMenus.length === 0
-                    ? "All menus will be visible. Use the sliders button on the user's row after saving to restrict which menus they can open."
+                    ? editing
+                      ? "All menus are currently visible. Tick specific menus to restrict what this user can open."
+                      : "All menus will be visible. You can restrict them any time from this user's row."
                     : `${formMenus.length} menu(s) selected — they will see only those.`}
                 </p>
                 <div className="max-h-36 space-y-1 overflow-y-auto">
@@ -539,7 +591,11 @@ export default function UsersRights() {
                 Cancel
               </Button>
               <Button type="submit" disabled={busy}>
-                {editing ? "Save role" : mode === "member" ? "Grant access" : "Send invite"}
+                {editing
+                  ? "Save changes"
+                  : mode === "member"
+                    ? "Grant access"
+                    : "Send invite"}
               </Button>
             </DialogFooter>
           </form>
