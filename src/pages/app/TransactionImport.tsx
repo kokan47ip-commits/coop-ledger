@@ -8,15 +8,15 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
-
-/** Normalises a flat code ("B-104-A", "B703", "SHOP 05") for matching. */
-const normFlat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-/** How the row's ledger resolves, mirroring the backend rules. */
-type LedgerResolution =
-  | { kind: "member"; name: string }
-  | { kind: "account"; name: string }
-  | { kind: "none" };
+import {
+  buildRowsOut,
+  COLS,
+  normKey,
+  REQUIRED_LABELS,
+  resolveKeys,
+  type PreviewRow,
+  type Row,
+} from "@/lib/transactionImport";
 
 const rowKind = (typeText: string, fallback: "receipt" | "payment" | "journal") => {
   const t = (typeText ?? "").toLowerCase();
@@ -26,63 +26,7 @@ const rowKind = (typeText: string, fallback: "receipt" | "payment" | "journal") 
   return fallback;
 };
 
-/**
- * Auto-fetches the bank/cash account from the Cash/Bank column, which carries
- * the ACCOUNT CODE. The system supplies the account's real name; the sheet's
- * Bank Name text is display-only. Returns the account, or undefined when the
- * code is present but doesn't match any bank/cash account (bad code).
- */
-const resolveBank = (
-  code: string,
-  accounts: Doc<"accounts">[] | undefined,
-): Doc<"accounts"> | undefined | "none" => {
-  if (!code) return "none"; // no code in the sheet → handled at save time
-  if (!accounts) return undefined; // masters not loaded yet
-  const byCode = accounts.find(
-    (a) => a.kind === "bank_cash" && a.code.toLowerCase() === code.toLowerCase(),
-  );
-  if (byCode) return byCode;
-  // Legacy name-text tolerance: accept a full account name too.
-  const byName = accounts.find(
-    (a) =>
-      a.kind === "bank_cash" &&
-      (a.name.toLowerCase().includes(code.toLowerCase()) ||
-        code.toLowerCase().includes(a.name.toLowerCase())),
-  );
-  return byName;
-};
 
-/**
- * Auto-fetches the ledger name from the system for a row. Receipts: Ledger
- * Code is the member's FLAT NO (wing+flat, member code or name). Payments:
- * Ledger Code is a ledger CODE from Chart of Accounts (member flat as refund
- * fallback). Journal: member first. The sheet's own name text is display-only.
- */
-const resolveLedger = (
-  typeText: string,
-  code: string,
-  name: string,
-  accounts: Doc<"accounts">[] | undefined,
-  members: Doc<"members">[] | undefined,
-  defaultType: "receipt" | "payment" | "journal",
-): LedgerResolution => {
-  const kind = rowKind(typeText, defaultType);
-  const findMember = (): Doc<"members"> | undefined => {
-    if (!members) return undefined;
-    if (code) {
-      const f = normFlat(code);
-      const byFlat = members.find(
-        (m) =>
-          m.flatNo &&
-          (normFlat(m.flatNo) === f || normFlat(`${m.wing ?? ""}${m.flatNo}`) === f),
-      );
-      if (byFlat) return byFlat;
-      const byCode = members.find((m) => m.code.toLowerCase() === code.toLowerCase());
-      if (byCode) return byCode;
-    }
-    if (name) return members.find((m) => m.name.toLowerCase() === name.toLowerCase());
-    return undefined;
-  };
   const findAccount = (): Doc<"accounts"> | undefined => {
     if (!accounts) return undefined;
     if (code) {
