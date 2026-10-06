@@ -185,6 +185,8 @@ export default function MemberLedger() {
     return { member: mem, title: `${flatOf(mem)}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing };
   };
 
+  // A ledger with no entries in the period is skipped entirely — it is not
+  // previewed or printed (opening balance alone does not count as an entry).
   const sections: MemberSection[] =
     bulk && society
       ? sortedMembers
@@ -193,6 +195,7 @@ export default function MemberLedger() {
             const entry = bulk.find((b) => b.memberId === mem._id);
             return buildSection(mem, entry?.rows ?? []);
           })
+          .filter((s) => s.items.length > 0)
       : [];
 
   /** Tariff-head columns across all selected members (detail format only). */
@@ -234,8 +237,8 @@ export default function MemberLedger() {
       body.push([
         "",
         "",
-        s.member.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
         ...blank(),
+        s.member.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
         s.member.openingBalance > 0 ? s.member.openingBalance : "",
         s.member.openingBalance < 0 ? -s.member.openingBalance : "",
         "",
@@ -249,13 +252,12 @@ export default function MemberLedger() {
         formatDate(r.date),
         r.voucherNo,
         ...(isDetail ? headVals : []),
-        isDetail ? "" : r.narration.join("\n"),
+        r.narration.join("\n"),
         r.debit || "",
         r.credit || "",
         drCr(r.balance),
       ]);
     }
-    if (body.length === 0) body.push(["", "", "No transactions in this period", "", "", ""]);
 
     const head = isDetail
       ? ["Date", "Bill / Voucher No.", ...headNames.map(headLabel), "Narration", "Debit", "Credit", "Balance"]
@@ -274,13 +276,13 @@ export default function MemberLedger() {
         [
           "",
           "",
-          s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd",
           ...blank(),
+          s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd",
           s.closing < 0 ? -s.closing : "",
           s.closing > 0 ? s.closing : "",
           "",
         ],
-        ["", "", "Total", ...blank(), s.totDr, s.totCr, ""],
+        ["", "", ...blank(), "Total", s.totDr, s.totCr, ""],
       ],
       columnStyles,
     };
@@ -293,6 +295,10 @@ export default function MemberLedger() {
     }
     if (!bulk || !meta) {
       toast.error("Loading ledgers… try again in a moment.");
+      return;
+    }
+    if (sections.length === 0) {
+      toast.error("No entries in the ticked ledgers for this period — nothing to print.");
       return;
     }
     const tables = sections.map((s, i) => sectionTable(s, i === 0));
@@ -459,6 +465,8 @@ export default function MemberLedger() {
           <EmptyHint>Tick one or more members above to build the Member Ledger report.</EmptyHint>
         ) : !bulk ? (
           <EmptyHint>Loading ledgers…</EmptyHint>
+        ) : sections.length === 0 ? (
+          <EmptyHint>No entries in the ticked ledgers for this period — nothing to print.</EmptyHint>
         ) : (
           <ReportPreview title="Main Report" onPrint={() => doExport("print")}>
             <ReportLetterhead
@@ -487,7 +495,7 @@ export default function MemberLedger() {
                           {isDetail && headNames.map((n) => (
                             <th key={n} className="py-1.5 pr-2 text-right font-bold whitespace-nowrap">{headLabel(n)}</th>
                           ))}
-                          {!isDetail && <th className="py-1.5 pr-2 font-bold">Narration</th>}
+                          <th className="py-1.5 pr-2 font-bold">Narration</th>
                           <th className="w-24 py-1.5 text-right font-bold">Debit</th>
                           <th className="w-24 py-1.5 text-right font-bold">Credit</th>
                           <th className="w-28 py-1.5 text-right font-bold">Balance</th>
@@ -496,11 +504,11 @@ export default function MemberLedger() {
                       <tbody>
                         {s.member.openingBalance !== 0 && (
                           <tr>
-                            <td colSpan={2} className="py-1 pr-2">
+                            <td colSpan={2} />
+                            {isDetail && headNames.map((n) => <td key={n} />)}
+                            <td className="py-1 pr-2">
                               {s.member.openingBalance > 0 ? "To Opening balance old" : "By Opening balance old"}
                             </td>
-                            {isDetail && headNames.map((n) => <td key={n} />)}
-                            {!isDetail && <td />}
                             <td className="py-1 text-right tabular-nums">
                               {s.member.openingBalance > 0 ? formatMoney(s.member.openingBalance) : ""}
                             </td>
@@ -523,34 +531,25 @@ export default function MemberLedger() {
                                   {typeof v === "number" ? formatMoney(v) : ""}
                                 </td>
                               ))}
-                              {!isDetail && (
-                                <td className="py-1 pr-2">
-                                  {r.narration.map((line, j) => (
-                                    <span key={j} className={j > 0 ? "block text-[11px] text-slate-600" : "block"}>
-                                      {line}
-                                    </span>
-                                  ))}
-                                </td>
-                              )}
+                              <td className="py-1 pr-2">
+                                {r.narration.map((line, j) => (
+                                  <span key={j} className={j > 0 ? "block text-[11px] text-slate-600" : "block"}>
+                                    {line}
+                                  </span>
+                                ))}
+                              </td>
                               <td className="py-1 text-right tabular-nums">{r.debit ? formatMoney(r.debit) : ""}</td>
                               <td className="py-1 text-right tabular-nums">{r.credit ? formatMoney(r.credit) : ""}</td>
                               <td className="py-1 text-right tabular-nums">{drCr(r.balance)}</td>
                             </tr>
                           );
                         })}
-                        {s.items.length === 0 && (
-                          <tr>
-                            <td colSpan={isDetail ? 3 + headNames.length : 6} className="py-2 text-center text-slate-500">
-                              No transactions in this period
-                            </td>
-                          </tr>
-                        )}
                         <tr className="bg-indigo-50/70 text-[#312e81]">
-                          <td colSpan={2} className="py-1 pr-2 font-semibold">
+                          <td colSpan={2} />
+                          {isDetail && headNames.map((n) => <td key={n} />)}
+                          <td className="py-1 pr-2 font-semibold">
                             {s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd"}
                           </td>
-                          {isDetail && headNames.map((n) => <td key={n} />)}
-                          {!isDetail && <td />}
                           <td className="py-1 text-right font-semibold tabular-nums">
                             {s.closing < 0 ? formatMoney(-s.closing) : ""}
                           </td>
@@ -560,9 +559,9 @@ export default function MemberLedger() {
                           <td />
                         </tr>
                         <tr className="border-t border-slate-300">
-                          <td colSpan={2} className="py-1 pr-2 font-semibold">Total</td>
+                          <td colSpan={2} />
                           {isDetail && headNames.map((n) => <td key={n} />)}
-                          {!isDetail && <td />}
+                          <td className="py-1 pr-2 font-semibold">Total</td>
                           <td className="py-1 text-right font-semibold tabular-nums">{formatMoney(s.totDr)}</td>
                           <td className="py-1 text-right font-semibold tabular-nums">{formatMoney(s.totCr)}</td>
                           <td />

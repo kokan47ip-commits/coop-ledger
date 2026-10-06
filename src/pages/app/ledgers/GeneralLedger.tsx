@@ -167,6 +167,8 @@ export default function GeneralLedger() {
     };
   };
 
+  // A ledger with no entries in the period is skipped entirely — it is not
+  // previewed or printed (opening balance alone does not count as an entry).
   const sections: LedgerSection[] =
     bulk && society
       ? sortedAccounts
@@ -175,6 +177,7 @@ export default function GeneralLedger() {
             const entry = bulk.find((b) => b.accountId === acc._id);
             return buildSection(acc, entry?.rows ?? []);
           })
+          .filter((s) => s.items.length > 0)
       : [];
 
   const meta: ExportMeta | null = society
@@ -205,7 +208,6 @@ export default function GeneralLedger() {
     for (const r of s.items) {
       body.push([formatDate(r.date), r.voucherNo, r.narration.join("\n"), r.debit || "", r.credit || "", drCr(r.balance)]);
     }
-    if (body.length === 0) body.push(["", "", "No transactions in this period", "", "", ""]);
     return {
       sectionTitle: s.title,
       pageBreakBefore: !first && skipPage,
@@ -233,6 +235,10 @@ export default function GeneralLedger() {
     }
     if (!bulk || !meta) {
       toast.error("Loading ledgers… try again in a moment.");
+      return;
+    }
+    if (sections.length === 0) {
+      toast.error("No entries in the ticked ledgers for this period — nothing to print.");
       return;
     }
     const tables = sections.map((s, i) => sectionTable(s, i === 0));
@@ -436,6 +442,8 @@ export default function GeneralLedger() {
               <EmptyHint>Tick one or more ledgers above to build the Account Ledger report.</EmptyHint>
             ) : !bulk ? (
               <EmptyHint>Loading ledgers…</EmptyHint>
+            ) : sections.length === 0 ? (
+              <EmptyHint>No entries in the ticked ledgers for this period — nothing to print.</EmptyHint>
             ) : (
               <ReportPreview title="Main Report" onPrint={() => doExport("print")}>
                 <ReportLetterhead
@@ -496,13 +504,6 @@ export default function GeneralLedger() {
                               <td className="py-1 text-right tabular-nums">{drCr(r.balance)}</td>
                             </tr>
                           ))}
-                          {s.items.length === 0 && (
-                            <tr>
-                              <td colSpan={6} className="py-2 text-center text-slate-500">
-                                No transactions in this period
-                              </td>
-                            </tr>
-                          )}
                           <tr className="bg-indigo-50/70 text-[#312e81]">
                             <td colSpan={3} className="py-1 pr-2 font-semibold">
                               {s.closing >= 0 ? "To Closing balance cd" : "By Closing balance cd"}

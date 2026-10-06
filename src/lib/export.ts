@@ -355,9 +355,14 @@ ${meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationN
 <p class="title">${escapeHtml(meta.title)}</p>
 ${meta.subtitle ? `<p class="sub2">${escapeHtml(meta.subtitle)}</p>` : ""}
 ${tables
-    .map((t, i) =>
-      `${i > 0 && t.pageBreakBefore ? '<br style="page-break-before:always"/>' : ""}${tableToHtml(t)}`,
-    )
+    .map((t, i) => {
+      const inner = tableToHtml(t);
+      // Word honours page-break-before on a block element; a bare <br> with
+      // the style is unreliable there (Skip Page After Ledger).
+      return i > 0 && t.pageBreakBefore
+        ? `<div style="page-break-before:always">${inner}</div>`
+        : inner;
+    })
     .join("<br/>")}
 ${signaturesHtml(meta)}
 </body></html>`;
