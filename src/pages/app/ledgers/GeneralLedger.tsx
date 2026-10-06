@@ -233,7 +233,7 @@ export default function GeneralLedger() {
       toast.error("Tick at least one ledger first.");
       return;
     }
-    if (!bulk || !meta) {
+    if (!bulk || !accounts || !meta) {
       toast.error("Loading ledgers… try again in a moment.");
       return;
     }
@@ -440,7 +440,7 @@ export default function GeneralLedger() {
           <div className="mt-6">
             {!society || selected.size === 0 ? (
               <EmptyHint>Tick one or more ledgers above to build the Account Ledger report.</EmptyHint>
-            ) : !bulk ? (
+            ) : !bulk || !accounts ? (
               <EmptyHint>Loading ledgers…</EmptyHint>
             ) : sections.length === 0 ? (
               <EmptyHint>No entries in the ticked ledgers for this period — nothing to print.</EmptyHint>

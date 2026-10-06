@@ -293,7 +293,7 @@ export default function MemberLedger() {
       toast.error("Tick at least one member first.");
       return;
     }
-    if (!bulk || !meta) {
+    if (!bulk || !members || !meta) {
       toast.error("Loading ledgers… try again in a moment.");
       return;
     }
@@ -463,7 +463,7 @@ export default function MemberLedger() {
       <div className="mt-6">
         {!society || selected.size === 0 ? (
           <EmptyHint>Tick one or more members above to build the Member Ledger report.</EmptyHint>
-        ) : !bulk ? (
+        ) : !bulk || !members ? (
           <EmptyHint>Loading ledgers…</EmptyHint>
         ) : sections.length === 0 ? (
           <EmptyHint>No entries in the ticked ledgers for this period — nothing to print.</EmptyHint>
