@@ -68,7 +68,8 @@ type Bill = Doc<"bills">;
 type Voucher = Doc<"vouchers">;
 type Member = Doc<"members">;
 
-type DocType = "bills" | "receipts" | "vouchers" | "combo";
+type DocType = "bills" | "receipts" | "vouchers" | "combo" | "flats";
+type FlatDoc = "bills" | "receipts" | "vouchers";
 type Scope = "month" | "range" | "selection";
 type ComboContent = "both" | "bills" | "receipts";
 
@@ -110,6 +111,11 @@ export default function PrintingHub() {
   const [busy, setBusy] = useState(false);
   const [margins, setMargins] = useState<PageMargins>({ ...DEFAULT_MARGINS });
   const [monthTouched, setMonthTouched] = useState(false);
+  // Flat-wise tab: document kind, date range and ticked member ids.
+  const [flatDoc, setFlatDoc] = useState<FlatDoc>("bills");
+  const [flatFrom, setFlatFrom] = useState(fy.from);
+  const [flatTo, setFlatTo] = useState(fy.to);
+  const [flatSel, setFlatSel] = useState<Set<string>>(new Set());
 
   const memberOf = (id: Id<"members"> | undefined) =>
     members?.find((m) => m._id === id);
@@ -180,12 +186,64 @@ export default function PrintingHub() {
     [vouchers],
   );
 
+  /** Selection-wise pools narrowed by the From/To range — the tick list shows
+   *  only documents dated inside it, and prints honour the same filter. */
+  const selectionBillsPool = useMemo(
+    () => allBillsSorted.filter((b) => inRange(b.issueDate)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allBillsSorted, from, to],
+  );
+  const selectionReceiptsPool = useMemo(
+    () => allReceiptsSorted.filter((v) => inRange(v.date)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allReceiptsSorted, from, to],
+  );
+  const selectionVouchersPool = useMemo(
+    () => allVouchersSorted.filter((v) => inRange(v.date)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allVouchersSorted, from, to],
+  );
+
+  /** Flat-wise: members in flat order, and their documents in the flat range. */
+  const membersSorted = useMemo(
+    () =>
+      [...(members ?? [])].sort((a, b) => {
+        const fa = [a.wing, a.flatNo].filter(Boolean).join("-") || a.code;
+        const fb = [b.wing, b.flatNo].filter(Boolean).join("-") || b.code;
+        return fa.localeCompare(fb) || a.name.localeCompare(b.name);
+      }),
+    [members],
+  );
+  const flatBills = useMemo(
+    () =>
+      allBillsSorted.filter(
+        (b) => flatSel.has(String(b.memberId)) && b.issueDate >= flatFrom && b.issueDate <= flatTo,
+      ),
+    [allBillsSorted, flatSel, flatFrom, flatTo],
+  );
+  const flatReceipts = useMemo(
+    () =>
+      allReceiptsSorted.filter(
+        (v) =>
+          !!v.memberId && flatSel.has(String(v.memberId)) && v.date >= flatFrom && v.date <= flatTo,
+      ),
+    [allReceiptsSorted, flatSel, flatFrom, flatTo],
+  );
+  const flatVouchers = useMemo(
+    () =>
+      allVouchersSorted.filter(
+        (v) =>
+          !!v.memberId && flatSel.has(String(v.memberId)) && v.date >= flatFrom && v.date <= flatTo,
+      ),
+    [allVouchersSorted, flatSel, flatFrom, flatTo],
+  );
+
   /** Bills in the chosen scope (month / date range / manual selection). */
   const scopedBills = useMemo(() => {
     if (docType === "combo") return allBillsSorted.filter((b) => b.period === activeMonth);
     if (scope === "month") return allBillsSorted.filter((b) => b.period === activeMonth);
     if (scope === "range") return allBillsSorted.filter((b) => inRange(b.issueDate));
-    return allBillsSorted.filter((b) => selected.has(b._id));
+    return allBillsSorted.filter((b) => selected.has(b._id) && inRange(b.issueDate));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBillsSorted, docType, scope, activeMonth, from, to, selected]);
 
@@ -197,7 +255,7 @@ export default function PrintingHub() {
       return allReceiptsSorted.filter((v) => v.date >= r.from && v.date <= r.to);
     }
     if (scope === "range") return allReceiptsSorted.filter((v) => inRange(v.date));
-    return allReceiptsSorted.filter((v) => selected.has(v._id));
+    return allReceiptsSorted.filter((v) => selected.has(v._id) && inRange(v.date));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allReceiptsSorted, docType, scope, activeMonth, from, to, rcptFrom, rcptTo, selected]);
 
@@ -208,7 +266,7 @@ export default function PrintingHub() {
       return allVouchersSorted.filter((v) => v.date >= r.from && v.date <= r.to);
     }
     if (scope === "range") return allVouchersSorted.filter((v) => inRange(v.date));
-    return allVouchersSorted.filter((v) => selected.has(v._id));
+    return allVouchersSorted.filter((v) => selected.has(v._id) && inRange(v.date));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allVouchersSorted, scope, activeMonth, from, to, selected]);
 
@@ -370,10 +428,27 @@ export default function PrintingHub() {
     [scopedBills, memberReceipts, society, members, tariffs, bills, rcptFrom, rcptTo],
   );
 
+  /** Flat-wise batch items (reuse the same document builders). */
+  const flatBillItems = useMemo<BillBatchItem[]>(
+    () => flatBills.map((b) => ({ data: buildBillData(b) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [flatBills, society, members, tariffs],
+  );
+  const flatReceiptItems = useMemo<ReceiptBatchItem[]>(
+    () => flatReceipts.map((v) => ({ data: buildReceiptData(v), copyLabel: "Original" })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [flatReceipts, society, members, bills],
+  );
+  const flatVoucherItems = useMemo<VoucherBatchItem[]>(
+    () => flatVouchers.map((v) => ({ data: buildVoucherData(v) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [flatVouchers, society, members, accounts],
+  );
+
   /** Cache QR images for the Word/print exports (they embed data URLs). */
-  const preloadBillQrs = async () => {
+  const preloadBillQrs = async (items: BillBatchItem[] = billItems) => {
     if (!society?.upiVpa) return;
-    for (const it of billItems) {
+    for (const it of items) {
       if (it.data.upi) await preloadQrImage(amountUpiUri(it.data.upi.uri, it.data.upi.amount));
     }
   };
@@ -385,7 +460,36 @@ export default function PrintingHub() {
     if (!society) return;
     setBusy(true);
     try {
-      if (docType === "bills" || (docType === "combo" && comboContent === "bills")) {
+      if (docType === "flats") {
+        const fLabel = `${flatFrom}-to-${flatTo}`;
+        if (flatDoc === "bills") {
+          if (flatBillItems.length === 0) throw new Error("No bills match the selected flats.");
+          if (kind === "pdf") billsPdfBatch(flatBillItems, `bills-${fLabel}.pdf`, twoUp, margins);
+          else if (kind === "word") {
+            await preloadBillQrs(flatBillItems);
+            billsWordBatch(flatBillItems, `bills-${fLabel}`, twoUp, margins);
+          } else {
+            await preloadBillQrs(flatBillItems);
+            billsPrintBatch(flatBillItems, twoUp, margins);
+          }
+        } else if (flatDoc === "receipts") {
+          if (flatReceiptItems.length === 0)
+            throw new Error("No receipts match the selected flats.");
+          if (kind === "pdf")
+            receiptsPdfBatch(flatReceiptItems, `receipts-${fLabel}.pdf`, twoUp, margins);
+          else if (kind === "word")
+            receiptsWordBatch(flatReceiptItems, `receipts-${fLabel}`, margins, twoUp);
+          else receiptsPrintBatch(flatReceiptItems, twoUp, margins);
+        } else {
+          if (flatVoucherItems.length === 0)
+            throw new Error("No vouchers match the selected flats.");
+          if (kind === "pdf")
+            vouchersPdfBatch(flatVoucherItems, `vouchers-${fLabel}.pdf`, twoUp, margins);
+          else if (kind === "word")
+            vouchersWordBatch(flatVoucherItems, `vouchers-${fLabel}`, twoUp, margins);
+          else vouchersPrintBatch(flatVoucherItems, twoUp, margins);
+        }
+      } else if (docType === "bills" || (docType === "combo" && comboContent === "bills")) {
         if (billItems.length === 0) throw new Error("No bills match the selection.");
         if (kind === "pdf") billsPdfBatch(billItems, `bills-${scopeLabel}.pdf`, twoUp, margins);
         else if (kind === "word") {
@@ -437,7 +541,18 @@ export default function PrintingHub() {
 
   /** Full pool of the active tab — "select all" ticks every document, and
    *  selection-wise tables list all of them for ticking. */
+  /** Tick pool: selection-wise narrows to the From/To range so "select all"
+   *  matches exactly the rows listed below. */
   const allIds = useMemo(() => {
+    if (scope === "selection") {
+      const pool =
+        docType === "bills"
+          ? selectionBillsPool
+          : docType === "vouchers"
+            ? selectionVouchersPool
+            : selectionReceiptsPool;
+      return new Set(pool.map((d) => String(d._id)));
+    }
     const list: string[] =
       docType === "bills"
         ? allBillsSorted.map((b) => String(b._id))
@@ -445,7 +560,16 @@ export default function PrintingHub() {
           ? allVouchersSorted.map((v) => String(v._id))
           : allReceiptsSorted.map((v) => String(v._id));
     return new Set(list);
-  }, [docType, allBillsSorted, allVouchersSorted, allReceiptsSorted]);
+  }, [
+    scope,
+    docType,
+    selectionBillsPool,
+    selectionVouchersPool,
+    selectionReceiptsPool,
+    allBillsSorted,
+    allVouchersSorted,
+    allReceiptsSorted,
+  ]);
 
   const allSelected = allIds.size > 0 && [...allIds].every((id) => selected.has(id));
   const toggleAll = (on: boolean) =>
@@ -461,18 +585,49 @@ export default function PrintingHub() {
       return next;
     });
 
+  /** Flat-wise tick helpers (ticked member ids). */
+  const allFlatSelected =
+    membersSorted.length > 0 && membersSorted.every((m) => flatSel.has(String(m._id)));
+  const toggleAllFlats = (on: boolean) =>
+    setFlatSel(on ? new Set(membersSorted.map((m) => String(m._id))) : new Set());
+  const toggleFlat = (id: string, on: boolean) =>
+    setFlatSel((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  /** Documents in range per member — drives the flat tab's count column. */
+  const flatDocCountByMember = useMemo(() => {
+    const pool =
+      flatDoc === "bills" ? flatBills : flatDoc === "receipts" ? flatReceipts : flatVouchers;
+    const counts = new Map<string, number>();
+    for (const d of pool) {
+      const mid = (d as Bill).memberId ?? (d as Voucher).memberId ?? undefined;
+      if (mid) counts.set(String(mid), (counts.get(String(mid)) ?? 0) + 1);
+    }
+    return counts;
+  }, [flatDoc, flatBills, flatReceipts, flatVouchers]);
+
   const effCount =
-    docType === "bills"
-      ? billItems.length
-      : docType === "receipts"
-        ? receiptItems.length
-        : docType === "vouchers"
-          ? voucherItems.length
-        : comboContent === "both"
-          ? comboPairs.length
-          : comboContent === "bills"
-            ? billItems.length
-            : receiptItems.length;
+    docType === "flats"
+      ? flatDoc === "bills"
+        ? flatBillItems.length
+        : flatDoc === "receipts"
+          ? flatReceiptItems.length
+          : flatVoucherItems.length
+      : docType === "bills"
+        ? billItems.length
+        : docType === "receipts"
+          ? receiptItems.length
+          : docType === "vouchers"
+            ? voucherItems.length
+            : comboContent === "both"
+              ? comboPairs.length
+              : comboContent === "bills"
+                ? billItems.length
+                : receiptItems.length;
 
   /** Pages the export produces — the combo layout always uses one full A4
    *  sheet per pair, regardless of the two-up toggle hidden on that tab. */
@@ -525,10 +680,10 @@ export default function PrintingHub() {
   const tableRows: (Bill | Voucher)[] =
     scope === "selection"
       ? docType === "bills"
-        ? allBillsSorted
+        ? selectionBillsPool
         : docType === "vouchers"
-          ? allVouchersSorted
-          : allReceiptsSorted
+          ? selectionVouchersPool
+          : selectionReceiptsPool
       : docType === "bills"
         ? scopedBills
         : docType === "vouchers"
@@ -551,7 +706,7 @@ export default function PrintingHub() {
     <div className="space-y-6">
       <PageHeader
         title="Printing Hub"
-        description="Print bills, receipts and vouchers in batches — month-wise, date-wise or selection-wise, as PDF or Word, one or two per A4 page, or bill + receipt together."
+        description="Print bills, receipts and vouchers in batches — month-wise, date-wise, selection-wise or flat-wise, as PDF or Word, one or two per A4 page, or bill + receipt together."
       />
 
       <Tabs value={docType} onValueChange={(v) => setDocType(v as DocType)}>
@@ -560,12 +715,13 @@ export default function PrintingHub() {
           <TabsTrigger value="receipts">Receipts</TabsTrigger>
           <TabsTrigger value="vouchers">Vouchers</TabsTrigger>
           <TabsTrigger value="combo">Bill with Receipt</TabsTrigger>
+          <TabsTrigger value="flats">Flat wise</TabsTrigger>
         </TabsList>
       </Tabs>
 
       {/* Scope + layout controls */}
       <div className="panel space-y-5 p-5">
-        {docType !== "combo" && (
+        {docType !== "combo" && docType !== "flats" && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-2">
               <Label>Print scope</Label>
@@ -593,7 +749,7 @@ export default function PrintingHub() {
                 </Select>
               </div>
             )}
-            {scope === "range" && (
+            {(scope === "range" || scope === "selection") && (
               <>
                 <div className="space-y-2">
                   <Label>From date</Label>
@@ -604,6 +760,13 @@ export default function PrintingHub() {
                   <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
                 </div>
               </>
+            )}
+            {scope === "selection" && (
+              <p className="text-xs leading-5 text-muted-foreground sm:col-span-2 lg:col-span-3">
+                Selection-wise honours this date range: the tick list below shows only documents
+                dated between the From and To dates, and only ticked documents inside the range
+                print.
+              </p>
             )}
           </div>
         )}
@@ -670,6 +833,34 @@ export default function PrintingHub() {
           </div>
         )}
 
+        {docType === "flats" && (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-2">
+              <Label>Print</Label>
+              <Select value={flatDoc} onValueChange={(v) => setFlatDoc(v as FlatDoc)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bills">Bills</SelectItem>
+                  <SelectItem value="receipts">Receipts</SelectItem>
+                  <SelectItem value="vouchers">Vouchers</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>From date</Label>
+              <Input type="date" value={flatFrom} onChange={(e) => setFlatFrom(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>To date</Label>
+              <Input type="date" value={flatTo} onChange={(e) => setFlatTo(e.target.value)} />
+            </div>
+            <p className="text-xs leading-5 text-muted-foreground sm:col-span-2 lg:col-span-1">
+              Tick one or more flats below, then print every bill, receipt or voucher of those
+              members dated between the From and To dates — flat by flat, in flat order.
+            </p>
+          </div>
+        )}
+
         {/* Layout + output */}
         <div className="flex flex-wrap items-end gap-6 border-t pt-4">
           {!(docType === "combo" && comboContent === "both") && (
@@ -733,10 +924,65 @@ export default function PrintingHub() {
       </div>
 
       {/* Document list — tick boxes in selection scope, print preview otherwise */}
-      {docType !== "combo" && (
+      {docType !== "combo" && docType !== "flats" && (
         <Card className="py-0">
           <CardContent className="px-0">
             {docsTable}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Flat-wise: tick the flats whose documents should print */}
+      {docType === "flats" && (
+        <Card className="py-0">
+          <CardContent className="px-0">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-8 pl-4">
+                    <Checkbox
+                      checked={allFlatSelected}
+                      onCheckedChange={(v) => toggleAllFlats(v === true)}
+                      aria-label="Select all flats"
+                    />
+                  </TableHead>
+                  <TableHead>Flat</TableHead>
+                  <TableHead>Member</TableHead>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>In range</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {membersSorted.map((m) => {
+                  const id = String(m._id);
+                  const count = flatDocCountByMember.get(id) ?? 0;
+                  return (
+                    <TableRow key={id}>
+                      <TableCell className="pl-4">
+                        <Checkbox
+                          checked={flatSel.has(id)}
+                          onCheckedChange={(v) => toggleFlat(id, v === true)}
+                          aria-label={`Select flat ${flatOf(m) ?? m.code}`}
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">{flatOf(m) ?? "—"}</TableCell>
+                      <TableCell>{m.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{m.code}</TableCell>
+                      <TableCell className="text-muted-foreground">{m.phone ?? "—"}</TableCell>
+                      <TableCell className="tabular-nums">{count}</TableCell>
+                    </TableRow>
+                  );
+                })}
+                {membersSorted.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                      No members yet — add flats in the Members page first.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}
