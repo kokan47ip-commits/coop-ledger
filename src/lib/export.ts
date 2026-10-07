@@ -276,7 +276,28 @@ function signaturesHtml(meta: ExportMeta): string {
   return `<table class="signatures"><tr>${cells}</tr></table>`;
 }
 
-function tableToHtml(t: TableSpec): string {
+/**
+ * The letterhead block (society band + report title) that leads every table.
+ * Injected as rows inside the table's <thead> so Word and every browser
+ * REPEAT it at the top of every page the table spans — the same letterhead
+ * the PDF's drawHeader() draws per page. This is what makes society name,
+ * Registration No and address print on every page when "Skip Page After
+ * Ledger" splits a ledger across pages.
+ */
+function letterheadRows(meta: ExportMeta, width: number): string {
+  const band =`<tr class="lh"><td colspan="${width}" style="border:none;padding:0;">` +
+    `<table class="hdrband" width="100%" cellspacing="0" cellpadding="0"><tr><td>` +
+    `<h1>${escapeHtml(meta.societyName)}</h1>` +
+    (meta.societyAddress ? `<p class="sub">${escapeHtml(meta.societyAddress)}</p>` : "") +
+    (meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationNo)}</p>` : "") +
+    `</td></tr></table><div class="goldrule"></div>` +
+    `<p class="title">${escapeHtml(meta.title)}</p>` +
+    (meta.subtitle ? `<p class="sub2">${escapeHtml(meta.subtitle)}</p>` : "") +
+    `</td></tr>`;
+  return band;
+}
+
+function tableToHtml(t: TableSpec, meta: ExportMeta): string {
   const section = t.sectionTitle
     ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>`
     : "";
@@ -321,7 +342,7 @@ function tableToHtml(t: TableSpec): string {
         .join("")}</tr></tfoot>`
     : "";
   return `${section}<table width="100%" style="border-collapse:collapse" cellspacing="0">
-    <thead>${groupHead ? `<tr>${groupHead}</tr>` : ""}<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
+    <thead>${letterheadRows(meta, t.head.length)}${groupHead ? `<tr>${groupHead}</tr>` : ""}<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
 }
 
 export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: string) {
@@ -329,6 +350,12 @@ export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: stri
 <head><meta charset="utf-8"><title>${escapeHtml(meta.title)}</title>
 <style>
   body { font-family: Arial, Helvetica, sans-serif; color:#0f172a; }
+  /* Rows carrying the repeated letterhead (Word running header part 1 —
+     the rows live in <thead> so Word repeats them on every page). */
+  .lh td { border:none; padding:0; }
+  .lh table { margin-top: 0; }
+  .lh h1 { font-size:12pt; }
+  .lh .sub { font-size:7.5pt; }
   .hdrband td { background:#312e81; padding:14pt 10pt 12pt; text-align:center; }
   h1 { font-size: 15pt; text-align:center; margin:0; color:#ffffff; letter-spacing:0.4pt; }
   .sub { text-align:center; font-size: 8.5pt; margin:3pt 0 0; color:#c7d2fe; }
@@ -346,19 +373,11 @@ export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: stri
   .siglabel { color: #64748b; margin-top: 2pt; }
 </style></head>
 <body>
-<table class="hdrband" width="100%" cellspacing="0" cellpadding="0"><tr><td>
-<h1>${escapeHtml(meta.societyName)}</h1>
-${meta.societyAddress ? `<p class="sub">${escapeHtml(meta.societyAddress)}</p>` : ""}
-${meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationNo)}</p>` : ""}
-</td></tr></table>
-<div class="goldrule"></div>
-<p class="title">${escapeHtml(meta.title)}</p>
-${meta.subtitle ? `<p class="sub2">${escapeHtml(meta.subtitle)}</p>` : ""}
 ${tables
     .map((t, i) => {
-      const inner = tableToHtml(t);
       // Word honours page-break-before on a block element; a bare <br> with
       // the style is unreliable there (Skip Page After Ledger).
+      const inner = tableToHtml(t, meta);
       return i > 0 && t.pageBreakBefore
         ? `<div style="page-break-before:always">${inner}</div>`
         : inner;
@@ -493,16 +512,33 @@ export function exportExcel(meta: ExportMeta, tables: TableSpec[], filename: str
 
 // ---------- Print (opens a styled window) ----------
 
+/**
+ * Print letterhead band — placed INSIDE each table's <thead> so the browser
+ * repeats it at the top of every page the table spans (indigo society band,
+ * gold rule, report title). Society name, Reg. No and address therefore
+ * print on every page — same as the PDF's per-page drawHeader().
+ */
+function printHeaderRows(meta: ExportMeta, width: number): string {
+  return `<tr class="lhp"><td colspan="${width}" style="border:none;padding:0;max-width:none;">` +
+    `<div class="hdr"><h1>${escapeHtml(meta.societyName)}</h1>` +
+    (meta.societyAddress ? `<p class="sub">${escapeHtml(meta.societyAddress)}</p>` : "") +
+    (meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationNo)}</p>` : "") +
+    `</div><div class="goldrule"></div>` +
+    `<p class="title">${escapeHtml(meta.title)}</p>` +
+    (meta.subtitle ? `<p class="sub2">${escapeHtml(meta.subtitle)}</p>` : "") +
+    `</td></tr>`;
+}
+
 export function printTables(meta: ExportMeta, tables: TableSpec[]) {
   const w = window.open("", "_blank", "width=900,height=700");
   if (!w) return;
   const html = `<html><head><title>${escapeHtml(meta.title)}</title><style>
     * { box-sizing: border-box; }
     body { font-family: Helvetica, Arial, sans-serif; color:#0f172a; margin: 0; background:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .sheet { max-width: 820px; margin: 0 auto; border:1.2px solid #312e81; border-radius:6px; overflow:hidden; background:#fff; }
-    .hdr { background:#312e81; color:#fff; text-align:center; padding: 18px 16px 14px; }
-    h1 { font-size: 18px; text-align:center; margin:0; color:#fff; letter-spacing:0.02em; }
-    .sub { text-align:center; font-size: 11px; color:#c7d2fe; margin:3px 0 0; }
+    .sheet { max-width: 820px; margin: 0 auto; border:1.2px solid #312e81; border-radius:6px; background:#fff; }
+    .hdr { background:#312e81; color:#fff; text-align:center; padding: 14px 16px 10px; }
+    h1 { font-size: 16px; text-align:center; margin:0; color:#fff; letter-spacing:0.02em; }
+    .sub { text-align:center; font-size: 10px; color:#c7d2fe; margin:3px 0 0; }
     .goldrule { height:3px; background:#b45309; }
     .title { text-align:center; font-size: 13px; font-weight:700; margin:0; padding:9px; background:#eef2ff; color:#312e81; letter-spacing:1px; }
     .sub2 { text-align:center; font-size: 11px; color:#64748b; margin:10px 0 0; }
@@ -512,6 +548,12 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
     th { background:#312e81; color:#fff; text-align:left; font-size: 11px; padding: 7px 9px; }
     td { font-size: 11px; padding: 6px 9px; border-bottom: 1px solid #eef2ff; }
     tr:nth-child(even) td { background:#f8fafc; }
+    /* Rows carrying the repeated letterhead (one per table, inside <thead>). */
+    .lhp td { border:none; background:transparent; }
+    .lhp table { margin-bottom:0; }
+    .lhp .title { margin:0; }
+    /* Only table cells get the zebra rule — the letterhead band reads clean. */
+    tbody tr:nth-child(even) td:not(.nozebra) { background:#f8fafc; }
     tfoot td { background:#eef2ff; color:#312e81; font-weight: 700; }
     .signatures { margin-top: 56px; width: 100%; }
     .signatures td { border: none !important; background: transparent !important; text-align: center; padding: 0 10px; }
@@ -521,14 +563,6 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
     @media print { body { margin: 12px; } }
   </style></head><body>
   <div class="sheet">
-  <div class="hdr">
-  <h1>${escapeHtml(meta.societyName)}</h1>
-  ${meta.societyAddress ? `<p class="sub">${escapeHtml(meta.societyAddress)}</p>` : ""}
-  ${meta.registrationNo ? `<p class="sub">Reg. No: ${escapeHtml(meta.registrationNo)}</p>` : ""}
-  </div>
-  <div class="goldrule"></div>
-  <p class="title">${escapeHtml(meta.title)}</p>
-  ${meta.subtitle ? `<p class="sub2">${escapeHtml(meta.subtitle)}</p>` : ""}
   <div class="body">
   ${tables
     .map((t, ti) => {
@@ -563,7 +597,7 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
             .join("")}</tr></tfoot>`
         : "";
       const brk = ti > 0 && t.pageBreakBefore ? '<div style="page-break-before:always"></div>' : "";
-      return `${brk}${t.sectionTitle ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>` : ""}<table><thead>${
+      return `${brk}${t.sectionTitle ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>` : ""}<table class="lh-t" width="100%"><thead>${printHeaderRows(meta, t.head.length)}${
         t.groupHead
           ? `<tr>${t.groupHead
               .map((g) => {
