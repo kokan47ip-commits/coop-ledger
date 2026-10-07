@@ -23,7 +23,7 @@ import { PageHeader, ViewerBlock } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyReceiptData } from "@/lib/billDoc";
 import { formatDate, formatPeriod, formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { NumInput } from "./LedgerVoucherForm";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -85,6 +85,18 @@ export default function MemberReceipt() {
     bankName: "",
     narration: "",
   });
+  // Voucher number: blank = automatic numbering; a typed number is checked
+  // for duplicates live and re-checked on the server before the entry saves.
+  const [voucherNo, setVoucherNo] = useState("");
+  const suggestedNo = lastNo
+    ? `${lastNo.prefix}-${String((lastNo.last ?? 0) + 1).padStart(4, "0")}`
+    : "";
+  const noTaken = useQuery(
+    api.vouchers.voucherNoTaken,
+    societyId && voucherNo.trim() && !editId
+      ? { societyId, voucherNo: voucherNo.trim() }
+      : "skip",
+  ) as boolean | undefined;
 
   const outstandingBills = useMemo(() => {
     if (!form.memberId || !bills) return [];
@@ -177,6 +189,12 @@ export default function MemberReceipt() {
       );
       return;
     }
+    if (voucherNo.trim() && noTaken) {
+      toast.error(
+        `Duplicate Voucher No. — ${voucherNo.trim()} is already used in the books.`,
+      );
+      return;
+    }
     try {
       await createVoucher({
         societyId,
@@ -187,6 +205,7 @@ export default function MemberReceipt() {
         bankCashAccountId: bankId as never,
         reference: composeReference(),
         narration: composeNarration(),
+        voucherNo: voucherNo.trim() || undefined,
         lines: fullLines,
         allocations: previewAllocation.rows.map((r) => ({ billId: r.bill._id, amount: r.take })),
       });
@@ -204,6 +223,7 @@ export default function MemberReceipt() {
         bankName: "",
         narration: "",
       });
+      setVoucherNo("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save receipt");
     }
@@ -252,11 +272,11 @@ export default function MemberReceipt() {
     }
   };
 
-  // Prefill the edit form once per voucher — guarded so reactive refetches
-  // (new object identity) never overwrite the user's in-progress edits.
+  // Prefill the edit form once per voucher — during render (not in an
+  // effect) so reactive refetches never overwrite in-progress edits.
   const [editLoadedFor, setEditLoadedFor] = useState<string | null>(null);
-  useEffect(() => {
-    if (!editId || !editVoucherDoc || editLoadedFor === editId) return;
+  if (editId && editVoucherDoc && editLoadedFor !== editId) {
+    setEditLoadedFor(editId);
     // Narration is stored as "text — Bank: X"; split it back apart.
     const raw = editVoucherDoc.narration ?? "";
     const bankMatch = raw.match(/— Bank: (.+)$/);
@@ -271,9 +291,7 @@ export default function MemberReceipt() {
       bankName: bankMatch?.[1]?.trim() ?? "",
       narration: bankMatch ? raw.slice(0, bankMatch.index).trimEnd() : raw,
     });
-    setEditLoadedFor(editId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editId, editLoadedFor]);
+  }
 
   const formatUnallocated = (n: number) =>
     `₹ ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(n)}`;
@@ -349,19 +367,20 @@ export default function MemberReceipt() {
             />
           </div>
           <div className="space-y-2">
-            <Label>Voucher No.</Label>
+            <Label htmlFor="mr-vno">Voucher No.</Label>
             <Input
-              value={
-                editId
-                  ? (editVoucherDoc?.voucherNo ?? "…")
-                  : lastNo
-                    ? `${lastNo.prefix}-${String((lastNo.last ?? 0) + 1).padStart(4, "0")}`
-                    : "auto"
-              }
-              readOnly
-              className="bg-muted/50 font-mono text-xs"
-              title="Assigned automatically on save"
+              id="mr-vno"
+              value={editId ? (editVoucherDoc?.voucherNo ?? "…") : voucherNo}
+              onChange={(e) => setVoucherNo(e.target.value)}
+              placeholder={suggestedNo || "auto"}
+              readOnly={Boolean(editId)}
+              className={`font-mono text-xs ${noTaken ? "border-destructive" : ""}`}
+              title="Leave blank for the next automatic number"
+              autoComplete="off"
             />
+            {noTaken && (
+              <p className="text-xs font-medium text-destructive">Duplicate Voucher No.</p>
+            )}
           </div>
         </div>
 

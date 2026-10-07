@@ -14,7 +14,7 @@
  * Not part of the vite build (tsconfig.app includes only src/); run via bun.
  */
 import { describe, expect, test } from "bun:test";
-import { buildRowsOut, resolveKeys } from "../src/lib/transactionImport";
+import { buildRowsOut, resolveKeys, validateRows } from "../src/lib/transactionImport";
 
 type Acct = {
   _id: string;
@@ -131,5 +131,94 @@ describe("Transaction Import — ledger resolution is unchanged", () => {
   test("resolveKeys maps the Cash/Bank and Bank Name headers independently", () => {
     expect(resolved["Cash/Bank"]).toBe("Cash/Bank");
     expect(resolved["Bank Name"]).toBe("Bank Name");
+  });
+});
+
+describe("Transaction Import — financial-year gate (FY flag + validateRows)", () => {
+  const fy = { from: "2026-04-01", to: "2027-03-31" };
+
+  test("a date outside the financial year flags the row (FY)", () => {
+    const r = buildRowsOut(
+      [row({ Date: "05/04/2025", "Cash/Bank": "B1" })],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    )[0];
+    expect(r.problems).toContain("FY");
+  });
+
+  test("dates inside the financial year pass", () => {
+    const r = buildRowsOut(
+      [row({ Date: "05/04/2026", "Cash/Bank": "B1" })],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    )[0];
+    expect(r.problems).not.toContain("FY");
+  });
+
+  test("validateRows is silent for a fully valid sheet", () => {
+    const rows = buildRowsOut(
+      [row({ "Cash/Bank": "B1" })],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    );
+    expect(validateRows(rows, fy)).toEqual([]);
+  });
+
+  test("validateRows reports one readable message per bad row", () => {
+    const rows = buildRowsOut(
+      [
+        row({ Date: "05/04/2025", "Cash/Bank": "B1" }),
+        row({ Date: "not-a-date", "Cash/Bank": "B1" }),
+      ],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    );
+    const errs = validateRows(rows, fy);
+    expect(errs).toHaveLength(2);
+    expect(errs[0]).toContain(
+      "Row 2: date 05/04/2025 is outside the financial year (2026-04-01 to 2027-03-31)",
+    );
+    expect(errs[1]).toContain("Row 3: date missing or unreadable");
+  });
+
+  test("validateRows flags unknown members, ledgers and bank codes", () => {
+    const rows = buildRowsOut(
+      [
+        row({ "Ledger Code": "ZZ-999", "Cash/Bank": "B1" }),
+        row({ "Ledger Code": "A-101", "Cash/Bank": "BAD", Amount: 500 }),
+      ],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    );
+    const errs = validateRows(rows, fy);
+    expect(errs.length).toBe(2);
+    expect(errs[0]).toContain("no member matches flat no/code");
+    expect(errs[1]).toContain('no bank/cash account matches "BAD"');
+  });
+
+  test("zero and negative amounts are flagged", () => {
+    const r = buildRowsOut(
+      [row({ Amount: 0, "Cash/Bank": "B1" })],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+    )[0];
+    expect(r.problems).toContain("Amount");
   });
 });

@@ -14,11 +14,14 @@ import {
   normKey,
   REQUIRED_LABELS,
   resolveKeys,
+  validateRows,
+  type FyPeriod,
   type Row,
 } from "@/lib/transactionImport";
 
 import { useSociety } from "@/components/SocietyContext";
 import { downloadTemplate, parseExcelFile } from "@/lib/excel";
+import { effectiveFyPeriod } from "@/lib/format";
 import { CheckCircle2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -28,7 +31,7 @@ import { toast } from "sonner";
 type Result = { inserted: number; updated: number; skipped: number; errors: string[] };
 
 export default function TransactionImport() {
-  const { societyId, canEdit } = useSociety();
+  const { society, societyId, canEdit } = useSociety();
   const navigate = useNavigate();
   const accounts = useQuery(
     api.accounts.list,
@@ -51,19 +54,50 @@ export default function TransactionImport() {
     missing: string[];
   } | null>(null);
   const [done, setDone] = useState<Result | null>(null);
+  // Cell edits, keyed by sheet row index and column label — the raw text the
+  // office typed. Applied over the parsed rows before preview/validation, so
+  // problems and resolved names recompute live while editing.
+  const [edits, setEdits] = useState<Record<number, Record<string, string>>>({});
+
+  const fy = useMemo(() => effectiveFyPeriod(society ?? null) as FyPeriod, [society]);
+
+  // Rows with the office's edits applied (raw sheet values).
+  const editedRows = useMemo(() => {
+    if (!parsed) return [] as Row[];
+    if (Object.keys(edits).length === 0) return parsed.rows;
+    return parsed.rows.map((row, i) => {
+      const e = edits[i];
+      if (!e) return row;
+      const out: Row = { ...row };
+      for (const [label, v] of Object.entries(e)) {
+        out[parsed.resolved[label] ?? label] = v;
+      }
+      return out;
+    });
+  }, [parsed, edits]);
 
   // The preview grid is derived: recomputed whenever the parsed file, the
-  // masters (members/accounts) or the fallback type change — no state
-  // synchronization needed.
+  // masters (members/accounts), the fallback type or the edits change — no
+  // state synchronization needed.
   const rowsOut = useMemo(
     () =>
       parsed
-        ? buildRowsOut(parsed.rows, parsed.resolved, accounts, members, defaultType)
+        ? buildRowsOut(editedRows, parsed.resolved, accounts, members, defaultType, fy)
         : [],
-    [parsed, accounts, members, defaultType],
+    [parsed, editedRows, accounts, members, defaultType, fy],
   );
 
   const okCount = rowsOut.filter((r) => r.problems.length === 0).length;
+  // The gate: one message per bad row. Import stays disabled until the list
+  // is empty — a file with a bad row is NEVER uploaded partially.
+  const rowErrors = useMemo(() => validateRows(rowsOut, fy), [rowsOut, fy]);
+  const errorCount = rowErrors.length;
+
+  const setCell = (idx: number, j: number, value: string) => {
+    const label = COLS[j]?.label;
+    if (!label) return;
+    setEdits((prev) => ({ ...prev, [idx]: { ...(prev[idx] ?? {}), [label]: value } }));
+  };
 
   const status = busy
     ? "Importing…"
@@ -71,15 +105,19 @@ export default function TransactionImport() {
       ? "Select an Excel file to preview transactions."
       : !parsed
         ? "Reading file…"
-        : `${okCount} of ${rowsOut.length} rows ready to import` +
-          (parsed.missing.length ? ` — missing columns: ${parsed.missing.join(", ")}` : "") +
-          (done
-            ? ` · last import: ${done.inserted} added, ${done.skipped} skipped, ${done.errors.length} errors`
-            : "");
+        : errorCount > 0
+          ? `${errorCount} of ${rowsOut.length} row(s) need fixing — edit them in the grid; nothing is imported until every row is valid` +
+            (parsed.missing.length ? ` — missing columns: ${parsed.missing.join(", ")}` : "")
+          : `${okCount} of ${rowsOut.length} rows ready to import` +
+            (parsed.missing.length ? ` — missing columns: ${parsed.missing.join(", ")}` : "") +
+            (done
+              ? ` · last import: ${done.inserted} added, ${done.errors.length} errors`
+              : "");
 
   const handleFile = async (file: File) => {
     setDone(null);
     setFileName(file.name);
+    setEdits({});
     try {
       const { rows, headers } = await parseExcelFile(file);
       if (rows.length === 0) {
@@ -101,6 +139,10 @@ export default function TransactionImport() {
 
   const importNow = async () => {
     if (!parsed || !societyId) return;
+    if (errorCount > 0) {
+      toast.error("Fix the flagged rows first — files with invalid rows are not imported.");
+      return;
+    }
     const bank = accounts?.find((a) => a.kind === "bank_cash");
     if (!bank) {
       toast.error("Create a bank/cash account first (Chart of Accounts).");
@@ -110,7 +152,7 @@ export default function TransactionImport() {
     try {
       const res = await doImport({
         societyId,
-        rows: parsed.rows,
+        rows: editedRows,
         defaultType,
         defaultBankCashAccountId: bank._id,
       });
@@ -160,8 +202,18 @@ export default function TransactionImport() {
           <Button variant="outline" size="sm" className="h-8 w-10 px-2" onClick={() => inputRef.current?.click()}>
             …
           </Button>
-          <Button size="sm" className="h-8" disabled={!canEdit || !parsed || busy || okCount === 0} onClick={importNow}>
-            Import
+          <Button
+            size="sm"
+            className="h-8"
+            disabled={!canEdit || !parsed || busy || okCount === 0 || errorCount > 0}
+            title={
+              errorCount > 0
+                ? `${errorCount} row(s) have errors — fix them in the grid; files with bad rows are never imported`
+                : undefined
+            }
+            onClick={importNow}
+          >
+            {errorCount > 0 ? `Fix ${errorCount} row${errorCount === 1 ? "" : "s"}` : "Import"}
           </Button>
           <Button variant="outline" size="sm" className="h-8" onClick={() => downloadTemplate("transactions")}>
             Template
@@ -184,7 +236,8 @@ export default function TransactionImport() {
           </div>
         </div>
 
-        {/* Preview grid */}
+        {/* Preview grid — every cell is editable inline (except Voucher No.,
+            which the system assigns on save). */}
         <div className="max-h-[62vh] overflow-auto">
           <table className="w-full border-collapse text-xs">
             <thead className="sticky top-0 z-10 bg-muted">
@@ -216,18 +269,37 @@ export default function TransactionImport() {
                     onClick={() => setSelected(idx)}
                     className={`cursor-default ${r.problems.length > 0 ? "bg-destructive/[0.08]" : idx === selected ? "bg-primary/[0.07]" : "hover:bg-muted/60"}`}
                   >
-                    <td className="border-b border-r px-1 text-center text-[10px] text-primary">
+                    <td
+                      className="border-b border-r px-1 text-center text-[10px] text-primary"
+                      title={r.problems.length > 0 ? `Problems: ${r.problems.join(", ")}` : undefined}
+                    >
                       {idx === selected ? "▶" : ""}
                     </td>
-                    {r.cells.map((c, j) => (
-                      <td
-                        key={j}
-                        className={`max-w-48 truncate whitespace-nowrap border-b border-r px-2 py-1 last:border-r-0 ${COLS[j].align === "right" ? "text-right tabular-nums" : ""}`}
-                        title={c}
-                      >
-                        {c || "\u00A0"}
-                      </td>
-                    ))}
+                    {r.cells.map((c, j) => {
+                      const label = COLS[j]?.label ?? "";
+                      const mapped = !!parsed?.resolved[label];
+                      const readOnly = j === 0 || !mapped || !canEdit || busy;
+                      return (
+                        <td
+                          key={j}
+                          className={`max-w-48 border-b border-r p-0 last:border-r-0 ${COLS[j].align === "right" ? "text-right" : ""}`}
+                        >
+                          <input
+                            value={c}
+                            readOnly={readOnly}
+                            onChange={(e) => setCell(idx, j, e.target.value)}
+                            title={
+                              j === 0
+                                ? "Assigned automatically on import"
+                                : !mapped
+                                  ? "Column not present in the sheet"
+                                  : c
+                            }
+                            className={`w-full bg-transparent px-2 py-1 text-xs outline-none focus:bg-background focus:ring-1 focus:ring-primary/40 ${readOnly ? "cursor-default text-muted-foreground" : ""}`}
+                          />
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))
               )}
@@ -242,7 +314,21 @@ export default function TransactionImport() {
         </div>
       </div>
 
-      {/* Row errors from the last import */}
+      {/* Rows to fix BEFORE importing — the gate against partial uploads. */}
+      {parsed && !busy && errorCount > 0 && (
+        <div className="mt-3 max-h-44 space-y-1 overflow-y-auto rounded-md border border-destructive/30 bg-destructive/[0.06] p-3 text-xs text-destructive">
+          <p className="font-semibold">
+            {errorCount} row(s) invalid — the file imports only when every row is valid (nothing is
+            uploaded partially). Edit the cells in the grid above:
+          </p>
+          {rowErrors.slice(0, 40).map((e, i) => (
+            <p key={i}>{e}</p>
+          ))}
+          {rowErrors.length > 40 && <p>…and {rowErrors.length - 40} more.</p>}
+        </div>
+      )}
+
+      {/* Row errors from the last import (backend backstop) */}
       {done && done.errors.length > 0 && (
         <div className="mt-3 max-h-40 space-y-1 overflow-y-auto rounded-md border border-destructive/30 bg-destructive/[0.06] p-3 text-xs text-destructive">
           {done.errors.slice(0, 30).map((e, i) => (
@@ -261,7 +347,9 @@ export default function TransactionImport() {
         blank to use the society's first bank/cash account. <strong>Bank Name</strong> is the member's bank
         — shown exactly as uploaded, blank when the sheet has none. The Ledger Name is fetched automatically
         from the system; the sheet's name text is ignored. Dates accept DD/MM/YYYY; amounts may include ₹
-        and commas. Entries dated outside the financial year are declined row-wise.
+        and commas. Every row is checked against the current financial year before anything is saved — a
+        row with a bad date, unknown ledger or wrong amount stays editable right here in the grid and
+        Import unlocks only when the whole file is valid. Nothing is ever uploaded partially.
       </p>
     </div>
   );

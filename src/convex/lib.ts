@@ -325,6 +325,80 @@ export function pad(n: number) {
   return String(n).padStart(4, "0");
 }
 
+/**
+ * Duplicate voucher numbers are not allowed inside a society's books.
+ * Every voucher insert (member receipt, other receipt, payment, journal —
+ * forms and Excel uploads alike) passes its assigned number through this
+ * guard: if the number is already taken the entry is refused with the exact
+ * message the office expects, so numbering can never silently repeat.
+ */
+export async function assertVoucherNoFree(
+  ctx: MutationCtx,
+  societyId: Id<"societies">,
+  voucherNo: string,
+  excludeId?: Id<"vouchers">,
+) {
+  const dupe = await ctx.db
+    .query("vouchers")
+    .withIndex("by_society", (q) => q.eq("societyId", societyId))
+    .filter((q) => q.eq(q.field("voucherNo"), voucherNo))
+    .first();
+  if (dupe && dupe._id !== excludeId) {
+    throw new Error(
+      `Duplicate Voucher No. — ${voucherNo} is already used in the books. Choose another number, or clear the field for automatic numbering.`,
+    );
+  }
+}
+
+/**
+ * Allocates the next voucher number for a book and guarantees it is unused:
+ * if the counter has fallen behind the stored vouchers (imported/restored
+ * data whose numbering restarted), it advances past the taken numbers
+ * instead of re-issuing them — duplicates are impossible and entry never
+ * gets stuck on a colliding counter.
+ */
+export async function claimVoucherNo(
+  ctx: MutationCtx,
+  societyId: Id<"societies">,
+  type: keyof typeof VOUCHER_PREFIX,
+): Promise<string> {
+  for (let guard = 0; guard < 50; guard++) {
+    const n = await nextNumber(ctx, `${societyId}:voucher:${type}`);
+    const voucherNo = `${VOUCHER_PREFIX[type]}-${pad(n)}`;
+    const dupe = await ctx.db
+      .query("vouchers")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .filter((q) => q.eq(q.field("voucherNo"), voucherNo))
+      .first();
+    if (!dupe) return voucherNo;
+  }
+  throw new Error(
+    "Duplicate Voucher No. — could not allocate a free voucher number. Check the voucher register for numbering gaps.",
+  );
+}
+
+/**
+ * The Members Receivable account must be a receivable ledger, NEVER a
+ * bank/cash one. Member receipts credit it while debiting the bank/cash
+ * account — if the receivable is set to a bank account (Society Profile →
+ * Accounting), both receipt lines land on the SAME bank ledger: the bank
+ * book then shows the amount on the Dr AND the Cr side and nets to zero
+ * ("nullified"), while the member ledger still looks correct. Every receipt
+ * path (manual form, portal/UPI auto-posting, Excel uploads) calls this
+ * guard before writing anything.
+ */
+export function assertReceivableAccount(
+  account:
+    | { kind?: "bank_cash" | "receivable"; name?: string; code?: string }
+    | undefined,
+): void {
+  if (account?.kind === "bank_cash") {
+    throw new Error(
+      `Members Receivable account is set to the bank/cash ledger "${account.name ?? account.code ?? "?"}" — member receipts would cancel out in the bank ledger. Fix it in Society Profile → Accounting (pick a proper receivable ledger).`,
+    );
+  }
+}
+
 export const VOUCHER_PREFIX = {
   member_receipt: "MR",
   other_receipt: "OR",
@@ -471,18 +545,24 @@ export async function postMemberReceipt(
   input: MemberReceiptInput,
 ) {
   const { society, total } = input;
-  const receivableId =
-    society.receivableAccountId ??
-    (await ctx.db
-      .query("accounts")
-      .withIndex("by_society", (q) => q.eq("societyId", society._id))
-      .collect()
-      .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
-  if (!receivableId) {
+  const accounts = await ctx.db
+    .query("accounts")
+    .withIndex("by_society", (q) => q.eq("societyId", society._id))
+    .collect();
+  const receivable =
+    (society.receivableAccountId
+      ? accounts.find((a) => a._id === society.receivableAccountId)
+      : undefined) ?? accounts.find((a) => a.kind === "receivable");
+  if (!receivable) {
     throw new ConvexError(
       "No Members Receivable account found — ask the society office to configure one.",
     );
   }
+  // Declines a mis-set receivable that points at a bank/cash ledger —
+  // without this the receipt's Dr and Cr would land on one bank account
+  // and nullify each other in the bank ledger.
+  assertReceivableAccount(receivable);
+  const receivableId = receivable._id;
   const n = await nextNumber(ctx, `${society._id}:voucher:member_receipt`);
   const voucherNo = `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`;
   const voucherId = await ctx.db.insert("vouchers", {

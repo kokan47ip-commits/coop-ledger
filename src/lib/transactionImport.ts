@@ -20,6 +20,9 @@ export type Row = Record<string, unknown>;
 
 export type PreviewRow = { index: number; cells: string[]; problems: string[] };
 
+/** Society books window (effectiveFyPeriod) used for the FY row check. */
+export type FyPeriod = { from: string; to: string } | null | undefined;
+
 /** Normalises a flat code ("B-104-A", "B703", "SHOP 05") for matching. */
 export const normFlat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -195,6 +198,24 @@ export const resolveLedger = (
   return { kind: "none" };
 };
 
+/**
+ * Parses a grid date cell (dd/mm/yyyy as displayed, ISO also accepted) back
+ * to ISO for the financial-year check — mirroring the backend's
+ * uploads.normalizeDate acceptance.
+ */
+const toISODate = (s: string): string | undefined => {
+  const t = s.trim();
+  if (!t) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const dmy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!dmy) return undefined;
+  const [, d, m, y] = dmy;
+  const mm = Number(m);
+  const dd = Number(d);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return undefined;
+  return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+};
+
 /** Builds the preview grid rows, substituting the system-fetched names. */
 export const buildRowsOut = (
   rows: Row[],
@@ -202,6 +223,7 @@ export const buildRowsOut = (
   accounts: Doc<"accounts">[] | undefined,
   members: Doc<"members">[] | undefined,
   defaultType: "receipt" | "payment" | "journal",
+  fy?: FyPeriod,
 ): PreviewRow[] => {
   // Save-time fallback (uploads.uploadTransactions): the society's first
   // bank/cash account, used when a row's Cash/Bank cell is blank.
@@ -240,9 +262,15 @@ export const buildRowsOut = (
     if (resolution.kind === "none")
       problems.push(rowKind(cells[2], defaultType) === "payment" ? "Ledger" : "Member");
     if (cashBankRaw && !bank) problems.push("Bank");
-    if (toNum(resolved["Amount"] ? row[resolved["Amount"]] : undefined) === undefined)
-      problems.push("Amount");
-    if (!cells[1]) problems.push("Date");
+    const amount = toNum(resolved["Amount"] ? row[resolved["Amount"]] : undefined);
+    if (amount === undefined || amount <= 0) problems.push("Amount");
+    if (!cells[1]) {
+      problems.push("Date");
+    } else {
+      const iso = toISODate(cells[1]);
+      if (!iso) problems.push("Date");
+      else if (fy && (iso < fy.from || iso > fy.to)) problems.push("FY");
+    }
     const typeRaw = (cells[2] ?? "").toLowerCase();
     if (
       cells[2] &&
@@ -257,3 +285,47 @@ export const buildRowsOut = (
     return { index: i + 2, cells, problems };
   });
 };
+
+/**
+ * Pre-import validation gate — one human-readable message per bad row,
+ * mirroring the save guards in uploads.uploadTransactions. The Import
+ * button stays disabled while this returns anything, so a file with a bad
+ * row (bad date, unknown ledger code, wrong amount…) is never uploaded
+ * partially: the rows are corrected right here in the grid first. The
+ * backend repeats the same checks as the final backstop and refuses the
+ * WHOLE file when any row is invalid.
+ */
+export function validateRows(rows: PreviewRow[], fy?: FyPeriod): string[] {
+  const errors: string[] = [];
+  for (const r of rows) {
+    for (const p of r.problems) {
+      if (p === "Date")
+        errors.push(
+          `Row ${r.index}: date missing or unreadable — use DD/MM/YYYY.`,
+        );
+      else if (p === "FY")
+        errors.push(
+          `Row ${r.index}: date ${r.cells[1]} is outside the financial year (${fy?.from} to ${fy?.to}) — fix the date in the grid, then import.`,
+        );
+      else if (p === "Amount")
+        errors.push(`Row ${r.index}: amount must be a positive number.`);
+      else if (p === "Bank")
+        errors.push(
+          `Row ${r.index}: no bank/cash account matches "${r.cells[6]}" — check the account code in Chart of Accounts.`,
+        );
+      else if (p === "Type")
+        errors.push(
+          `Row ${r.index}: voucher type must start with Receipts, Payments or Journal (or leave blank for the default).`,
+        );
+      else if (p === "Member")
+        errors.push(
+          `Row ${r.index}: no member matches flat no/code "${r.cells[3] || r.cells[4]}" — add the member or correct the flat no.`,
+        );
+      else if (p === "Ledger")
+        errors.push(
+          `Row ${r.index}: no ledger matches code/name "${r.cells[3] || r.cells[4]}" — add it in Chart of Accounts first.`,
+        );
+    }
+  }
+  return errors;
+}

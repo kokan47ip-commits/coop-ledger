@@ -3,6 +3,8 @@ import { Doc, Id } from "./_generated/dataModel";
 import { mutation } from "./_generated/server";
 import {
   applyAllocationToBill,
+  assertReceivableAccount,
+  claimVoucherNo,
   nextNumber,
   pad,
   recomputeBillStatus,
@@ -521,13 +523,18 @@ export const uploadReceipts = mutation({
       .query("accounts")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    const receivableId =
-      society?.receivableAccountId ??
-      allAccounts.find((a) => a.kind === "receivable")?._id;
-    if (!receivableId)
+    const receivable =
+      (society?.receivableAccountId
+        ? allAccounts.find((a) => a._id === society.receivableAccountId)
+        : undefined) ?? allAccounts.find((a) => a.kind === "receivable");
+    if (!receivable)
       throw new Error(
         "No Members Receivable account found — add one in Chart of Accounts first.",
       );
+    // Declines a mis-set receivable pointing at a bank/cash ledger (receipt
+    // lines would land on one bank account and nullify each other).
+    assertReceivableAccount(receivable);
+    const receivableId = receivable._id;
     const members = await ctx.db
       .query("members")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
@@ -725,6 +732,20 @@ export const uploadPayments = mutation({
  * Voucher numbers are always generated fresh — the sheet's numbers are not
  * reused.
  */
+/** A fully validated row, ready to be written once the WHOLE file passes. */
+type PlannedTxn = {
+  type: "member_receipt" | "other_receipt" | "payment" | "journal";
+  memberId?: Id<"members">;
+  lines: { accountId: Id<"accounts">; debit: number; credit: number; note?: string }[];
+  bankId: Id<"accounts">;
+  bankName?: string;
+  date: string;
+  amount: number;
+  chequeNo?: string;
+  narrationFull?: string;
+  allocations?: { billId: Id<"bills">; amount: number }[];
+};
+
 export const uploadTransactions = mutation({
   args: {
     societyId: v.id("societies"),
@@ -754,16 +775,27 @@ export const uploadTransactions = mutation({
       .query("bills")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    const receivableId =
-      society.receivableAccountId ?? accounts.find((a) => a.kind === "receivable")?._id;
-    if (!receivableId)
+    const receivable =
+      (society.receivableAccountId
+        ? accounts.find((a) => a._id === society.receivableAccountId)
+        : undefined) ?? accounts.find((a) => a.kind === "receivable");
+    if (!receivable)
       throw new Error(
         "No Members Receivable account found — add one in Chart of Accounts first.",
       );
+    // Declines a mis-set receivable pointing at a bank/cash ledger (receipt
+    // lines would land on one bank account and nullify each other).
+    assertReceivableAccount(receivable);
+    const receivableId = receivable._id;
     const fy = societyFyPeriod(society);
     const defaultBank =
       accounts.find((a) => a._id === defaultBankCashAccountId) ??
       accounts.find((a) => a.kind === "bank_cash");
+    // Every row is validated FIRST and collected as a plan; only when the
+    // whole file passes does anything get written. A file with a bad row is
+    // never partially imported — the rows stay editable in the
+    // TransactionImport screen instead.
+    const planned: PlannedTxn[] = [];
 
     const findAccountBy = (
       code?: string,
@@ -986,8 +1018,8 @@ export const uploadTransactions = mutation({
         }
       }
 
-      const n = await nextNumber(ctx, `${societyId}:voucher:${type}`);
-      // FIFO settlement against unpaid bills for member receipts.
+      // FIFO settlement against unpaid bills for member receipts — computed
+      // at validation time, applied only after the whole file validates.
       let allocations: { billId: Id<"bills">; amount: number }[] | undefined;
       if (type === "member_receipt" && member) {
         const memberBills = bills
@@ -1003,24 +1035,49 @@ export const uploadTransactions = mutation({
         }
         if (allocs.length > 0) allocations = allocs;
       }
-      await ctx.db.insert("vouchers", {
-        societyId,
+      planned.push({
         type,
-        voucherNo: `${VOUCHER_PREFIX[type]}-${pad(n)}`,
-        date,
         memberId,
-        mode: bank.name,
-        bankCashAccountId: bank._id,
-        reference: chequeNo,
-        narration: narrationFull,
-        total: amount,
         lines,
+        bankId: bank._id,
+        bankName: bank.name,
+        date,
+        amount,
+        chequeNo,
+        narrationFull,
         allocations,
       });
-      if (allocations) {
-        for (const a of allocations) {
-          const bill = bills.find((b) => b._id === a.billId)!;
-          await applyAllocationToBill(ctx, bill, a.amount);
+    }
+    // ANY bad row aborts the WHOLE upload — the books never receive a
+    // partially-imported file. Fix the flagged rows in the
+    // TransactionImport grid and upload the file again.
+    if (result.errors.length > 0) {
+      throw new Error(
+        `${result.errors.length} row(s) invalid — nothing was imported. Fix the flagged rows in the TransactionImport grid and upload the file again.\n${result.errors.join("\n")}`,
+      );
+    }
+    for (const p of planned) {
+      const voucherNo = await claimVoucherNo(ctx, societyId, p.type);
+      await ctx.db.insert("vouchers", {
+        societyId,
+        type: p.type,
+        voucherNo,
+        date: p.date,
+        memberId: p.memberId,
+        mode: p.bankName,
+        bankCashAccountId: p.bankId,
+        reference: p.chequeNo,
+        narration: p.narrationFull,
+        total: p.amount,
+        lines: p.lines,
+        allocations: p.allocations,
+      });
+      if (p.allocations) {
+        for (const a of p.allocations) {
+          // Fresh read: earlier plans in this batch may have settled the
+          // same bill, so balances must never come from a stale snapshot.
+          const bill = await ctx.db.get(a.billId);
+          if (bill) await applyAllocationToBill(ctx, bill, a.amount);
         }
       }
       result.inserted++;

@@ -1,11 +1,12 @@
 import { v } from "convex/values";
-import { Doc, Id } from "./_generated/dataModel";
+import { Id } from "./_generated/dataModel";
 import { MutationCtx, mutation, query } from "./_generated/server";
 import {
   applyAllocationToBill,
   assertInFy,
-  nextNumber,
-  pad,
+  assertReceivableAccount,
+  assertVoucherNoFree,
+  claimVoucherNo,
   requireSociety,
   requireSocietyWrite,
   VOUCHER_PREFIX,
@@ -80,6 +81,26 @@ export const lastNo = query({
   },
 });
 
+/** Live duplicate check for the voucher forms' Voucher No. field. */
+export const voucherNoTaken = query({
+  args: {
+    societyId: v.id("societies"),
+    voucherNo: v.string(),
+    excludeId: v.optional(v.id("vouchers")),
+  },
+  handler: async (ctx, { societyId, voucherNo, excludeId }) => {
+    await requireSociety(ctx, societyId);
+    const no = voucherNo.trim();
+    if (!no) return false;
+    const dupe = await ctx.db
+      .query("vouchers")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .filter((q) => q.eq(q.field("voucherNo"), no))
+      .first();
+    return !!dupe && dupe._id !== excludeId;
+  },
+});
+
 /**
  * Auto-posts a member receipt: Dr Bank/Cash, Cr Members Receivable, then
  * applies any bill allocations. Shared by the manual form (amount derived
@@ -97,6 +118,8 @@ async function insertMemberReceipt(
     narration?: string;
     total: number;
     allocations?: { billId: Id<"bills">; amount: number }[];
+    /** Office-typed voucher number; empty/absent = automatic numbering. */
+    voucherNo?: string;
   },
 ) {
   const society = await ctx.db.get(societyId);
@@ -104,18 +127,29 @@ async function insertMemberReceipt(
     .query("accounts")
     .withIndex("by_society", (q) => q.eq("societyId", societyId))
     .collect();
-  const receivableId =
-    society?.receivableAccountId ??
-    allAccounts.find((a) => a.kind === "receivable")?._id;
-  if (!receivableId)
+  const receivable =
+    (society?.receivableAccountId
+      ? allAccounts.find((a) => a._id === society.receivableAccountId)
+      : undefined) ?? allAccounts.find((a) => a.kind === "receivable");
+  if (!receivable)
     throw new Error(
       "No Members Receivable account found — add one in Chart of Accounts with the 'Members Receivable' role.",
     );
-  const n = await nextNumber(ctx, `${societyId}:voucher:member_receipt`);
+  // Declines a mis-set receivable pointing at a bank/cash ledger — without
+  // this, Dr bank and Cr receivable land on the SAME bank account and the
+  // bank ledger nets to zero (the reported "nullified" bank book).
+  assertReceivableAccount(receivable);
+  const receivableId = receivable._id;
+  // A number typed in the form is duplicate-checked and refused with
+  // "Duplicate Voucher No."; an empty field self-heals past counter drift —
+  // so a duplicate voucher number can never be saved either way.
+  const voucherNo =
+    p.voucherNo?.trim() ?? (await claimVoucherNo(ctx, societyId, "member_receipt"));
+  if (p.voucherNo?.trim()) await assertVoucherNoFree(ctx, societyId, voucherNo);
   const voucherId = await ctx.db.insert("vouchers", {
     societyId,
     type: "member_receipt" as const,
-    voucherNo: `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`,
+    voucherNo,
     date: p.date,
     memberId: p.memberId,
     mode: p.mode,
@@ -179,6 +213,8 @@ export const create = mutation({
     allocations: v.optional(
       v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
     ),
+    /** Office-typed voucher number; empty/absent = automatic numbering. */
+    voucherNo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { societyId, type, lines, allocations } = args;
@@ -207,6 +243,7 @@ export const create = mutation({
         narration: args.narration,
         total: allocTotal,
         allocations,
+        voucherNo: args.voucherNo,
       });
     }
 
@@ -229,14 +266,19 @@ export const create = mutation({
         narration: args.narration,
         total: debit,
         allocations,
+        voucherNo: args.voucherNo,
       });
     }
 
-    const n = await nextNumber(ctx, `${societyId}:voucher:${type}`);
+    // Office-typed voucher numbers are duplicate-checked ("Duplicate
+    // Voucher No."); the automatic series self-heals past counter drift.
+    const voucherNo =
+      args.voucherNo?.trim() ?? (await claimVoucherNo(ctx, societyId, type));
+    if (args.voucherNo?.trim()) await assertVoucherNoFree(ctx, societyId, voucherNo);
     const voucherId = await ctx.db.insert("vouchers", {
       societyId,
       type,
-      voucherNo: `${VOUCHER_PREFIX[type]}-${pad(n)}`,
+      voucherNo,
       date: args.date,
       memberId: args.memberId,
       mode: args.mode,

@@ -22,7 +22,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { formatMoney, fyWarningMessage, todayISO } from "@/lib/format";
 import { Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -124,7 +124,6 @@ export function LedgerVoucherForm({
 
   const [date, setDate] = useState(todayISO());
   const [bankCashAccountId, setBankCashAccountId] = useState("");
-  const [amount, setAmount] = useState("");
   const [chequeNo, setChequeNo] = useState("");
   const [chequeDate, setChequeDate] = useState("");
   const [bankName, setBankName] = useState("");
@@ -135,29 +134,41 @@ export function LedgerVoucherForm({
   const [lines, setLines] = useState<AddedLine[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadedFrom, setLoadedFrom] = useState<string | null>(null);
+  // Voucher number: blank = automatic numbering; a typed number is checked
+  // for duplicates live and re-checked on the server before the entry saves.
+  const [voucherNo, setVoucherNo] = useState("");
+  const suggestedNo = lastNo
+    ? `${lastNo.prefix}-${String((lastNo.last ?? 0) + 1).padStart(4, "0")}`
+    : "";
+  const noTaken = useQuery(
+    api.vouchers.voucherNoTaken,
+    societyId && voucherNo.trim() && !editId
+      ? { societyId, voucherNo: voucherNo.trim() }
+      : "skip",
+  ) as boolean | undefined;
 
   const isEdit = Boolean(editId);
 
   /** Financial-year guard: dated entries outside the books period are declined. */
   const fyWarning = fyWarningMessage(society, date);
 
-  // Prefill when editing
-  useEffect(() => {
-    if (!editId || !editing) return;
-    const v = editing[0];
-    if (!v || loadedFrom === v._id) return;
-    setDate(v.date);
-    setBankCashAccountId((v.bankCashAccountId as string) ?? "");
+  // Prefill when editing — during render (not in an effect) so a reactive
+  // refetch of the voucher never clobbers in-progress edits.
+  const editDoc = editing?.[0];
+  if (editId && editDoc && loadedFrom !== editDoc._id) {
+    setLoadedFrom(editDoc._id);
+    setDate(editDoc.date);
+    setBankCashAccountId((editDoc.bankCashAccountId as string) ?? "");
     // Narration is stored as "text — Bank: X"; split it back apart.
-    const raw = v.narration ?? "";
+    const raw = editDoc.narration ?? "";
     const bankMatch = raw.match(/— Bank: (.+)$/);
     setBankName(bankMatch?.[1]?.trim() ?? "");
     setNarration(bankMatch ? raw.slice(0, bankMatch.index).replace(/ — $/, "") : raw);
-    setChequeNo(v.reference ?? "");
-    const ref = v.reference ?? "";
+    setChequeNo(editDoc.reference ?? "");
+    const ref = editDoc.reference ?? "";
     setChequeDate(ref.includes(" dt ") ? ref.split(" dt ")[1]?.slice(0, 10) ?? "" : "");
     setLines(
-      v.lines.map((l) => ({
+      editDoc.lines.map((l) => ({
         key: lineKey++,
         accountId: l.accountId,
         code: "",
@@ -166,9 +177,7 @@ export function LedgerVoucherForm({
         credit: l.credit,
       })),
     );
-    setLoadedFrom(v._id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editId, loadedFrom]);
+  }
 
   const bankBal = useQuery(
     api.api.accountBalance,
@@ -222,7 +231,6 @@ export function LedgerVoucherForm({
   const removeLine = (key: number) => setLines((ls) => ls.filter((l) => l.key !== key));
 
   const reset = () => {
-    setAmount("");
     setChequeNo("");
     setChequeDate("");
     setBankName("");
@@ -231,6 +239,7 @@ export function LedgerVoucherForm({
     setDebit("");
     setCredit("");
     setLines([]);
+    setVoucherNo("");
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -255,6 +264,12 @@ export function LedgerVoucherForm({
           : isPayment
             ? "Debits must exceed credits — the difference is what leaves the bank."
             : "Credits must exceed debits — the difference is what enters the bank.",
+      );
+      return;
+    }
+    if (!isEdit && voucherNo.trim() && noTaken) {
+      toast.error(
+        `Duplicate Voucher No. — ${voucherNo.trim()} is already used in the books.`,
       );
       return;
     }
@@ -298,6 +313,7 @@ export function LedgerVoucherForm({
           reference,
           narration: fullNarration,
           lines: payloadLines,
+          voucherNo: voucherNo.trim() || undefined,
         });
         toast.success(`Voucher of ₹ ${formatMoney(net)} saved`);
         reset();
@@ -368,19 +384,20 @@ export function LedgerVoucherForm({
           <Input value={editing?.[0]?.voucherNo ?? lastNo?.lastVoucherNo ?? "—"} readOnly className="bg-muted/50 font-mono text-xs" />
         </div>
         <div className="space-y-2">
-          <Label>Voucher No.</Label>
+          <Label htmlFor="v-no">Voucher No.</Label>
           <Input
-            value={
-              isEdit
-                ? (editing?.[0]?.voucherNo ?? "…")
-                : lastNo
-                  ? `${lastNo.prefix}-${String((lastNo.last ?? 0) + 1).padStart(4, "0")}`
-                  : "auto"
-            }
-            readOnly
-            className="bg-muted/50 font-mono text-xs"
-            title="Assigned automatically on save"
+            id="v-no"
+            value={isEdit ? (editing?.[0]?.voucherNo ?? "…") : voucherNo}
+            onChange={(e) => setVoucherNo(e.target.value)}
+            placeholder={suggestedNo || "auto"}
+            readOnly={isEdit}
+            className={`font-mono text-xs ${noTaken ? "border-destructive" : ""}`}
+            title="Leave blank for the next automatic number"
+            autoComplete="off"
           />
+          {noTaken && (
+            <p className="text-xs font-medium text-destructive">Duplicate Voucher No.</p>
+          )}
         </div>
       </div>
 

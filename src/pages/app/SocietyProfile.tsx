@@ -21,7 +21,7 @@ import { saveClaimCode, useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { effectiveFyPeriod, fyYearLabel, todayISO } from "@/lib/format";
 import { CheckCircle2, Circle, Save, TriangleAlert, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -85,48 +85,59 @@ export default function SocietyProfile() {
   });
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (society && !isNew) {
-      setForm({
-        name: society.name ?? "",
-        registrationNo: society.registrationNo ?? "",
-        registrationDate: society.registrationDate ?? "",
-        address: society.address ?? "",
-        city: society.city ?? "",
-        state: society.state ?? "",
-        pincode: society.pincode ?? "",
-        email: society.email ?? "",
-        phone: society.phone ?? "",
-        fyStartMonth: society.fyStartMonth ?? 4,
-        fyYear: society.fyYear ?? fyYearLabel(society.fyStartMonth ?? 4),
-        fyStartDate: society.fyStartDate ?? "",
-        receivableAccountId: society.receivableAccountId ?? "",
-        upiVpa: society.upiVpa ?? "",
-        lateFeePercent:
-          society.lateFeePercent !== undefined ? String(society.lateFeePercent) : "",
-        chairmanMemberId: society.chairmanMemberId ?? "",
-        secretaryMemberId: society.secretaryMemberId ?? "",
-        treasurerMemberId: society.treasurerMemberId ?? "",
-      });
-    }
-  }, [society, isNew]);
+  // Form state syncs from the loaded society during render (not in an
+  // effect): one sync per society identity, and a background refetch can
+  // never clobber in-progress edits.
+  const [formSyncedFor, setFormSyncedFor] = useState<string | null>(null);
+  if (society && !isNew && formSyncedFor !== society._id) {
+    setFormSyncedFor(society._id);
+    setForm({
+      name: society.name ?? "",
+      registrationNo: society.registrationNo ?? "",
+      registrationDate: society.registrationDate ?? "",
+      address: society.address ?? "",
+      city: society.city ?? "",
+      state: society.state ?? "",
+      pincode: society.pincode ?? "",
+      email: society.email ?? "",
+      phone: society.phone ?? "",
+      fyStartMonth: society.fyStartMonth ?? 4,
+      fyYear: society.fyYear ?? fyYearLabel(society.fyStartMonth ?? 4),
+      fyStartDate: society.fyStartDate ?? "",
+      receivableAccountId: society.receivableAccountId ?? "",
+      upiVpa: society.upiVpa ?? "",
+      lateFeePercent:
+        society.lateFeePercent !== undefined ? String(society.lateFeePercent) : "",
+      chairmanMemberId: society.chairmanMemberId ?? "",
+      secretaryMemberId: society.secretaryMemberId ?? "",
+      treasurerMemberId: society.treasurerMemberId ?? "",
+    });
+  }
 
-  // Auto-fill the financial-year label when the start month changes on a new society.
-  useEffect(() => {
-    if (isNew) {
-      setForm((f) => ({ ...f, fyYear: fyYearLabel(f.fyStartMonth) }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.fyStartMonth]);
+  // Auto-fill the financial-year label when the start month changes on a
+  // new society (derived during render, like the form sync above).
+  const [fyMonthSynced, setFyMonthSynced] = useState<number | null>(null);
+  if (isNew && fyMonthSynced !== form.fyStartMonth) {
+    setFyMonthSynced(form.fyStartMonth);
+    setForm((f) => ({ ...f, fyYear: fyYearLabel(f.fyStartMonth) }));
+  }
 
   const period = useMemo(
     () => effectiveFyPeriod(society ?? null),
     [society],
   );
 
+  // Members Receivable must be a receivable ledger — NEVER a bank/cash one.
+  // Receipts credit it while debiting the bank; pointing it at a bank account
+  // puts both sides of every receipt on one bank ledger and zeroes the bank book.
   const receivableOptions = (accounts ?? []).filter(
-    (a) => a.kind === "bank_cash" || a.kind === "receivable" || a.type === "asset",
+    (a) => a.kind === "receivable" || (a.type === "asset" && a.kind !== "bank_cash"),
   );
+  const misSetReceivable =
+    !!society?.receivableAccountId &&
+    (accounts ?? []).some(
+      (a) => a._id === society.receivableAccountId && a.kind === "bank_cash",
+    );
 
   const memberOptions = useMemo(
     () =>
@@ -553,7 +564,15 @@ export default function SocietyProfile() {
                     </Select>
                     <p className="text-xs text-muted-foreground">
                       Credited automatically by member receipts and debited by generated bills.
+                      Must be a receivable ledger — never a bank/cash account, or receipts cancel
+                      out in the bank ledger.
                     </p>
+                    {misSetReceivable && (
+                      <p className="text-xs font-medium text-destructive">
+                        The saved setting is a bank/cash ledger — receipts are being refused. Pick
+                        the Members Receivable ledger and save.
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
