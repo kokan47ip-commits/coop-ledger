@@ -383,20 +383,41 @@ export async function claimVoucherNo(
  * account — if the receivable is set to a bank account (Society Profile →
  * Accounting), both receipt lines land on the SAME bank ledger: the bank
  * book then shows the amount on the Dr AND the Cr side and nets to zero
- * ("nullified"), while the member ledger still looks correct. Every receipt
- * path (manual form, portal/UPI auto-posting, Excel uploads) calls this
- * guard before writing anything.
+ * ("nullified"), while the member ledger still looks correct.
  */
-export function assertReceivableAccount(
+export function isBankCashAccount(
   account:
     | { kind?: "bank_cash" | "receivable"; name?: string; code?: string }
     | undefined,
-): void {
-  if (account?.kind === "bank_cash") {
-    throw new Error(
-      `Members Receivable account is set to the bank/cash ledger "${account.name ?? account.code ?? "?"}" — member receipts would cancel out in the bank ledger. Fix it in Society Profile → Accounting (pick a proper receivable ledger).`,
-    );
-  }
+): boolean {
+  return account?.kind === "bank_cash";
+}
+
+/**
+ * Resolves the Members Receivable account for receipt posting — and
+ * SELF-REPAIRS a mis-set profile: when Society Profile → Accounting points at
+ * a bank/cash ledger (a data-entry mistake), the society's first proper
+ * `receivable` account is used instead. Refusing the receipt here (the old
+ * behaviour) made every member-receipt save fail with "Server Error Called by
+ * client" until the profile was fixed by hand; the entry now goes through
+ * against the right ledger and the office is warned separately.
+ */
+export function resolveReceivableAccount(
+  configured: Doc<"accounts"> | undefined,
+  accounts: Doc<"accounts">[],
+): { receivable: Doc<"accounts">; repairedFromBankCash: boolean } {
+  if (configured && !isBankCashAccount(configured))
+    return { receivable: configured, repairedFromBankCash: false };
+  // Mis-set (bank/cash) or missing — fall back to the society's proper
+  // receivable ledger (the only kind the profile picker now offers).
+  const fallback = accounts.find((a) => a.kind === "receivable");
+  if (fallback)
+    return { receivable: fallback, repairedFromBankCash: isBankCashAccount(configured) };
+  if (configured)
+    return { receivable: configured, repairedFromBankCash: isBankCashAccount(configured) };
+  throw new ConvexError(
+    "No Members Receivable account found — add one in Chart of Accounts with the 'Members Receivable' role.",
+  );
 }
 
 export const VOUCHER_PREFIX = {
@@ -549,19 +570,12 @@ export async function postMemberReceipt(
     .query("accounts")
     .withIndex("by_society", (q) => q.eq("societyId", society._id))
     .collect();
-  const receivable =
-    (society.receivableAccountId
+  const receivable = resolveReceivableAccount(
+    society.receivableAccountId
       ? accounts.find((a) => a._id === society.receivableAccountId)
-      : undefined) ?? accounts.find((a) => a.kind === "receivable");
-  if (!receivable) {
-    throw new ConvexError(
-      "No Members Receivable account found — ask the society office to configure one.",
-    );
-  }
-  // Declines a mis-set receivable that points at a bank/cash ledger —
-  // without this the receipt's Dr and Cr would land on one bank account
-  // and nullify each other in the bank ledger.
-  assertReceivableAccount(receivable);
+      : undefined,
+    accounts,
+  ).receivable;
   const receivableId = receivable._id;
   // Self-healing numbering: advances past counter drift, so auto-posted
   // receipts (portal / UPI / office approvals) can never duplicate a number

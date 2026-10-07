@@ -1,12 +1,12 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { Doc, Id } from "./_generated/dataModel";
 import { mutation } from "./_generated/server";
 import {
   applyAllocationToBill,
-  assertReceivableAccount,
   claimVoucherNo,
   recomputeBillStatus,
   requireSocietyWrite,
+  resolveReceivableAccount,
   societyFyPeriod,
 } from "./lib";
 
@@ -520,17 +520,12 @@ export const uploadReceipts = mutation({
       .query("accounts")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    const receivable =
-      (society?.receivableAccountId
+    const receivable = resolveReceivableAccount(
+      society?.receivableAccountId
         ? allAccounts.find((a) => a._id === society.receivableAccountId)
-        : undefined) ?? allAccounts.find((a) => a.kind === "receivable");
-    if (!receivable)
-      throw new Error(
-        "No Members Receivable account found — add one in Chart of Accounts first.",
-      );
-    // Declines a mis-set receivable pointing at a bank/cash ledger (receipt
-    // lines would land on one bank account and nullify each other).
-    assertReceivableAccount(receivable);
+        : undefined,
+      allAccounts,
+    ).receivable;
     const receivableId = receivable._id;
     const members = await ctx.db
       .query("members")
@@ -771,17 +766,12 @@ export const uploadTransactions = mutation({
       .query("bills")
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
-    const receivable =
-      (society.receivableAccountId
+    const receivable = resolveReceivableAccount(
+      society.receivableAccountId
         ? accounts.find((a) => a._id === society.receivableAccountId)
-        : undefined) ?? accounts.find((a) => a.kind === "receivable");
-    if (!receivable)
-      throw new Error(
-        "No Members Receivable account found — add one in Chart of Accounts first.",
-      );
-    // Declines a mis-set receivable pointing at a bank/cash ledger (receipt
-    // lines would land on one bank account and nullify each other).
-    assertReceivableAccount(receivable);
+        : undefined,
+      accounts,
+    ).receivable;
     const receivableId = receivable._id;
     const fy = societyFyPeriod(society);
     const defaultBank =
@@ -1048,7 +1038,10 @@ export const uploadTransactions = mutation({
     // partially-imported file. Fix the flagged rows in the
     // TransactionImport grid and upload the file again.
     if (result.errors.length > 0) {
-      throw new Error(
+      // ConvexError (not plain Error) so the client receives the value and
+      // the TransactionImport screen can show every row's reason on screen
+      // instead of the generic "Server Error Called by client".
+      throw new ConvexError(
         `${result.errors.length} row(s) invalid — nothing was imported. Fix the flagged rows in the TransactionImport grid and upload the file again.\n${result.errors.join("\n")}`,
       );
     }

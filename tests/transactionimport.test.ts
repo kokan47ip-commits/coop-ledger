@@ -222,3 +222,63 @@ describe("Transaction Import — financial-year gate (FY flag + validateRows)", 
     expect(r.problems).toContain("Amount");
   });
 });
+
+describe("Transaction Import — journal contra gate (mirrors the backend refusal)", () => {
+  const fy = { from: "2026-04-01", to: "2027-03-31" };
+  const journalRows = (over: Record<string, unknown>[]) =>
+    buildRowsOut(
+      over.map((o) =>
+        row({ "Voucher Type": "Journal", "Ledger Code": "R1", "Ledger Name": "Members Receivable", ...o }),
+      ),
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    );
+
+  test("a journal with a bank/cash code in Cash/Bank resolves the contra and is valid", () => {
+    const [r] = journalRows([{ "Cash/Bank": "B1" }]);
+    expect(r.problems).toEqual([]);
+    expect(r.cells[6]).toBe("HDFC Current");
+    expect(validateRows([r], fy)).toEqual([]);
+  });
+
+  test("a journal with only a Bank Name still finds the contra ledger", () => {
+    const [r] = journalRows([{ "Cash/Bank": "", "Bank Name": "HDFC Current" }]);
+    expect(r.problems).toEqual([]);
+    expect(r.cells[6]).toBe("HDFC Current");
+  });
+
+  test("a journal with any non-bank ledger in Cash/Bank resolves it as contra", () => {
+    const [r] = journalRows([{ "Cash/Bank": "R1" }]);
+    expect(r.problems).toEqual([]);
+    expect(r.cells[6]).toBe("Members Receivable");
+  });
+
+  test("a journal with no contra anywhere is blocked with the backend's message", () => {
+    const [r] = journalRows([{ "Cash/Bank": "", "Bank Name": "" }]);
+    expect(r.problems).toContain("ContraLedger");
+    const errs = validateRows([r], fy);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain(
+      "journal needs a contra ledger in the Cash/Bank or Bank Name column",
+    );
+  });
+
+  test("contra rows are blocked with the backend's exact refusal", () => {
+    const [r] = buildRowsOut(
+      [row({ "Voucher Type": "Contra", "Ledger Code": "B1", "Cash/Bank": "B1" })],
+      resolved,
+      accounts as never,
+      members as never,
+      "receipt",
+      fy,
+    );
+    expect(r.problems).toContain("Contra");
+    const errs = validateRows([r], fy);
+    expect(errs[0]).toContain(
+      "contra entries are not supported — record them as Journal",
+    );
+  });
+});

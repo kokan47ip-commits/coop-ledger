@@ -4,11 +4,11 @@ import { MutationCtx, mutation, query } from "./_generated/server";
 import {
   applyAllocationToBill,
   assertInFy,
-  assertReceivableAccount,
   assertVoucherNoFree,
   claimVoucherNo,
   requireSociety,
   requireSocietyWrite,
+  resolveReceivableAccount,
   VOUCHER_PREFIX,
 } from "./lib";
 
@@ -127,19 +127,18 @@ async function insertMemberReceipt(
     .query("accounts")
     .withIndex("by_society", (q) => q.eq("societyId", societyId))
     .collect();
-  const receivable =
-    (society?.receivableAccountId
+  // Resolves the Members Receivable account and SELF-REPAIRS a mis-set
+  // profile: if Society Profile → Accounting points at a bank/cash ledger
+  // (the old nullified-bank-book bug), the society's proper receivable
+  // ledger is used instead of refusing the save — the office sees a warning
+  // on screen and the entry still posts Dr bank / Cr receivable correctly.
+  const resolvedReceivable = resolveReceivableAccount(
+    society?.receivableAccountId
       ? allAccounts.find((a) => a._id === society.receivableAccountId)
-      : undefined) ?? allAccounts.find((a) => a.kind === "receivable");
-  if (!receivable)
-    throw new Error(
-      "No Members Receivable account found — add one in Chart of Accounts with the 'Members Receivable' role.",
-    );
-  // Declines a mis-set receivable pointing at a bank/cash ledger — without
-  // this, Dr bank and Cr receivable land on the SAME bank account and the
-  // bank ledger nets to zero (the reported "nullified" bank book).
-  assertReceivableAccount(receivable);
-  const receivableId = receivable._id;
+      : undefined,
+    allAccounts,
+  );
+  const receivableId = resolvedReceivable.receivable._id;
   // A number typed in the form is duplicate-checked and refused with
   // "Duplicate Voucher No."; an empty field self-heals past counter drift —
   // so a duplicate voucher number can never be saved either way.

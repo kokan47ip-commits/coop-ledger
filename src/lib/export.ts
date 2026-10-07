@@ -297,10 +297,18 @@ function letterheadRows(meta: ExportMeta, width: number): string {
   return band;
 }
 
+/**
+ * The account/ledger section heading (e.g. "A01  THE … BANK") as a row of
+ * the same repeating <thead>, directly BELOW the society band — the same
+ * order the on-screen view uses (society name first, ledger name under it).
+ * It used to be a paragraph before the table, which put the ledger name
+ * ABOVE the society name in Word/Print while View showed it below.
+ */
+function sectionHeadRow(title: string, width: number): string {
+  return `<tr class="lhsec"><td colspan="${width}" style="border:none;background:#eef2ff;color:#312e81;font-weight:bold;font-size:10pt;padding:6pt 8pt;text-align:left;">${escapeHtml(title)}</td></tr>`;
+}
+
 function tableToHtml(t: TableSpec, meta: ExportMeta): string {
-  const section = t.sectionTitle
-    ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>`
-    : "";
   const head = t.head
     .map((h, i) => {
       const align = t.columnStyles?.[i]?.halign;
@@ -341,8 +349,8 @@ function tableToHtml(t: TableSpec, meta: ExportMeta): string {
         })
         .join("")}</tr></tfoot>`
     : "";
-  return `${section}<table width="100%" style="border-collapse:collapse" cellspacing="0">
-    <thead>${letterheadRows(meta, t.head.length)}${groupHead ? `<tr>${groupHead}</tr>` : ""}<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
+  return `<table width="100%" style="border-collapse:collapse" cellspacing="0">
+    <thead>${letterheadRows(meta, t.head.length)}${t.sectionTitle ? sectionHeadRow(t.sectionTitle, t.head.length) : ""}${groupHead ? `<tr>${groupHead}</tr>` : ""}<tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
 }
 
 export function exportWord(meta: ExportMeta, tables: TableSpec[], filename: string) {
@@ -518,7 +526,7 @@ export function exportExcel(meta: ExportMeta, tables: TableSpec[], filename: str
  * gold rule, report title). Society name, Reg. No and address therefore
  * print on every page — same as the PDF's per-page drawHeader().
  */
-function printHeaderRows(meta: ExportMeta, width: number): string {
+function printHeaderRows(meta: ExportMeta, width: number, sectionTitle?: string): string {
   return `<tr class="lhp"><td colspan="${width}" style="border:none;padding:0;max-width:none;">` +
     `<div class="hdr"><h1>${escapeHtml(meta.societyName)}</h1>` +
     (meta.societyAddress ? `<p class="sub">${escapeHtml(meta.societyAddress)}</p>` : "") +
@@ -526,7 +534,12 @@ function printHeaderRows(meta: ExportMeta, width: number): string {
     `</div><div class="goldrule"></div>` +
     `<p class="title">${escapeHtml(meta.title)}</p>` +
     (meta.subtitle ? `<p class="sub2">${escapeHtml(meta.subtitle)}</p>` : "") +
-    `</td></tr>`;
+    `</td></tr>` +
+    // Ledger/account section title BELOW the society band — the same order
+    // as the on-screen view (used to sit above it as a <p> before the table).
+    (sectionTitle
+      ? `<tr class="lhsec"><td colspan="${width}" style="border:none;background:#eef2ff;color:#312e81;font-weight:700;font-size:11px;padding:6px 9px;text-align:left;">${escapeHtml(sectionTitle)}</td></tr>`
+      : "");
 }
 
 export function printTables(meta: ExportMeta, tables: TableSpec[]) {
@@ -597,7 +610,7 @@ export function printTables(meta: ExportMeta, tables: TableSpec[]) {
             .join("")}</tr></tfoot>`
         : "";
       const brk = ti > 0 && t.pageBreakBefore ? '<div style="page-break-before:always"></div>' : "";
-      return `${brk}${t.sectionTitle ? `<p class="section">${escapeHtml(t.sectionTitle)}</p>` : ""}<table class="lh-t" width="100%"><thead>${printHeaderRows(meta, t.head.length)}${
+      return `${brk}<table class="lh-t" width="100%"><thead>${printHeaderRows(meta, t.head.length, t.sectionTitle)}${
         t.groupHead
           ? `<tr>${t.groupHead
               .map((g) => {

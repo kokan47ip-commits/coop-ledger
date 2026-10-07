@@ -24,6 +24,7 @@ import { downloadTemplate, parseExcelFile } from "@/lib/excel";
 import { effectiveFyPeriod } from "@/lib/format";
 import { CheckCircle2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import type { ConvexError as ConvexErrorType } from "convex/values";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -93,6 +94,19 @@ export default function TransactionImport() {
   const rowErrors = useMemo(() => validateRows(rowsOut, fy), [rowsOut, fy]);
   const errorCount = rowErrors.length;
 
+  const [serverRefusal, setServerRefusal] = useState<string | null>(null);
+  // If the server still refuses the file (rows edited between the last
+  // validation and Import, or another office user changed the masters), the
+  // whole upload was rolled back — surface the real reason here instead of
+  // the bare "Server Error Called by client" the Convex client otherwise
+  // shows for values that are not ConvexError. The refusal clears the
+  // moment a different file is loaded (adjust-state-during-render pattern).
+  const [prevParsedForRefusal, setPrevParsedForRefusal] = useState(parsed);
+  if (parsed !== prevParsedForRefusal) {
+    setPrevParsedForRefusal(parsed);
+    setServerRefusal(null);
+  }
+
   const setCell = (idx: number, j: number, value: string) => {
     const label = COLS[j]?.label;
     if (!label) return;
@@ -160,7 +174,16 @@ export default function TransactionImport() {
       if (res.errors.length > 0) toast.warning(`Imported with ${res.errors.length} row error(s)`);
       else toast.success(`Imported ${res.inserted} voucher(s)`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed");
+      const msg =
+        err instanceof Error &&
+        (err as ConvexErrorType<string>).data != null &&
+        typeof (err as ConvexErrorType<string>).data === "string"
+          ? (err as ConvexErrorType<string>).data
+          : err instanceof Error && !err.message.startsWith("[CONVEX")
+            ? err.message
+            : "Import refused — the file was NOT saved. Re-check the rows and try again.";
+      setServerRefusal(msg);
+      toast.error("Import refused — nothing was saved. See the details below the grid.");
     } finally {
       setBusy(false);
     }
@@ -313,6 +336,19 @@ export default function TransactionImport() {
           {status}
         </div>
       </div>
+
+      {/* Backend refusal (all-or-nothing backstop) — shown with the same
+          prominence as the pre-import gate. */}
+      {serverRefusal && (
+        <div className="mt-3 space-y-1 rounded-md border border-destructive/30 bg-destructive/[0.06] p-3 text-xs text-destructive">
+          <p className="font-semibold">
+            The server refused the whole file — nothing was imported. The reason:
+          </p>
+          {serverRefusal.split("\n").map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+        </div>
+      )}
 
       {/* Rows to fix BEFORE importing — the gate against partial uploads. */}
       {parsed && !busy && errorCount > 0 && (

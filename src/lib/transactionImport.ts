@@ -119,6 +119,31 @@ export const resolveBankByName = (
 };
 
 /**
+ * Journal contra resolution, mirroring the backend chain in
+ * uploads.uploadTransactions exactly: bank/cash by code or name from the
+ * Cash/Bank column, bank/cash by name from the Bank Name column, then ANY
+ * ledger by code/name from Cash/Bank and finally by name from Bank Name.
+ * Returns undefined when the backend would refuse the row.
+ */
+export const resolveContra = (
+  cashBank: string,
+  bankName: string,
+  accounts: Doc<"accounts">[] | undefined,
+): Doc<"accounts"> | undefined => {
+  if (!accounts) return undefined;
+  const bank = resolveBank(cashBank, accounts);
+  if (bank && bank !== "none") return bank;
+  const namedBank = resolveBankByName(bankName, accounts);
+  if (namedBank) return namedBank;
+  const anyBy = (text: string) =>
+    text
+      ? accounts.find((a) => a.code.toLowerCase() === text.toLowerCase()) ??
+        accounts.find((a) => a.name.toLowerCase() === text.toLowerCase())
+      : undefined;
+  return anyBy(cashBank) ?? anyBy(bankName);
+};
+
+/**
  * Resolves the bank/cash account from the Cash/Bank cell, which carries the
  * ACCOUNT CODE (a full account name also matches). Returns the account,
  * "none" when the cell is blank (the save falls back to the society's first
@@ -246,22 +271,34 @@ export const buildRowsOut = (
     // the bank's name, or the cash account ("Cash") — never the sheet's code.
     // A blank cell shows the default bank/cash account the row will save to.
     const cashBankRaw = cells[6];
-    const primary = resolveBank(cashBankRaw, accounts);
-    const bank =
-      primary && primary !== "none"
-        ? primary
-        : primary === "none"
-          ? defaultBank
-          : cashBankRaw && accounts
-            ? resolveBankByName(cells[10], accounts)
-            : undefined;
-    if (bank) cells[6] = bank.name;
+    const kind = rowKind(cells[2], defaultType);
+    const typeRaw = (cells[2] ?? "").toLowerCase();
+    const problems: string[] = [];
+    if (typeRaw.startsWith("contra")) problems.push("Contra");
+    if (resolution.kind === "none")
+      problems.push(kind === "receipt" ? "Member" : "Ledger");
+    if (kind === "journal") {
+      // Journals take the contra ledger from Cash/Bank or Bank Name — the
+      // same chain the backend resolves, so a valid journal row is never
+      // flagged and a missing contra blocks Import in the grid.
+      const contra = resolveContra(cashBankRaw, cells[10], accounts);
+      if (contra) cells[6] = contra.name;
+      else problems.push("ContraLedger");
+    } else {
+      const primary = resolveBank(cashBankRaw, accounts);
+      const bank =
+        primary && primary !== "none"
+          ? primary
+          : primary === "none"
+            ? defaultBank
+            : cashBankRaw && accounts
+              ? resolveBankByName(cells[10], accounts)
+              : undefined;
+      if (bank) cells[6] = bank.name;
+      if (cashBankRaw && !bank) problems.push("Bank");
+    }
     // The Bank Name column keeps the member's bank text exactly as uploaded —
     // blank when the sheet has none. The system never overwrites it.
-    const problems: string[] = [];
-    if (resolution.kind === "none")
-      problems.push(rowKind(cells[2], defaultType) === "payment" ? "Ledger" : "Member");
-    if (cashBankRaw && !bank) problems.push("Bank");
     const amount = toNum(resolved["Amount"] ? row[resolved["Amount"]] : undefined);
     if (amount === undefined || amount <= 0) problems.push("Amount");
     if (!cells[1]) {
@@ -271,10 +308,10 @@ export const buildRowsOut = (
       if (!iso) problems.push("Date");
       else if (fy && (iso < fy.from || iso > fy.to)) problems.push("FY");
     }
-    const typeRaw = (cells[2] ?? "").toLowerCase();
+    const typeRawEnd = (cells[2] ?? "").toLowerCase();
     if (
       cells[2] &&
-      !typeRaw.startsWith("receipt") &&
+      !typeRawEnd.startsWith("receipt") &&
       !typeRaw.startsWith("payment") &&
       !typeRaw.startsWith("pay") &&
       !typeRaw.startsWith("journal") &&
@@ -316,6 +353,14 @@ export function validateRows(rows: PreviewRow[], fy?: FyPeriod): string[] {
       else if (p === "Type")
         errors.push(
           `Row ${r.index}: voucher type must start with Receipts, Payments or Journal (or leave blank for the default).`,
+        );
+      else if (p === "Contra")
+        errors.push(
+          `Row ${r.index}: contra entries are not supported — record them as Journal.`,
+        );
+      else if (p === "ContraLedger")
+        errors.push(
+          `Row ${r.index}: journal needs a contra ledger in the Cash/Bank or Bank Name column.`,
         );
       else if (p === "Member")
         errors.push(

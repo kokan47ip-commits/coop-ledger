@@ -569,8 +569,9 @@ export default function SocietyProfile() {
                     </p>
                     {misSetReceivable && (
                       <p className="text-xs font-medium text-destructive">
-                        The saved setting is a bank/cash ledger — receipts are being refused. Pick
-                        the Members Receivable ledger and save.
+                        The saved setting is a bank/cash ledger — member receipts are currently
+                        falling back to the society's receivable ledger until this is corrected.
+                        Pick the Members Receivable ledger and save.
                       </p>
                     )}
                   </div>
