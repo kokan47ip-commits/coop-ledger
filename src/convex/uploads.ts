@@ -5,12 +5,9 @@ import {
   applyAllocationToBill,
   assertReceivableAccount,
   claimVoucherNo,
-  nextNumber,
-  pad,
   recomputeBillStatus,
   requireSocietyWrite,
   societyFyPeriod,
-  VOUCHER_PREFIX,
 } from "./lib";
 
 type Result = {
@@ -585,9 +582,9 @@ export const uploadReceipts = mutation({
         );
         continue;
       }
-      const n = await nextNumber(ctx, `${societyId}:voucher:member_receipt`);
-
-      // Allocate FIFO across unpaid bills of the member
+      // FIFO settlement across unpaid bills; the self-healing voucher no is
+      // claimed at write time so the sheet can never collide with an
+      // existing voucher number.
       const memberBills = bills
         .filter((b) => b.memberId === member._id && b.paidAmount < b.total)
         .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
@@ -604,7 +601,7 @@ export const uploadReceipts = mutation({
       await ctx.db.insert("vouchers", {
         societyId,
         type: "member_receipt",
-        voucherNo: `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`,
+        voucherNo: await claimVoucherNo(ctx, societyId, "member_receipt"),
         date,
         memberId: member._id,
         mode: str(row, ["mode", "paymentmode"]),
@@ -689,11 +686,10 @@ export const uploadPayments = mutation({
         );
         continue;
       }
-      const n = await nextNumber(ctx, `${societyId}:voucher:payment`);
       await ctx.db.insert("vouchers", {
         societyId,
         type: "payment",
-        voucherNo: `${VOUCHER_PREFIX.payment}-${pad(n)}`,
+        voucherNo: await claimVoucherNo(ctx, societyId, "payment"),
         date,
         mode: bankName,
         bankCashAccountId: bankAccount._id,

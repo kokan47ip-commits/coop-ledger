@@ -92,8 +92,16 @@ function makeDb() {
           dir = d;
           return h;
         },
-        filter(fn: (r: Doc) => boolean) {
-          current = (current ?? base()).filter(fn);
+        filter(fn: (q: unknown) => unknown) {
+          // Convex filter callbacks receive a query builder: (q) =>
+          // q.eq(q.field("voucherNo"), value). Build one that returns a
+          // row predicate, so handlers written against real Convex work.
+          const q = {
+            field: (name: string) => name,
+            eq: (a: unknown, b: unknown) => (row: Doc) => row[a as string] === b,
+          };
+          const pred = fn(q) as (r: Doc) => boolean;
+          current = (current ?? base()).filter(pred);
           return h;
         },
         async collect() {
@@ -107,14 +115,17 @@ function makeDb() {
           if (all.length > 1) throw new Error("unique(): multiple rows");
           return all[0] ?? null;
         },
+        async first() {
+          // Convex .first(): the first row after withIndex/filter, or null.
+          const all = sorted(current ?? base());
+          return all[0] ?? null;
+        },
       };
       return h;
     },
   };
   return { db, dump: (t: string) => [...ensure(t).values()] };
 }
-
-type World = ReturnType<typeof buildWorldHelpers>;
 
 function buildWorldHelpers(world: { db: ReturnType<typeof makeDb>["db"] }) {
   return (userId: string | null) => ({

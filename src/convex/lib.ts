@@ -563,8 +563,10 @@ export async function postMemberReceipt(
   // and nullify each other in the bank ledger.
   assertReceivableAccount(receivable);
   const receivableId = receivable._id;
-  const n = await nextNumber(ctx, `${society._id}:voucher:member_receipt`);
-  const voucherNo = `${VOUCHER_PREFIX.member_receipt}-${pad(n)}`;
+  // Self-healing numbering: advances past counter drift, so auto-posted
+  // receipts (portal / UPI / office approvals) can never duplicate a number
+  // that already exists in the books.
+  const voucherNo = await claimVoucherNo(ctx, society._id, "member_receipt");
   const voucherId = await ctx.db.insert("vouchers", {
     societyId: society._id,
     type: "member_receipt" as const,
