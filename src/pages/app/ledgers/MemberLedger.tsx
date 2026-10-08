@@ -50,6 +50,8 @@ type MemberSection = {
   totDr: number;
   totCr: number;
   closing: number;
+  /** Per-billing-head totals across the section's bill rows (Detail format). */
+  headTotals: { name: string; amount: number }[];
 };
 
 const drCr = (n: number) => `${formatMoney(n)} ${n >= 0 ? "Dr" : "Cr"}`;
@@ -118,6 +120,26 @@ export default function MemberLedger() {
       : "skip",
   ) as { memberId: Id<"members">; member: Member | null; rows: LedgerRow[] }[] | undefined;
 
+  /** Tariff-head columns across all selected members (detail format only). */
+  const headNames: string[] = [];
+  if (mode === "detail") {
+    for (const b of bulk ?? []) {
+      for (const r of b.rows) {
+        for (const h of r.heads ?? []) {
+          if (!headNames.includes(h.name)) headNames.push(h.name);
+        }
+      }
+    }
+  }
+  // Outside the Detail format the heads have no columns of their own, so
+  // every bill row's billing heads are spelled out in the narration instead —
+  // the user asked to see ALL billing heads in the member ledger.
+  const showHeadLines = !(mode === "detail" && headNames.length > 0);
+  const headLines = (heads?: { name: string; amount: number }[]) =>
+    showHeadLines && heads && heads.length > 0
+      ? heads.map((h) => `${h.name}: ${formatMoney(h.amount)}`)
+      : [];
+
   /** Build the render model for one member's ledger (consolidation + totals). */
   const buildSection = (mem: Member, allRows: LedgerRow[]): MemberSection => {
     const rows = allRows.filter((r) => r.voucherNo !== "OPENING");
@@ -129,7 +151,11 @@ export default function MemberLedger() {
         items.push({
           date: r.date,
           voucherNo: r.voucherNo,
-          narration: [`${r.debit > 0 ? "To " : "By "}${label}${printNarration && r.note ? `\n${r.note}` : ""}`],
+          narration: [
+            `${r.debit > 0 ? "To " : "By "}${label}`,
+            ...headLines(r.heads),
+            ...(printNarration && r.note ? [r.note] : []),
+          ],
           debit: r.debit,
           credit: r.credit,
           balance: r.balance,
@@ -163,9 +189,14 @@ export default function MemberLedger() {
         items.push({
           date: group[0].date,
           voucherNo: group[0].voucherNo,
-          narration: group.map((r) => {
+          narration: group.flatMap((r, gi) => {
             const label = r.particulars.split("—")[0].trim();
-            return `${r.debit > 0 ? "To " : "By "}${label}${printNarration && r.note ? `\n${r.note}` : ""}`;
+            const lines = [`${r.debit > 0 ? "To " : "By "}${label}`];
+            // Every billing head of the bill, with its amount — once per
+            // consolidated group (they are shared across the group's rows).
+            if (gi === 0) lines.push(...headLines(mergedHeads));
+            if (printNarration && r.note) lines.push(r.note);
+            return lines;
           }),
           debit: dr,
           credit: cr,
@@ -181,8 +212,16 @@ export default function MemberLedger() {
     const openingCr = mem.openingBalance > 0 ? mem.openingBalance : 0;
     const totDr = openingDr + items.reduce((s, r) => s + r.debit, 0);
     const totCr = openingCr + items.reduce((s, r) => s + r.credit, 0);
+    const headTotals: { name: string; amount: number }[] = [];
+    for (const it of items) {
+      for (const h of it.heads ?? []) {
+        const ex = headTotals.find((x) => x.name === h.name);
+        if (ex) ex.amount += h.amount;
+        else headTotals.push({ name: h.name, amount: h.amount });
+      }
+    }
     const closing = rows.length > 0 ? rows[rows.length - 1].balance : mem.openingBalance;
-    return { member: mem, title: `${flatOf(mem)}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing };
+    return { member: mem, title: `${flatOf(mem)}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing, headTotals };
   };
 
   // A ledger with no entries in the period is skipped entirely — it is not
@@ -197,18 +236,6 @@ export default function MemberLedger() {
           })
           .filter((s) => s.items.length > 0)
       : [];
-
-  /** Tariff-head columns across all selected members (detail format only). */
-  const headNames: string[] = [];
-  if (mode === "detail") {
-    for (const b of bulk ?? []) {
-      for (const r of b.rows) {
-        for (const h of r.heads ?? []) {
-          if (!headNames.includes(h.name)) headNames.push(h.name);
-        }
-      }
-    }
-  }
 
   /** Printed label for a head column: the tariff's short name when set. */
   const headLabel = (n: string) => {
@@ -282,7 +309,18 @@ export default function MemberLedger() {
           s.closing > 0 ? s.closing : "",
           "",
         ],
-        ["", "", ...blank(), "Total", s.totDr, s.totCr, ""],
+        [
+          "",
+          "",
+          // The TOTAL line covers ALL columns — every billing head too.
+          ...(isDetail
+            ? headNames.map((n) => s.headTotals.find((h) => h.name === n)?.amount ?? "")
+            : []),
+          "Total",
+          s.totDr,
+          s.totCr,
+          "",
+        ],
       ],
       columnStyles,
     };
@@ -560,7 +598,15 @@ export default function MemberLedger() {
                         </tr>
                         <tr className="border-t border-slate-300">
                           <td colSpan={2} />
-                          {isDetail && headNames.map((n) => <td key={n} />)}
+                          {isDetail &&
+                            headNames.map((n) => {
+                              const v = s.headTotals.find((h) => h.name === n)?.amount ?? 0;
+                              return (
+                                <td key={n} className="py-1 text-right font-semibold tabular-nums">
+                                  {v ? formatMoney(v) : ""}
+                                </td>
+                              );
+                            })}
                           <td className="py-1 pr-2 font-semibold">Total</td>
                           <td className="py-1 text-right font-semibold tabular-nums">{formatMoney(s.totDr)}</td>
                           <td className="py-1 text-right font-semibold tabular-nums">{formatMoney(s.totCr)}</td>

@@ -706,6 +706,15 @@ export function VoucherList({
                 );
               })}
             </TableBody>
+            <tfoot>
+              <TableRow className="border-t-2 bg-muted/40 hover:bg-transparent">
+                <TableCell colSpan={6} className="font-semibold">Total — {filtered.length} voucher{filtered.length === 1 ? "" : "s"}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">
+                  {formatINR(total)}
+                </TableCell>
+                <TableCell />
+              </TableRow>
+            </tfoot>
           </Table>
         </div>
       )}
