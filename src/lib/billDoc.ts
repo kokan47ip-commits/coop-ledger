@@ -594,13 +594,19 @@ function drawBillBoxCompact(
   const labelX = x + w * 0.5;
   const valX = x + w - 12;
 
-  // Title band
+  // Title band — supplementary bills carry their own clear label.
   fill(doc, TINT);
   doc.rect(x, cy, w, 20, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
   ink(doc, ACCENT);
-  doc.text(`BILL FOR ${data.periodLabel.toUpperCase()}`, x + 12, cy + 13.5);
+  doc.text(
+    data.supplementary
+      ? `SUPPLEMENTARY BILL${data.supplementary.category ? ` — ${data.supplementary.category.toUpperCase()}` : ""}`
+      : `BILL FOR ${data.periodLabel.toUpperCase()}`,
+    x + 12,
+    cy + 13.5,
+  );
   doc.text(`Bill No. ${String(data.billNo)}`, valX, cy + 13.5, { align: "right" });
   ink(doc, INK);
   doc.setFont("helvetica", "normal");

@@ -202,6 +202,15 @@ export const perform = mutation({
     // --- transfer record ---------------------------------------------------
     const n = await nextNumber(ctx, `${societyId}:transfer`);
     const transferNo = `TR-${pad(n)}`;
+    // The "recorded" event must be in the events array BEFORE the insert —
+    // patching after the insert would be a second write (and the old code
+    // pushed it after the insert, silently dropping it from the record).
+    events.push({
+      at: now,
+      byName,
+      action: "transfer_recorded",
+      details: `Transfer ${transferNo} recorded for compliance.`,
+    });
     await ctx.db.insert("flatTransfers", {
       societyId,
       transferNo,
@@ -218,12 +227,12 @@ export const perform = mutation({
       createdById: (await getAuthUserId(ctx)) ?? undefined,
       createdAt: now,
     });
-    events.push({
-      at: now,
-      byName,
-      action: "transfer_recorded",
-      details: `Transfer ${transferNo} recorded for compliance.`,
-    });
+
+    // When an existing member moves in, the carried dues must move WITH the
+    // flat: set their opening balance to the outgoing member's outstanding.
+    if (newMemberId && carryForward !== 0) {
+      await ctx.db.patch(newMemberId, { openingBalance: carryForward });
+    }
 
     return { transferNo, outstanding, carryForward, archivedCode };
   },
