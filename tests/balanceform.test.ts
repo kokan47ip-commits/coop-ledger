@@ -448,6 +448,90 @@ describe("Form N: Balance Sheet", () => {
     expect(bs.totalAssets).toBe(600);
   });
 
+  test("the Income over Expenses ledger's opening balance flows into the P&L head", () => {
+    // A society closing its prior year into the system ledger carries a
+    // brought-forward balance there (Chart of Accounts opening balance 40).
+    // The Balance Sheet's P&L head must show that balance PLUS the current
+    // year's result — never the current year alone.
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("ioe", "liability", { name: "Income over Expenses", openingBalance: 40 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Dr bank 100 / Cr maintenance 100 — this year's income.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "maint", debit: 0, credit: 100 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    // Brought forward 40 + current surplus 100 = 140 under head XI.
+    const pl = bs.liabilities.find((r) => r.name === "Income over Expenses")!;
+    expect(pl.amount).toBe(140);
+    expect(pl.group).toBe("XI. Profit and Loss Account");
+    expect(bs.totalLiabilities).toBe(140);
+    expect(bs.totalAssets).toBe(1100);
+  });
+
+  test("a closing journal into the ledger is recognised, never double-counted", () => {
+    // The office folded this year's result into the ledger by journal
+    // (Dr income / Cr Income over Expenses). The ledger balance is then
+    // already the true figure — adding the computed result again would
+    // double it.
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("ioe", "liability", { name: "Income over Expenses", openingBalance: 40 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "maint", debit: 0, credit: 100 },
+          ],
+        },
+        // Closing journal: Dr maintenance 100 / Cr IoE 100.
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-31", voucherNo: "J1",
+          type: "journal", total: 100,
+          lines: [
+            { accountId: "maint", debit: 100, credit: 0 },
+            { accountId: "ioe", debit: 0, credit: 100 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const bs = computeBalanceSheet(data, "2026-06-30");
+    // Ledger carries 40 + 100 folded in = 140; the computed result (0, the
+    // income was transferred out) adds nothing more.
+    const pl = bs.liabilities.find((r) => r.name === "Income over Expenses")!;
+    expect(pl.amount).toBe(140);
+    expect(bs.totalLiabilities).toBe(140);
+    expect(bs.totalAssets).toBe(1100);
+  });
+
   test("deficit lands on the ASSETS side so the sheet still ties", () => {
     const data = {
       accounts: [
@@ -656,10 +740,14 @@ describe("Form N: Balance Sheet", () => {
     // print as asset rows; the member arithmetic (0 dues here) decides.
     expect(bs.assets.map((r) => r.name)).toEqual(["Bank of India"]);
     expect(bs.assets.find((r) => r.name === "Dues from Members")).toBeUndefined();
-    // GL Advance / Income-over-Expenses balances are excluded as well.
-    expect(bs.liabilities.map((r) => r.name)).toEqual([]);
+    // GL Advance is excluded; the Income over Expenses ledger's brought-
+    // forward balance (40) now flows into the P&L head row instead of being
+    // dropped — with no current-year result it prints that balance alone.
+    expect(bs.liabilities.map((r) => r.name)).toEqual(["Income over Expenses"]);
+    expect(bs.liabilities[0]!.amount).toBe(40);
+    expect(bs.liabilities[0]!.group).toBe("XI. Profit and Loss Account");
     expect(bs.totalAssets).toBe(1000);
-    expect(bs.totalLiabilities).toBe(0);
+    expect(bs.totalLiabilities).toBe(40);
     // The seed definitions used by the Chart of Accounts stay in sync.
     expect(FORM_N_LEDGERS.map((l) => l.name)).toEqual([
       "Dues from Members",

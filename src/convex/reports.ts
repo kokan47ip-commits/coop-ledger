@@ -1082,6 +1082,18 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     (a) => a.kind === "receivable",
   )?.printNo;
 
+  // The Profit and Loss head (Form N heads XI / X): the system "Income over
+  // Expenses" ledger. When the society carries this ledger with a
+  // brought-forward balance (the accumulated result of years already closed
+  // into it), that balance must reach the sheet ON TOP of the current year's
+  // computed result — a sheet that shows only the current year's surplus
+  // silently drops the brought-forward figure the books carry.
+  const ioeLedger = data.accounts.find(
+    (a) =>
+      a.type === "liability" &&
+      a.name.trim().toLowerCase() === "income over expenses",
+  );
+
   for (const a of data.accounts) {
     if (a.type !== "asset" && a.type !== "liability") continue;
     // Member outstanding is presented ONLY through the system row "Dues from
@@ -1091,8 +1103,10 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     const n = a.name.trim().toLowerCase();
     // Presented from the member ledgers, not the GL control ledger.
     if (a.type === "liability" && n === "advance from members") continue;
-    // Presented as the computed Profit and Loss Account head below.
-    if (a.type === "liability" && n === "income over expenses") continue;
+    // Presented as the Profit and Loss Account head below — its own ledger
+    // balance (brought forward) combines with the current year's result
+    // there, so it must not also print as a generic liability row.
+    if (ioeLedger && a._id === ioeLedger._id) continue;
     const net = netOf(a, toDate);
     const prev = netOf(a, prevToDate);
     // Zero-value ledgers do not print (Crystal reference format): a ledger
@@ -1166,19 +1180,41 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     prevFyStart.toISOString().slice(0, 10),
     prevToDate,
   );
-  if (ie.surplus !== 0 || iePrev.surplus !== 0) {
-    // Prior-year result in this row's side convention: positive = same side.
-    const prevResult = ie.surplus >= 0 ? iePrev.surplus : -iePrev.surplus;
-    if (ie.surplus >= 0) {
+  // The Profit and Loss Account head: the ledger's brought-forward balance
+  // (credit positive) PLUS the current year's computed result. A closing
+  // journal that already folded the year's result into the ledger (Dr/Cr
+  // every income and expense ledger against "Income over Expenses") is
+  // recognised, so the computed result is not added a second time — the
+  // ledger balance alone is then the true figure.
+  const closingFolded =
+    ioeLedger !== undefined &&
+    unifiedEntries(data).some(
+      (e) =>
+        e.date >= fyStartDateString(data.society?.fyStartMonth ?? 4, toDate) &&
+        e.date <= toDate &&
+        e.type === "journal" &&
+        e.lines.some((l) => l.accountId === ioeLedger._id) &&
+        e.lines.length > 1,
+    );
+  const plHead =
+    ioeLedger !== undefined && closingFolded
+      ? netOf(ioeLedger, toDate)
+      : (ioeLedger !== undefined ? netOf(ioeLedger, toDate) : 0) + ie.surplus;
+  const plHeadPrev =
+    ioeLedger !== undefined
+      ? netOf(ioeLedger, prevToDate) + (closingFolded ? 0 : iePrev.surplus)
+      : iePrev.surplus;
+  if (plHead !== 0 || plHeadPrev !== 0) {
+    if (plHead >= 0) {
       // Surplus funds the society: a Form N fund on the liabilities side
       // (head XI — Profit and Loss Account).
       liabilities.push({
         code: "",
         name: "Income over Expenses",
-        amount: ie.surplus,
+        amount: plHead,
         type: "liability",
         group: "XI. Profit and Loss Account",
-        prev: prevResult,
+        prev: plHeadPrev,
       });
     } else {
       // Deficit is a loss not written off: on the ASSETS side (Form N asset
@@ -1186,10 +1222,10 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       assets.push({
         code: "",
         name: "Expenses over Income",
-        amount: -ie.surplus,
+        amount: -plHead,
         type: "asset",
         group: "X. Profit and Loss Account",
-        prev: prevResult,
+        prev: -plHeadPrev,
       });
     }
   }
