@@ -77,6 +77,12 @@ export default function BillView() {
     paidAmount: bill.paidAmount,
     // Printed late-fee note follows the society's stable rate setting.
     lateFeePercent: society.lateFeePercent,
+    // Supplementary bills print with a "SUPPLEMENTARY BILL" title band
+    // instead of the monthly period band.
+    supplementary:
+      (bill as { billKind?: string }).billKind === "supplementary"
+        ? { category: (bill as { category?: string }).category }
+        : undefined,
     // Bill QR: pays this bill's exact due amount into the society's UPI ID,
     // tagged with the flat so the office can match the payment.
     upi: society.upiVpa

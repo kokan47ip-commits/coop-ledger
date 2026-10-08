@@ -341,6 +341,12 @@ export default function BillRegister() {
       totalDue: currentCharges + arrears,
       paidAmount: b.paidAmount,
       lateFeePercent: society.lateFeePercent,
+      // Supplementary bills print with a "SUPPLEMENTARY BILL" title band
+      // instead of the monthly period band.
+      supplementary:
+        (b as { billKind?: string }).billKind === "supplementary"
+          ? { category: b.category }
+          : undefined,
     };
   };
 
@@ -1045,6 +1051,11 @@ export default function BillRegister() {
                       <Link to={`/app/bills/${b._id}`} className="hover:underline">
                         {b.billNo}
                       </Link>
+                      {(b as { billKind?: string }).billKind === "supplementary" && (
+                        <Badge variant="outline" className="ml-1 align-middle text-[10px]">
+                          SUPP
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="max-w-44 truncate" title={m?.name}>{m?.name ?? "—"}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(billCharges(b))}</TableCell>

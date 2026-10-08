@@ -313,6 +313,12 @@ export default function PrintingHub() {
         carried.reduce((s, l) => s + l.amount, 0),
       paidAmount: b.paidAmount,
       lateFeePercent: society?.lateFeePercent,
+      // Supplementary bills print with a "SUPPLEMENTARY BILL" title band
+      // instead of the monthly period band.
+      supplementary:
+        (b as { billKind?: string }).billKind === "supplementary"
+          ? { category: (b as { category?: string }).category }
+          : undefined,
       upi: uri
         ? {
             uri,

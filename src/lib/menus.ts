@@ -42,6 +42,8 @@ export type MenuKey =
   | "payment-approvals"
   | "journal"
   | "bills"
+  | "supplementary-bills"
+  | "flat-transfer"
   | "printing-hub"
   | "member-ledger"
   | "member-dues"
@@ -95,6 +97,8 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "payment-approvals", label: "Payment Approvals", section: "Transactions", path: "/app/payment-approvals", icon: ClipboardCheck },
   { key: "journal", label: "Journal", section: "Transactions", path: "/app/journal", icon: FileText },
   { key: "bills", label: "Bill Register", section: "Transactions", path: "/app/bills", icon: FileSpreadsheet },
+  { key: "supplementary-bills", label: "Supplementary Bills", section: "Transactions", path: "/app/supplementary-bills", icon: FileText },
+  { key: "flat-transfer", label: "Flat Transfer", section: "Transactions", path: "/app/flat-transfer", icon: ArrowLeftRight },
   { key: "printing-hub", label: "Printing Hub", section: "Transactions", path: "/app/printing-hub", icon: Printer },
   { key: "member-ledger", label: "Member Ledger", section: "Reports", path: "/app/member-ledger", icon: Users },
   { key: "member-dues", label: "Member Dues", section: "Reports", path: "/app/member-dues", icon: ReceiptText },

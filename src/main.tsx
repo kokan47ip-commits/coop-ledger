@@ -64,6 +64,12 @@ const Members = lazyPage(() => import("./pages/app/Members.tsx"));
 const ChartOfAccounts = lazyPage(() => import("./pages/app/ChartOfAccounts.tsx"));
 const Tariffs = lazyPage(() => import("./pages/app/Tariffs.tsx"));
 const BillRegister = lazyPage(() => import("./pages/app/bills/BillRegister.tsx"));
+const SupplementaryBills = lazyPage(
+  () => import("./pages/app/bills/SupplementaryBills.tsx"),
+);
+const FlatTransfer = lazyPage(
+  () => import("./pages/app/transfers/FlatTransfer.tsx"),
+);
 const BillView = lazyPage(() => import("./pages/app/bills/BillView.tsx"));
 const PrintingHub = lazyPage(() => import("./pages/app/PrintingHub.tsx"));
 const MemberReceipt = lazyPage(() => import("./pages/app/vouchers/MemberReceipt.tsx"));
@@ -233,6 +239,11 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="accounts" element={<ChartOfAccounts />} />
                 <Route path="tariffs" element={<Tariffs />} />
                 <Route path="bills" element={<BillRegister />} />
+                <Route
+                  path="supplementary-bills"
+                  element={<SupplementaryBills />}
+                />
+                <Route path="flat-transfer" element={<FlatTransfer />} />
                 <Route path="bills/:billId" element={<BillView />} />
                 <Route path="printing-hub" element={<PrintingHub />} />
                 <Route path="member-receipt" element={<MemberReceipt />} />

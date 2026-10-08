@@ -139,6 +139,10 @@ const schema = defineSchema(
         v.union(v.literal("owner"), v.literal("tenant")),
       ),
       joinDate: v.optional(v.string()),
+      /** Resident family members info (used on transfer certificates). */
+      familyInfo: v.optional(v.string()),
+      /** Vehicle number(s) — shown on member profile / certificate. */
+      vehicleNo: v.optional(v.string()),
       openingBalance: v.number(), // opening receivable (positive = member owes)
       openingDate: v.optional(v.string()),
       isActive: v.boolean(),
@@ -197,6 +201,12 @@ const schema = defineSchema(
         v.literal("partial"),
         v.literal("paid"),
       ),
+      /** "supplementary" = billed outside the regular maintenance cycle. */
+      billKind: v.optional(
+        v.union(v.literal("regular"), v.literal("supplementary")),
+      ),
+      /** Supplementary category (repair / event / penalty / …). */
+      category: v.optional(v.string()),
     })
       .index("by_society", ["societyId"])
       .index("by_society_member", ["societyId", "memberId"])
@@ -331,6 +341,43 @@ const schema = defineSchema(
     // rows here grant "editor" (entry rights), "viewer" (read-only) or
     // "member" (flat-bound portal) access to other signed-in users, matched
     // by Convex user id or by email.
+    // Flat ownership transfer records: one row per who-sold-to-whom event.
+    // Preserves the archived member's financial history (their bills,
+    // receipts and vouchers are never deleted) while documenting dues
+    // handling, the admitted buyer and an append-only compliance trail.
+    flatTransfers: defineTable({
+      societyId: v.id("societies"),
+      /** Transfer serial no. TR-0001… per society. */
+      transferNo: v.string(),
+      transferDate: v.string(), // "YYYY-MM-DD"
+      flatNo: v.string(),
+      wing: v.optional(v.string()),
+      building: v.optional(v.string()),
+      /** Archived (isActive=false) member who sold/leaves the flat. */
+      outgoingMemberId: v.id("members"),
+      /** Net outstanding of the outgoing member at transfer time. */
+      outstandingAtTransfer: v.number(),
+      /** carry the dues to the buyer or demand settlement first. */
+      duesHandling: v.union(
+        v.literal("settled"),
+        v.literal("carry_forward"),
+      ),
+      /** Admitted member row for the incoming owner. */
+      newMemberId: v.id("members"),
+      /** Immutable compliance audit trail (append-only). */
+      events: v.array(
+        v.object({
+          at: v.number(),
+          byName: v.string(),
+          action: v.string(),
+          details: v.string(),
+        }),
+      ),
+      note: v.optional(v.string()),
+      createdById: v.optional(v.id("users")),
+      createdAt: v.number(),
+    }).index("by_society", ["societyId"]),
+
     membersAccess: defineTable({
       societyId: v.id("societies"),
       userId: v.optional(v.id("users")), // set once the invited user signs up

@@ -39,6 +39,11 @@ export type LegacyBillData = {
    * when the society has not set a rate.
    */
   lateFeePercent?: number;
+  /**
+   * Supplementary-bill presentation: replaces the monthly period band with a
+   * clear "SUPPLEMENTARY BILL" label and shows the charge category.
+   */
+  supplementary?: { category?: string };
 };
 
 export type LegacyReceiptData = {
@@ -242,7 +247,9 @@ function drawBillBox(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11.5);
   doc.text(
-    `BILL FOR THE MONTH OF ${data.periodLabel.toUpperCase()}`,
+    data.supplementary
+      ? `SUPPLEMENTARY BILL${data.supplementary.category ? ` — ${data.supplementary.category.toUpperCase()}` : ""}`
+      : `BILL FOR THE MONTH OF ${data.periodLabel.toUpperCase()}`,
     x + w / 2,
     cy + 17.5,
     { align: "center" },
@@ -1278,7 +1285,7 @@ export function billHtml(data: LegacyBillData, compact = false): string {
 <head><meta charset="utf-8"><title>Bill ${esc(String(data.billNo))}</title><style>${docCss}</style></head>
 <body><div class="wrap${compact ? " compact" : ""}">
   ${societyHeaderHtml(data.society)}
-  <div class="titlebar">BILL FOR THE MONTH OF ${esc(data.periodLabel.toUpperCase())}</div>
+  <div class="titlebar">${data.supplementary ? `SUPPLEMENTARY BILL${data.supplementary.category ? ` — ${esc(data.supplementary.category.toUpperCase())}` : ""}` : `BILL FOR THE MONTH OF ${esc(data.periodLabel.toUpperCase())}`}</div>
   <table class="meta">
     <tr><td style="color:#64748b">Bill No:</td><td><b>${esc(String(data.billNo))}</b></td><td style="text-align:right;color:#64748b">Bill Date:</td><td style="text-align:right">${formatDate(data.billDate)}</td></tr>
     <tr><td style="color:#64748b">Name:</td><td><b>${esc(data.memberName.toUpperCase())}</b>${data.memberName2 ? `<br>${esc(data.memberName2.toUpperCase())}` : ""}</td><td style="text-align:right;color:#64748b">Area :</td><td style="text-align:right">${esc(data.area ?? "")}</td></tr>
