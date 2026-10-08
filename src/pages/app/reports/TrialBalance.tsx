@@ -13,7 +13,7 @@ import { useState } from "react";
 import { useQuery } from "convex/react";
 
 type TBRow = {
-  accountId: string;
+  accountId: string | null;
   code: string;
   name: string;
   type: "asset" | "liability" | "income" | "expense";
@@ -23,6 +23,7 @@ type TBRow = {
   periodCr: number;
   closingDr: number;
   closingCr: number;
+  system?: boolean;
 };
 
 const TYPE_LABEL: Record<TBRow["type"], string> = {
@@ -205,7 +206,10 @@ export default function TrialBalance() {
             </TableHeader>
             <TableBody>
               {(rows ?? []).map((r) => (
-                <TableRow key={r.accountId}>
+                <TableRow
+                  key={r.accountId ?? r.name}
+                  className={r.system ? "bg-muted/40 italic" : undefined}
+                >
                   <TableCell className="font-mono text-xs">{r.code}</TableCell>
                   <TableCell>
                     <span className="font-medium">{r.name}</span>

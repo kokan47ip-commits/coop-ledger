@@ -1328,3 +1328,95 @@ describe("Advance / credit balance flows into the books", () => {
     );
   });
 });
+
+describe("Trial Balance — Income over Expenses carries the current result", () => {
+  test("IoE closing = opening + current result; adjustment row keeps totals footing", async () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("ioe", "liability", { name: "Income over Expenses", openingBalance: 40 }),
+        acct("capital", "liability", { name: "Share Capital", openingBalance: 960 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Income 100, expense 30 → current surplus 70.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "maint", debit: 0, credit: 100 },
+          ],
+        },
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-20", voucherNo: "P1",
+          type: "payment", total: 30,
+          lines: [
+            { accountId: "repair", debit: 30, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 30 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    const ioe = tb.find((r) => r.name === "Income over Expenses")!;
+    // Current Period shows the result (Cr 70); Closing = 40 + 70 = 110 Cr —
+    // no longer a bare repeat of the opening.
+    expect(ioe).toMatchObject({ openingCr: 40, periodCr: 70, closingCr: 110 });
+    // The balancing system row absorbs the same amount on the Dr side — its
+    // closing repeats its period movement (the drafted closing journal's net
+    // effect) so every column foots.
+    const adj = tb.find((r) => r.system === true)!;
+    expect(adj).toMatchObject({ name: "Current Year's Result — Adjustment (Dr)", periodDr: 70, closingDr: 70 });
+    // Every column still foots Dr = Cr.
+    const sum = (k: "openingDr" | "openingCr" | "periodDr" | "periodCr" | "closingDr" | "closingCr") =>
+      tb.reduce((s, r) => s + r[k], 0);
+    expect(sum("openingDr")).toBe(sum("openingCr"));
+    expect(sum("periodDr")).toBe(sum("periodCr"));
+    expect(sum("closingDr")).toBe(sum("closingCr"));
+  });
+
+  test("deficit shows on the IoE row's Dr side with the mirrored adjustment", async () => {
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+        acct("ioe", "liability", { name: "Income over Expenses" }),
+        acct("capital", "liability", { name: "Share Capital", openingBalance: 1000 }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // 200 expense, no income → deficit 200.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "P1",
+          type: "payment", total: 200,
+          lines: [
+            { accountId: "repair", debit: 200, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    const ioe = tb.find((r) => r.name === "Income over Expenses")!;
+    expect(ioe).toMatchObject({ periodDr: 200, closingDr: 200 });
+    const adj = tb.find((r) => r.system === true)!;
+    expect(adj).toMatchObject({ name: "Current Year's Result — Adjustment (Cr)", periodCr: 200, closingCr: 200 });
+    const sum = (k: "periodDr" | "periodCr" | "closingDr" | "closingCr") =>
+      tb.reduce((s, r) => s + r[k], 0);
+    expect(sum("periodDr")).toBe(sum("periodCr"));
+    expect(sum("closingDr")).toBe(sum("closingCr"));
+  });
+});

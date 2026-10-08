@@ -45,7 +45,7 @@ export type CashBookSection = {
  * Cr side.
  */
 export type TrialBalanceColumnRow = {
-  accountId: Id<"accounts">;
+  accountId: Id<"accounts"> | null;
   /** User-defined printing serial no. for statement order. */
   printNo?: string;
   code: string;
@@ -57,6 +57,12 @@ export type TrialBalanceColumnRow = {
   periodCr: number;
   closingDr: number;
   closingCr: number;
+  /**
+   * System-presentational row with no ledger behind it: the balancing
+   * adjustment that carries the current year's result into the "Income over
+   * Expenses" row's Current / Closing columns.
+   */
+  system?: boolean;
 };
 
 export type TrialBalanceRow = {
@@ -351,6 +357,74 @@ export async function computeTrialBalance(
       closingCr,
       printNo: a.printNo,
     });
+  }
+  // The system "Income over Expenses" ledger, as the user asked for it: its
+  // CLOSING balance must carry the current year's result — opening brought
+  // forward ± the period's income over expenses — instead of repeating the
+  // opening unchanged (no GL posting ever touches that ledger). The current
+  // result therefore also appears in the row's CURRENT PERIOD columns, on the
+  // side the result belongs to. To keep the three columns footing, the same
+  // amount posts to a labelled SYSTEM row on the opposite side — the drafted
+  // closing journal the office would otherwise have to make by hand (Dr/Cr
+  // every income and expense ledger against Income over Expenses).
+  const surplus = computeIncomeExpenditure(data, fromDate, toDate).surplus;
+  const ioe = accounts.find(
+    (a) => a.type === "liability" && a.name.trim().toLowerCase() === "income over expenses",
+  );
+  if (ioe && surplus !== 0) {
+    const ioeRow = rows.find((r) => r.accountId === ioe._id);
+    if (ioeRow) {
+      // Credit-positive surplus convention for this liability ledger. Any
+      // closing-journal postings already in the row's period columns keep
+      // counting: opening + those + this result = the true closing figure.
+      if (surplus > 0) ioeRow.periodCr += surplus;
+      else ioeRow.periodDr += -surplus;
+    } else {
+      // The ledger has no opening and no postings — present the row anyway
+      // so the result is visible in the TB.
+      rows.push({
+        accountId: ioe._id,
+        code: ioe.code,
+        name: ioe.name,
+        type: ioe.type,
+        openingDr: 0,
+        openingCr: 0,
+        periodDr: surplus < 0 ? -surplus : 0,
+        periodCr: surplus > 0 ? surplus : 0,
+        closingDr: 0,
+        closingCr: 0,
+        printNo: ioe.printNo,
+      });
+    }
+    // The adjustment is the drafted closing journal's net effect: its own
+    // movement IS its balance, so its closing columns repeat the period
+    // columns — that keeps every Dr/Cr column footing even though the
+    // income/expense ledgers still show their (unclosed) balances.
+    rows.push({
+      accountId: null,
+      code: "",
+      name: surplus > 0
+        ? "Current Year's Result — Adjustment (Dr)"
+        : "Current Year's Result — Adjustment (Cr)",
+      type: surplus > 0 ? "expense" : "income",
+      openingDr: 0,
+      openingCr: 0,
+      periodDr: surplus > 0 ? surplus : 0,
+      periodCr: surplus < 0 ? -surplus : 0,
+      closingDr: surplus > 0 ? surplus : 0,
+      closingCr: surplus < 0 ? -surplus : 0,
+      system: true,
+    });
+    for (const r of rows) {
+      if (r.accountId === ioe._id) {
+        // Recompute the IoE closing from its credit-positive opening plus
+        // the (possibly updated) period columns.
+        const open = -ioe.openingBalance;
+        const net = open + (r.periodDr - r.periodCr);
+        r.closingDr = net > 0 ? net : 0;
+        r.closingCr = net < 0 ? -net : 0;
+      }
+    }
   }
   rows.sort(byPrintOrder);
   return rows;
