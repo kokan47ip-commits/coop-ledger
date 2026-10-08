@@ -1419,4 +1419,53 @@ describe("Trial Balance — Income over Expenses carries the current result", ()
     expect(sum("periodDr")).toBe(sum("periodCr"));
     expect(sum("closingDr")).toBe(sum("closingCr"));
   });
+
+  test("a folding closing journal posts the result through the ledger — no adjustment row", async () => {
+    // The office folded the year's result into the ledger by journal; the
+    // I&E nets over the period cancel to zero, so the computed surplus is 0
+    // and NO system adjustment row may appear — the ledger's own postings
+    // already carry the result.
+    const data = {
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("ioe", "liability", { name: "Income over Expenses", openingBalance: 40 }),
+        acct("capital", "liability", { name: "Share Capital", openingBalance: 960 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "maint", debit: 0, credit: 100 },
+          ],
+        },
+        // Closing journal: Dr maintenance 100 / Cr IoE 100.
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-05-31", voucherNo: "J1",
+          type: "journal", total: 100,
+          lines: [
+            { accountId: "maint", debit: 100, credit: 0 },
+            { accountId: "ioe", debit: 0, credit: 100 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    } as unknown as SocietyData;
+
+    const tb = await computeTrialBalance(data, "2026-04-01", "2026-06-30");
+    expect(tb.find((r) => r.system === true)).toBeUndefined();
+    expect(tb.find((r) => r.name === "Income over Expenses")).toMatchObject({
+      openingCr: 40, periodCr: 100, closingCr: 140,
+    });
+    const sum = (k: "periodDr" | "periodCr" | "closingDr" | "closingCr") =>
+      tb.reduce((s, r) => s + r[k], 0);
+    expect(sum("periodDr")).toBe(sum("periodCr"));
+    expect(sum("closingDr")).toBe(sum("closingCr"));
+  });
 });

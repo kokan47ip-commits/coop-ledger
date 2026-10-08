@@ -34,12 +34,13 @@ type LedgerRow = {
   note?: string;
 };
 type TrialBalanceRow = {
-  accountId: Id<"accounts">;
+  accountId: Id<"accounts"> | null;
   code: string;
   name: string;
   type: string;
-  debit: number;
-  credit: number;
+  closingDr: number;
+  closingCr: number;
+  system?: boolean;
 };
 
 /** One rendered ledger section — shared by the on-screen preview and every export. */
@@ -256,9 +257,11 @@ export default function GeneralLedger() {
   ) as TrialBalanceRow[] | undefined;
 
   const buildTrialTable = (): TableSpec => {
-    const rows = (trialBalance ?? []).map((r) => [r.code, r.name, r.debit, r.credit]);
-    const totalDr = (trialBalance ?? []).reduce((s, r) => s + r.debit, 0);
-    const totalCr = (trialBalance ?? []).reduce((s, r) => s + r.credit, 0);
+    // The endpoint returns the three-column TB rows; this tab shows the
+    // CLOSING balance on each side (the classic two-column TB).
+    const rows = (trialBalance ?? []).map((r) => [r.code, r.system ? `${r.name} (adjustment)` : r.name, r.closingDr || "", r.closingCr || ""]);
+    const totalDr = (trialBalance ?? []).reduce((s, r) => s + r.closingDr, 0);
+    const totalCr = (trialBalance ?? []).reduce((s, r) => s + r.closingCr, 0);
     return {
       head: ["Code", "Account", "Debit", "Credit"],
       body: rows,
@@ -587,20 +590,20 @@ export default function GeneralLedger() {
                 </TableHeader>
                 <TableBody>
                   {trialBalance.map((r) => (
-                    <TableRow key={r.accountId}>
+                    <TableRow key={r.accountId ?? r.name} className={r.system ? "bg-muted/40 italic" : undefined}>
                       <TableCell className="font-mono text-xs">{r.code}</TableCell>
-                      <TableCell className="font-medium">{r.name}</TableCell>
-                      <TableCell className="text-right">{r.debit ? <RightMoney value={r.debit} /> : "—"}</TableCell>
-                      <TableCell className="text-right">{r.credit ? <RightMoney value={r.credit} /> : "—"}</TableCell>
+                      <TableCell className="font-medium">{r.system ? `${r.name} (adjustment)` : r.name}</TableCell>
+                      <TableCell className="text-right">{r.closingDr ? <RightMoney value={r.closingDr} /> : "—"}</TableCell>
+                      <TableCell className="text-right">{r.closingCr ? <RightMoney value={r.closingCr} /> : "—"}</TableCell>
                     </TableRow>
                   ))}
                   <TableRow className="border-t-2 hover:bg-transparent">
                     <TableCell colSpan={2} className="font-semibold">Total</TableCell>
                     <TableCell className="text-right font-semibold">
-                      <RightMoney value={trialBalance.reduce((s, r) => s + r.debit, 0)} />
+                      <RightMoney value={trialBalance.reduce((s, r) => s + r.closingDr, 0)} />
                     </TableCell>
                     <TableCell className="text-right font-semibold">
-                      <RightMoney value={trialBalance.reduce((s, r) => s + r.credit, 0)} />
+                      <RightMoney value={trialBalance.reduce((s, r) => s + r.closingCr, 0)} />
                     </TableCell>
                   </TableRow>
                 </TableBody>
