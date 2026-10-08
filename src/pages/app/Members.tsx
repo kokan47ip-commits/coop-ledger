@@ -175,10 +175,21 @@ export default function Members() {
         r.credit,
         r.balance,
       ]);
+    // TOTAL covers all money columns (Dr incl. opening, Cr incl. opening),
+    // same as the Member Ledger statement.
+    const totDr =
+      (m.openingBalance > 0 ? m.openingBalance : 0) +
+      rows.reduce((s, r) => s + Number(r[3] ?? 0), 0);
+    const totCr =
+      (m.openingBalance < 0 ? -m.openingBalance : 0) +
+      rows.reduce((s, r) => s + Number(r[4] ?? 0), 0);
     const table: TableSpec = {
       head: ["Date", "Voucher", "Particulars", "Debit", "Credit", "Balance"],
       body: [...base, ...rows],
-      foot: [["", "", "CLOSING", "", "", closing]],
+      foot: [
+        ["", "", "CLOSING", "", "", closing],
+        ["", "", "TOTAL", totDr, totCr, ""],
+      ],
       columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
     };
     if (kind === "pdf") exportPDF(meta, [table], `member-ledger-${m.code}.pdf`);
@@ -499,6 +510,17 @@ export default function Members() {
                 </TableRow>
               ))}
             </TableBody>
+            <tfoot>
+              <TableRow className="border-t-2 bg-muted/40 hover:bg-transparent">
+                <TableCell colSpan={5} className="font-semibold">
+                  Total — {filtered.length} member{filtered.length === 1 ? "" : "s"}
+                </TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">
+                  {formatINR(filtered.reduce((s, m) => s + m.openingBalance, 0))}
+                </TableCell>
+                <TableCell colSpan={2} />
+              </TableRow>
+            </tfoot>
           </Table>
         </div>
       )}
