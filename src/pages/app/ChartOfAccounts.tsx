@@ -28,9 +28,11 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
+import { exportExcel, type ExportMeta, type TableSpec } from "@/lib/export";
+import { useCommitteeSignatures } from "@/lib/committee";
 import { formatINR } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FolderOpen, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
+import { Download, FolderOpen, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -73,7 +75,8 @@ const EMPTY_GROUP_FORM = {
 };
 
 export default function ChartOfAccounts() {
-  const { societyId, canEdit } = useSociety();
+  const { society, societyId, canEdit } = useSociety();
+  const signatures = useCommitteeSignatures();
   const accounts = useQuery(
     api.accounts.list,
     societyId ? { societyId } : "skip",
@@ -124,6 +127,67 @@ export default function ChartOfAccounts() {
 
   const accountsOf = (groupId: Id<"accountGroups">) =>
     (accounts ?? []).filter((a) => a.groupId === groupId);
+
+  /** Letterhead for the exported Excel workbook (mirrors the report pages). */
+  const exportMeta = (): ExportMeta | null =>
+    society
+      ? {
+          societyName: society.name,
+          societyAddress: [society.address, society.city, society.state, society.pincode]
+            .filter(Boolean)
+            .join(", "),
+          registrationNo: society.registrationNo,
+          title: "Chart of Accounts",
+          signatures,
+        }
+      : null;
+
+  const exportChart = () => {
+    const meta = exportMeta();
+    if (!meta) return;
+    const list = [...(accounts ?? [])].sort((a, b) => a.code.localeCompare(b.code));
+    const grpName = new Map((groups ?? []).map((g) => [g._id, `${g.code} — ${g.name}`]));
+    const accountsTable: TableSpec = {
+      head: ["Code", "Account", "Section", "Group", "Role", "Opening (₹)", "Print No."],
+      body: list.map((a) => [
+        a.code,
+        a.name,
+        SECTIONS.find((s) => s.type === a.type)?.label ?? a.type,
+        a.groupId ? grpName.get(a.groupId) ?? "—" : "—",
+        a.kind === "bank_cash" ? "Bank / Cash" : a.kind === "receivable" ? "Receivable control" : "",
+        a.openingBalance,
+        a.printNo ?? "",
+      ]),
+      foot: [
+        [
+          "",
+          `TOTAL — ${list.length} account${list.length === 1 ? "" : "s"}`,
+          "",
+          "",
+          "",
+          list.reduce((s, a) => s + a.openingBalance, 0),
+          "",
+        ],
+      ],
+      columnStyles: {
+        5: { halign: "right" },
+        6: { halign: "center" },
+      },
+    };
+    const groupsTable: TableSpec = {
+      head: ["Code", "Group", "Section", "Accounts"],
+      body: [...(groups ?? [])]
+        .sort((a, b) => a.sequence - b.sequence || a.name.localeCompare(b.name))
+        .map((g) => [
+          g.code,
+          g.name,
+          SECTIONS.find((s) => s.type === g.type)?.label ?? g.type,
+          accountsOf(g._id).length,
+        ]),
+      foot: [["", `TOTAL — ${(groups ?? []).length}${(groups ?? []).length === 1 ? " group" : " groups"}`, "", ""]],
+    };
+    exportExcel(meta, [accountsTable, groupsTable], "chart-of-accounts.xlsx");
+  };
 
   const grouped = useMemo(() => {
     const list = [...(accounts ?? [])].sort((a, b) => a.code.localeCompare(b.code));
@@ -267,7 +331,25 @@ export default function ChartOfAccounts() {
         title="Chart of Accounts"
         description="Ledger heads used by tariffs, vouchers and reports. Opening balances set the starting position for the current financial year."
         actions={
-          <Button
+          <>
+            <span
+              className="hidden items-center gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground sm:inline-flex"
+              title="Live chart size — accounts and groups currently defined"
+            >
+              <span className="tabular-nums">
+                <strong className="font-semibold text-foreground">{(accounts ?? []).length}</strong>{" "}
+                account{(accounts ?? []).length === 1 ? "" : "s"}
+              </span>
+              <span className="text-border">|</span>
+              <span className="tabular-nums">
+                <strong className="font-semibold text-foreground">{(groups ?? []).length}</strong>{" "}
+                group{(groups ?? []).length === 1 ? "" : "s"}
+              </span>
+            </span>
+            <Button variant="outline" className="rounded-lg" onClick={exportChart} disabled={!society || (accounts ?? []).length === 0}>
+              <Download className="size-4" /> Export Excel
+            </Button>
+            <Button
             className="rounded-lg"
             disabled={!canEdit}
             onClick={() => {
@@ -286,6 +368,7 @@ export default function ChartOfAccounts() {
           >
             <Plus className="size-4" /> Add account
           </Button>
+          </>
         }
       />
 
