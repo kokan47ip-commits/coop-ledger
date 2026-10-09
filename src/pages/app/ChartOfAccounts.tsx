@@ -30,10 +30,12 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportExcel, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
+import { diffChart, parseChartWorkbook, type ChartDiff } from "@/lib/chartImport";
 import { formatINR } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Download, FolderOpen, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Download, FolderOpen, ListChecks, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -113,6 +115,91 @@ export default function ChartOfAccounts() {
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupForm, setGroupForm] = useState(EMPTY_GROUP_FORM);
 
+  // ---- Import-back (edited chart-of-accounts.xlsx) ----
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importPreview, setImportPreview] = useState<ChartDiff | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+
+  const onImportFile = async (file: File) => {
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const wb = XLSX.read(data, { type: "array" });
+      const parsed = parseChartWorkbook(wb);
+      if (parsed.accountsSheet.error && parsed.accountsSheet.accounts.length === 0) {
+        toast.error(parsed.accountsSheet.error);
+        return;
+      }
+      if (parsed.accountsSheet.accounts.length === 0) {
+        toast.error("No account rows found in the workbook.");
+        return;
+      }
+      const diff = diffChart(
+        parsed.accountsSheet.accounts,
+        parsed.groupsSheet.groups,
+        {
+          accounts: (accounts ?? []).map((a) => ({ _id: a._id, code: a.code })),
+          groups: (groups ?? []).map((g) => ({ code: g.code })),
+        },
+      );
+      setImportPreview(diff);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not read the workbook.");
+    }
+  };
+
+  const applyImport = async () => {
+    if (!societyId || !importPreview) return;
+    setImportBusy(true);
+    try {
+      let added = 0;
+      let updated = 0;
+      // New groups first so accounts can reference them.
+      const newGroupIds = new Map<string, Id<"accountGroups">>();
+      for (const gc of importPreview.groups) {
+        const id = await upsertGroup({
+          societyId,
+          code: gc.group.code,
+          name: gc.group.name,
+          type: gc.group.section,
+        });
+        newGroupIds.set(gc.group.code.trim().toLowerCase(), id);
+        added++;
+      }
+      // Group resolve: label leading code → existing group → freshly created.
+      const resolveGroup = (label: string): Id<"accountGroups"> | undefined => {
+        const code = label.split("—")[0]?.trim().toLowerCase() ?? "";
+        if (!code) return undefined;
+        const existing = (groups ?? []).find(
+          (g) => (g.code ?? "").trim().toLowerCase() === code,
+        );
+        if (existing) return existing._id;
+        return newGroupIds.get(code);
+      };
+      for (const change of importPreview.accounts) {
+        const a = change.account;
+        await upsertAccount({
+          societyId,
+          id: change.kind === "update" ? change.id : undefined,
+          code: a.code,
+          name: a.name || a.code,
+          type: a.section,
+          kind: a.kind,
+          openingBalance: a.openingBalance,
+          groupId: resolveGroup(a.group),
+          printNo: a.printNo || undefined,
+        });
+        if (change.kind === "update") updated++;
+        else added++;
+      }
+      toast.success(`Import applied — ${added} added, ${updated} updated`);
+      setImportPreview(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   // Create the system Form N ledgers (Dues from Members, Advance from
   // Members, Income over Expenses) once per society. Idempotent.
   useEffect(() => {
@@ -148,6 +235,7 @@ export default function ChartOfAccounts() {
     const list = [...(accounts ?? [])].sort((a, b) => a.code.localeCompare(b.code));
     const grpName = new Map((groups ?? []).map((g) => [g._id, `${g.code} — ${g.name}`]));
     const accountsTable: TableSpec = {
+      sectionTitle: "Accounts",
       head: ["Code", "Account", "Section", "Group", "Role", "Opening (₹)", "Print No."],
       body: list.map((a) => [
         a.code,
@@ -175,6 +263,7 @@ export default function ChartOfAccounts() {
       },
     };
     const groupsTable: TableSpec = {
+      sectionTitle: "Groups",
       head: ["Code", "Group", "Section", "Accounts"],
       body: [...(groups ?? [])]
         .sort((a, b) => a.sequence - b.sequence || a.name.localeCompare(b.name))
@@ -348,6 +437,26 @@ export default function ChartOfAccounts() {
             </span>
             <Button variant="outline" className="rounded-lg" onClick={exportChart} disabled={!society || (accounts ?? []).length === 0}>
               <Download className="size-4" /> Export Excel
+            </Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onImportFile(f);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              variant="outline"
+              className="rounded-lg"
+              disabled={!canEdit}
+              onClick={() => importInputRef.current?.click()}
+              title="Edit the exported chart-of-accounts.xlsx and upload it back here"
+            >
+              <Upload className="size-4" /> Import Excel
             </Button>
             <Button
             className="rounded-lg"
@@ -679,6 +788,83 @@ export default function ChartOfAccounts() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Import-back preview — nothing is written until the office confirms. */}
+      <Dialog open={importPreview !== null} onOpenChange={(o) => { if (!o) setImportPreview(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Review chart import</DialogTitle>
+          </DialogHeader>
+          {importPreview && (
+            <div className="space-y-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs tabular-nums">
+                  <strong className="text-foreground">
+                    {importPreview.accounts.filter((c) => c.kind === "add").length + importPreview.groups.length}
+                  </strong>{" "}
+                  new (accounts + groups)
+                </span>
+                <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs tabular-nums">
+                  <strong className="text-foreground">
+                    {importPreview.accounts.filter((c) => c.kind === "update").length}
+                  </strong>{" "}
+                  existing lеdgеrs updated
+                </span>
+              </div>
+              {importPreview.warnings.map((w) => (
+                <p key={w} className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300">
+                  {w}
+                </p>
+              ))}
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-16">Change</TableHead>
+                      <TableHead className="w-20">Code</TableHead>
+                      <TableHead>Account / Group</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.groups.map((gc) => (
+                      <TableRow key={`g-${gc.group.code}`}>
+                        <TableCell className="text-xs font-medium text-emerald-700 dark:text-emerald-400">New group</TableCell>
+                        <TableCell className="font-mono text-xs">{gc.group.code}</TableCell>
+                        <TableCell>{gc.group.name}</TableCell>
+                      </TableRow>
+                    ))}
+                    {importPreview.accounts.map((c, i) => (
+                      <TableRow key={`a-${c.account.code}-${i}`}>
+                        <TableCell className={`text-xs font-medium ${c.kind === "add" ? "text-emerald-700 dark:text-emerald-400" : "text-sky-700 dark:text-sky-400"}`}>
+                          {c.kind === "add" ? "New" : "Update"}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{c.account.code}</TableCell>
+                        <TableCell>
+                          {c.account.name}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            ({c.kind === "add" ? "added" : "replaces the ledger with sheet values"})
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Updates replace the ledger's name, section, group, role, opening balance and print number with the sheet's values.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setImportPreview(null)} disabled={importBusy}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void applyImport()} disabled={importBusy}>
+              {importBusy ? "Applying…" : "Apply import"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Bulk group-assignment dialog (filled from Select all / row checkboxes) */}
       <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
