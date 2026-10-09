@@ -30,7 +30,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportExcel, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
-import { diffChart, parseChartWorkbook, type ChartDiff } from "@/lib/chartImport";
+import { diffChart, groupCodeFromLabel, parseChartWorkbook, type ChartDiff } from "@/lib/chartImport";
 import { formatINR } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download, FolderOpen, ListChecks, Pencil, Plus, Trash2, Upload } from "lucide-react";
@@ -125,6 +125,20 @@ export default function ChartOfAccounts() {
       const data = new Uint8Array(await file.arrayBuffer());
       const wb = XLSX.read(data, { type: "array" });
       const parsed = parseChartWorkbook(wb);
+      // Edited/garbled section labels drop whole ledgers — never guess at a
+      // partial read: refuse the import until the sheet is repaired.
+      if (parsed.accountsSheet.skipped > 0) {
+        toast.error(
+          `${parsed.accountsSheet.skipped} row${parsed.accountsSheet.skipped > 1 ? "s" : ""} in the Accounts sheet could not be read (edited or missing Section label). Fix them in the workbook and re-upload.`,
+        );
+        return;
+      }
+      if (parsed.groupsSheet.skipped > 0) {
+        toast.error(
+          `${parsed.groupsSheet.skipped} row${parsed.groupsSheet.skipped > 1 ? "s" : ""} in the Groups sheet could not be read. Fix them and re-upload.`,
+        );
+        return;
+      }
       if (parsed.accountsSheet.error && parsed.accountsSheet.accounts.length === 0) {
         toast.error(parsed.accountsSheet.error);
         return;
@@ -167,7 +181,8 @@ export default function ChartOfAccounts() {
       }
       // Group resolve: label leading code → existing group → freshly created.
       const resolveGroup = (label: string): Id<"accountGroups"> | undefined => {
-        const code = label.split("—")[0]?.trim().toLowerCase() ?? "";
+        // Same splitter as diffChart: em-dash or hyphen-minus both resolve.
+        const code = groupCodeFromLabel(label).toLowerCase();
         if (!code) return undefined;
         const existing = (groups ?? []).find(
           (g) => (g.code ?? "").trim().toLowerCase() === code,

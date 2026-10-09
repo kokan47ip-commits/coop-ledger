@@ -188,3 +188,65 @@ describe("chartImport round-trip", () => {
     expect(diff.unknownGroupLabels).toHaveLength(0);
   });
 });
+
+describe("chartImport hardening (review fixes)", () => {
+  test("hyphen-minus separator still resolves the group code (Excel autocorrect)", () => {
+    const parsed = parseBase({
+      accounts: [["1020", "Bank of India", "Assets", "CA - Current Assets", "Bank / Cash", 1000, "1"]],
+      groups: [],
+    });
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    expect(diff.unknownGroupLabels).toHaveLength(0);
+    expect(diff.warnings).toHaveLength(0);
+  });
+
+  test("garbled section label is counted in skipped, not dropped silently", () => {
+    const parsed = parseBase({
+      accounts: [
+        ["1020", "Bank of India", "Assets", "CA — Current Assets", "Bank / Cash", 1000, "1"],
+        ["3010", "Maintenance Charges", "Liability & Funds", "", "", 0, ""],
+      ],
+      groups: [],
+    });
+    expect(parsed.accountsSheet.accounts).toHaveLength(1); // only the healthy row
+    expect(parsed.accountsSheet.skipped).toBe(1);
+  });
+
+  test("missing Section column: every body row lands in skipped with an empty result", () => {
+    const wb = buildExcelWorkbook(meta, [
+      {
+        sectionTitle: "Accounts",
+        head: ["Code", "Account", "Group", "Role", "Opening (₹)", "Print No."],
+        body: [["1020", "Bank of India", "CA — Current Assets", "Bank / Cash", 1000, "1"]],
+      },
+    ]);
+    const parsed = parseChartWorkbook(wb);
+    expect(parsed.accountsSheet.accounts).toHaveLength(0);
+    expect(parsed.accountsSheet.error).toBeUndefined();
+    expect(parsed.accountsSheet.skipped).toBe(1);
+  });
+
+  test("parenthesized opening balance imports as a NEGATIVE (credit) figure", () => {
+    const parsed = parseBase({
+      accounts: [["2990", "Advance from Members", "Liabilities & Funds", "", "", "(500.00)", ""]],
+      groups: [],
+    });
+    expect(parsed.accountsSheet.accounts[0]!.openingBalance).toBe(-500);
+  });
+
+  test("duplicate code rows: first wins, later rows counted as a warning", () => {
+    const parsed = parseBase({
+      accounts: [
+        ["1020", "Bank A", "Assets", "", "", 100, ""],
+        ["1020", "Bank B — should be ignored", "Assets", "", "", 200, ""],
+      ],
+      groups: [],
+    });
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    expect(diff.accounts).toHaveLength(1); // second row dropped by the diff
+    const updated = diff.accounts[0];
+    expect(updated?.kind).toBe("update");
+    expect(updated?.kind === "update" && updated.account.name).toBe("Bank A"); // first row
+    expect(diff.warnings.some((w) => w.includes("duplicate"))).toBe(true);
+  });
+});

@@ -59,8 +59,14 @@ const cell = (r: SheetMatrix[number] | undefined, i: number) =>
 const cellNum = (r: SheetMatrix[number] | undefined, i: number) => {
   const v = r?.[i];
   if (typeof v === "number") return v;
-  const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(n) ? n : 0;
+  const raw = String(v ?? "").trim();
+  if (!raw) return 0;
+  // Indian accounting writes credit balances in parentheses: (500.00) → −500.
+  const negative = /^\(.*\)$/.test(raw);
+  const digits = raw.replace(/[^0-9.-]/g, "");
+  const n = Number(negative ? digits.replace(/-/g, "") : digits);
+  const value = Number.isFinite(n) ? n : 0;
+  return negative ? -value : value;
 };
 
 /** Footer / signature rows the export appends below the tables. */
@@ -87,11 +93,12 @@ function headerIndexOf(matrix: SheetMatrix): number {
 function parseSheet<T>(
   matrix: SheetMatrix,
   mapRow: (r: SheetMatrix[number] | undefined, cols: Record<string, number>) => T | null,
-): { rows: T[]; error?: string } {
+): { rows: T[]; skipped: number; error?: string } {
   const h = headerIndexOf(matrix);
   if (h === -1)
     return {
       rows: [],
+      skipped: 0,
       error: "Table not found — upload the chart-of-accounts.xlsx exported by this page.",
     };
   const cols: Record<string, number> = {};
@@ -99,13 +106,17 @@ function parseSheet<T>(
     cols[String(c ?? "").trim()] = i;
   });
   const rows: T[] = [];
+  let skipped = 0;
   for (const r of matrix.slice(h + 1)) {
     if (!r || r.every((c) => String(c ?? "").trim() === "")) continue;
     if (isSkippedRow(r)) continue;
     const row = mapRow(r, cols);
     if (row) rows.push(row);
+    else skipped++;
   }
-  return { rows };
+  // Skipped = non-blank, non-footer rows the parser could not read — every
+  // one is a ledger the office meant to import but the model dropped.
+  return { rows, skipped };
 }
 
 export function parseChartWorkbook(wb: XLSX.WorkBook): {
@@ -134,6 +145,8 @@ export function parseChartWorkbook(wb: XLSX.WorkBook): {
 
 export type AccountsSheetParse = {
   accounts: ChartAccount[];
+  /** Non-blank rows below the header that could not be read (bad section label, etc.). */
+  skipped: number;
   error?: string;
 };
 
@@ -143,7 +156,7 @@ function parseAccountsWorkbook(matrix: SheetMatrix): AccountsSheetParse {
     const code = cell(r, cols["Code"] ?? 0);
     if (!code) return null;
     const section = sectionFromLabel(r[cols["Section"] ?? -1]);
-    if (!section) return null; // signature block / stray row
+    if (!section) return null; // edited/garbled section label
     return {
       code,
       name: cell(r, cols["Account"] ?? 1),
@@ -154,11 +167,12 @@ function parseAccountsWorkbook(matrix: SheetMatrix): AccountsSheetParse {
       printNo: cell(r, cols["Print No."] ?? 6),
     };
   });
-  return { accounts: res.rows, error: res.error };
+  return { accounts: res.rows, skipped: res.skipped, error: res.error };
 }
 
 export type GroupsSheetParse = {
   groups: ChartGroup[];
+  skipped: number;
   error?: string;
 };
 
@@ -175,7 +189,7 @@ function parseGroupsWorkbook(matrix: SheetMatrix): GroupsSheetParse {
       section,
     };
   });
-  return { groups: res.rows, error: res.error };
+  return { groups: res.rows, skipped: res.skipped, error: res.error };
 }
 
 /** Everything needed to apply one change. */
@@ -194,6 +208,19 @@ export type ChartDiff = {
 };
 
 const normCode = (s: string) => s.trim().toLowerCase();
+
+/**
+ * The export joins group labels as "CODE — Name" with an em-dash, but the
+ * office may re-type the label with Excel's autocorrected hyphen-minus.
+ * Split on either, so the leading code survives both.
+ */
+const GROUP_LABEL_SPLIT = /\s*[—-]\s*/;
+
+/** Leading group code from an export-style label: "CA — X", "CA - X", "CA". */
+export function groupCodeFromLabel(label: string): string {
+  const head = label.split(GROUP_LABEL_SPLIT)[0]?.trim() ?? "";
+  return head;
+}
 
 /**
  * Diff the parsed sheets against the live chart. Accounts match by code:
@@ -218,8 +245,28 @@ export function diffChart(
 
   const groupAdds = groups.filter((g) => !currentGroupCodes.has(normCode(g.code)));
 
+  // Duplicate account codes in one sheet are contradictory rows; keep the
+  // first, warn about the rest instead of applying last-write-wins silently.
+  const dedupedAccounts: ChartAccount[] = [];
+  const seenCodes = new Set<string>();
+  let duplicateRows = 0;
+  for (const a of accounts) {
+    const key = normCode(a.code);
+    if (seenCodes.has(key)) {
+      duplicateRows++;
+      continue;
+    }
+    seenCodes.add(key);
+    dedupedAccounts.push(a);
+  }
+  if (duplicateRows > 0) {
+    warnings.push(
+      `${duplicateRows} duplicate account code${duplicateRows > 1 ? "s" : ""} in the sheet were ignored — only the first row of each code applies.`,
+    );
+  }
+
   const unknownGroupLabels = new Set<string>();
-  const accountChanges: AccountChange[] = accounts.map((a) => {
+  const accountChanges: AccountChange[] = dedupedAccounts.map((a) => {
     const existingId = currentAccountsByCode.get(normCode(a.code));
     if (existingId) return { kind: "update", account: a, id: existingId };
     return { kind: "add", account: a };
@@ -227,10 +274,10 @@ export function diffChart(
 
   // Account → group mapping is resolved at apply-time from (a) an exact code
   // match, (b) a Groups-sheet add. Anything else flags for the preview.
-  for (const a of accounts) {
+  for (const a of dedupedAccounts) {
     const label = a.group.trim();
     if (!label || label === "—") continue;
-    const code = label.split("—")[0]?.trim() ?? "";
+    const code = groupCodeFromLabel(label);
     if (!code) {
       unknownGroupLabels.add(label);
       continue;
