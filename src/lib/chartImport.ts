@@ -202,6 +202,11 @@ export type GroupChange = { kind: "add"; group: ChartGroup };
 export type ChartDiff = {
   accounts: AccountChange[];
   groups: GroupChange[];
+  /** Rows the office deleted from the sheet — removed from the book on Apply. */
+  deletions: {
+    accounts: { id: Id<"accounts">; code: string; name: string }[];
+    groups: { id: Id<"accountGroups">; code: string; name: string }[];
+  };
   /** "CODE — Name" labels referenced by imported accounts but resolvable nowhere. */
   unknownGroupLabels: string[];
   warnings: string[];
@@ -233,8 +238,8 @@ export function diffChart(
   accounts: ChartAccount[],
   groups: ChartGroup[],
   current: {
-    accounts: { _id: Id<"accounts">; code: string }[];
-    groups: { code: string }[];
+    accounts: { _id: Id<"accounts">; code: string; name: string }[];
+    groups: { _id: Id<"accountGroups">; code: string; name: string }[];
   },
 ): ChartDiff {
   const warnings: string[] = [];
@@ -291,9 +296,31 @@ export function diffChart(
       `${unknownGroupLabels.size} group${unknownGroupLabels.size > 1 ? "s" : ""} referenced in the sheet are neither in the book nor in the Groups sheet — those accounts will import without a group.`,
     );
   }
+  // Deleted rows: everything in the book the sheet no longer carries. Groups
+  // a sheet account still references are preserved even when their own Groups
+  // row was dropped — deleting them would orphan those accounts.
+  const sheetAccountCodes = new Set(dedupedAccounts.map((a) => normCode(a.code)));
+  const deletions = {
+    accounts: current.accounts
+      .filter((a) => !sheetAccountCodes.has(normCode(a.code)))
+      .map((a) => ({ id: a._id, code: a.code, name: a.name })),
+    groups: current.groups
+      .filter(
+        (g) =>
+          !groups.some((s) => normCode(s.code) === normCode(g.code)) &&
+          !dedupedAccounts.some(
+            (a) =>
+              !!a.group.trim() &&
+              normCode(groupCodeFromLabel(a.group)) === normCode(g.code),
+          ),
+      )
+      .map((g) => ({ id: g._id, code: g.code, name: g.name })),
+  };
+
   return {
     accounts: accountChanges,
     groups: groupAdds.map((g) => ({ kind: "add" as const, group: g })),
+    deletions,
     unknownGroupLabels: [...unknownGroupLabels],
     warnings,
   };

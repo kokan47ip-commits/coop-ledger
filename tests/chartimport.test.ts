@@ -35,13 +35,13 @@ function exportWorkbook(
 
 const current = {
   accounts: [
-    { _id: "a-bank", code: "1020" },
-    { _id: "a-maint", code: "3010" },
-  ] as { _id: never; code: string }[],
+    { _id: "a-bank", code: "1020", name: "Bank of India" },
+    { _id: "a-maint", code: "3010", name: "Maintenance Charges" },
+  ],
   groups: [
-    { code: "CA" },
-    { code: "INC" },
-  ] as { code: string }[],
+    { _id: "g-ca", code: "CA", name: "Current Assets" },
+    { _id: "g-inc", code: "INC", name: "Operating Income" },
+  ],
 };
 
 const BASE_ACCOUNTS: (string | number)[][] = [
@@ -108,6 +108,13 @@ describe("chartImport round-trip", () => {
     expect(diff.accounts.every((a) => a.kind === "update")).toBe(true);
     expect(diff.groups).toHaveLength(0);
     expect(diff.warnings).toHaveLength(0);
+  });
+
+  test("untouched export proposes ZERO deletions — the round trip is inert", () => {
+    const parsed = parseBase();
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    expect(diff.deletions.accounts).toHaveLength(0);
+    expect(diff.deletions.groups).toHaveLength(0);
   });
 
   test("edits survive: rename + balance, new account row, new group row", () => {
@@ -248,5 +255,59 @@ describe("chartImport hardening (review fixes)", () => {
     expect(updated?.kind).toBe("update");
     expect(updated?.kind === "update" && updated.account.name).toBe("Bank A"); // first row
     expect(diff.warnings.some((w) => w.includes("duplicate"))).toBe(true);
+  });
+});
+
+describe("chartImport deletions", () => {
+  test("accounts present in the book but absent from the sheet are deletes with ids", () => {
+    // Sheet drops a-maint; keeps a-bank and adds one new code.
+    const parsed = parseBase({
+      accounts: [
+        ["1020", "Bank of India", "Assets", "CA — Current Assets", "Bank / Cash", 1000, "1"],
+        ["3050", "Interest on Savings", "Income", "", "", 0, ""],
+      ],
+    });
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    expect(diff.deletions.accounts).toEqual([
+      { id: "a-maint", code: "3010", name: "Maintenance Charges" },
+    ]);
+  });
+
+  test("a group still referenced by a sheet account is NEVER a delete, even when its Groups row is gone", () => {
+    const parsed = parseBase({
+      accounts: [["1020", "Bank of India", "Assets", "CA — Current Assets", "Bank / Cash", 1000, "1"]],
+      groups: [], // office dropped the Groups sheet rows entirely
+    });
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    expect(diff.deletions.groups).toHaveLength(1);
+    expect(diff.deletions.groups[0]).toEqual({
+      id: "g-inc",
+      code: "INC",
+      name: "Operating Income",
+    });
+    expect(diff.deletions.groups.some((g) => g.code === "CA")).toBe(false);
+  });
+
+  test("a group referenced by NO sheet account (label gone) is a delete", () => {
+    const parsed = parseBase({
+      accounts: [["1020", "Bank of India", "Assets", "", "", 1000, "1"]],
+      groups: [],
+    });
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    const codes = diff.deletions.groups.map((g) => g.code);
+    expect(codes).toContain("CA");
+    expect(codes).toContain("INC");
+  });
+
+  test("deletions exclude accounts added in this import (new code never in the book)", () => {
+    const parsed = parseBase({
+      accounts: [["9999", "Brand New Ledger", "Assets", "", "", 0, ""]],
+      groups: [],
+    });
+    const diff = diffChart(parsed.accountsSheet.accounts, parsed.groupsSheet.groups, current);
+    expect(diff.accounts.some((c) => c.kind === "add" && c.account.code === "9999")).toBe(true);
+    expect(
+      diff.deletions.accounts.every((d) => d.code !== "9999"),
+    ).toBe(true);
   });
 });

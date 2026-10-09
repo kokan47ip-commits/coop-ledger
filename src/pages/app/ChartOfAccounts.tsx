@@ -151,8 +151,16 @@ export default function ChartOfAccounts() {
         parsed.accountsSheet.accounts,
         parsed.groupsSheet.groups,
         {
-          accounts: (accounts ?? []).map((a) => ({ _id: a._id, code: a.code })),
-          groups: (groups ?? []).map((g) => ({ code: g.code })),
+          accounts: (accounts ?? []).map((a) => ({
+            _id: a._id,
+            code: a.code,
+            name: a.name,
+          })),
+          groups: (groups ?? []).map((g) => ({
+            _id: g._id,
+            code: g.code,
+            name: g.name,
+          })),
         },
       );
       setImportPreview(diff);
@@ -206,7 +214,27 @@ export default function ChartOfAccounts() {
         if (change.kind === "update") updated++;
         else added++;
       }
-      toast.success(`Import applied — ${added} added, ${updated} updated`);
+      // Deletions last: remove what the sheet no longer carries. A ledger
+      // still used by vouchers/bills refuses its own deletion server-side;
+      // that row is reported, and the rest of the import stays applied.
+      let deleted = 0;
+      const undeletable: string[] = [];
+      for (const d of importPreview.deletions.accounts) {
+        try {
+          await removeAccount({ societyId, id: d.id });
+          deleted++;
+        } catch {
+          undeletable.push(`${d.code} — ${d.name}`);
+        }
+      }
+      if (undeletable.length > 0) {
+        toast.warning(
+          `${undeletable.length} deleted in the sheet but still used by vouchers, bills or tariffs — kept: ${undeletable.join(", ")}`,
+        );
+      }
+      toast.success(
+        `Import applied — ${added} added, ${updated} updated, ${deleted} deleted`,
+      );
       setImportPreview(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Import failed");
@@ -862,11 +890,40 @@ export default function ChartOfAccounts() {
                         </TableCell>
                       </TableRow>
                     ))}
+                    {importPreview.deletions.accounts.map((d) => (
+                      <TableRow key={`d-${d.code}`} className="bg-rose-50/50 dark:bg-rose-950/20">
+                        <TableCell className="text-xs font-semibold text-rose-700 dark:text-rose-400">Delete</TableCell>
+                        <TableCell className="font-mono text-xs">{d.code}</TableCell>
+                        <TableCell>
+                          {d.name}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            (removed from the sheet — ledger will be deleted)
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {importPreview.deletions.groups.map((d) => (
+                      <TableRow key={`dg-${d.code}`} className="bg-rose-50/50 dark:bg-rose-950/20">
+                        <TableCell className="text-xs font-semibold text-rose-700 dark:text-rose-400">Delete group</TableCell>
+                        <TableCell className="font-mono text-xs">{d.code}</TableCell>
+                        <TableCell>
+                          {d.name}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            (no longer in the Groups sheet and not used by any account)
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </div>
               <p className="text-xs text-muted-foreground">
-                Updates replace the ledger's name, section, group, role, opening balance and print number with the sheet's values.
+                Updates replace the ledger's name, section, group, role, opening balance and print number with the sheet's values.{" "}
+                {importPreview.deletions.accounts.length + importPreview.deletions.groups.length > 0 && (
+                  <span className="font-medium text-rose-700 dark:text-rose-400">
+                    Rows marked Delete are ledgers/groups no longer present in the sheet — they will be removed from the book when you apply.
+                  </span>
+                )}
               </p>
             </div>
           )}
