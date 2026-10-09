@@ -1,6 +1,11 @@
 import { Doc, Id } from "./_generated/dataModel";
 import { QueryCtx } from "./_generated/server";
-import { fyStartDateString, isCarriedOpeningLine, requireSociety } from "./lib";
+import {
+  fyStartDateString,
+  isBankCashAccount,
+  isCarriedOpeningLine,
+  requireSociety,
+} from "./lib";
 
 export type LedgerRow = {
   date: string;
@@ -139,16 +144,51 @@ export async function loadSocietyData(ctx: QueryCtx, societyId: Id<"societies">)
 }
 
 function receivableIdOf(data: SocietyData): Id<"accounts"> | undefined {
-  return (
-    data.society?.receivableAccountId ??
-    data.accounts.find((a) => a.kind === "receivable")?._id
-  );
+  const configuredId = data.society?.receivableAccountId;
+  const configured = configuredId
+    ? data.accounts.find((a) => a._id === configuredId)
+    : undefined;
+  // Mirror resolveReceivableAccount on the POSTING path: receipts post to
+  // the proper receivable ledger even when the profile setting is
+  // mis-pointed at a bank/cash (or since-deleted) account — the statements
+  // must read that same ledger, or every bill's postings land on the wrong
+  // row or, when guarded against bank drift, vanish from the Trial Balance,
+  // Income & Expenditure and the Balance Sheet's Income over Expenses head.
+  if (configured && !isBankCashAccount(configured)) return configured._id;
+  const fallback = data.accounts.find((a) => a.kind === "receivable");
+  if (fallback) return fallback._id;
+  return configured?._id; // degenerate chart: the mis-set ledger is all there is
 }
 
 /**
  * All postings in one list: manual vouchers plus generated bills.
  * Each bill posts Dr Members Receivable (total) / Cr the bill's income heads.
  */
+/**
+ * The credit lines a bill actually posts: charge heads that still exist in
+ * the chart, are not the receivable control itself, are not carried
+ * opening-balance restatements, and never touch a bank-cash ledger. Shared
+ * by unifiedEntries (the postings) and computeTrialBalance (the unposted
+ * gap the Suspense row carries) so the two can never disagree.
+ */
+function billPostingCredits(
+  b: Doc<"bills">,
+  receivableId: Id<"accounts"> | undefined,
+  accounts: Doc<"accounts">[],
+): Doc<"bills">["lines"] {
+  const known = new Set(accounts.map((a) => a._id));
+  const bankCash = new Set(
+    accounts.filter((a) => a.kind === "bank_cash").map((a) => a._id),
+  );
+  return b.lines.filter(
+    (l) =>
+      (receivableId === undefined || l.accountId !== receivableId) &&
+      !isCarriedOpeningLine(l, receivableId) &&
+      known.has(l.accountId) &&
+      !bankCash.has(l.accountId),
+  );
+}
+
 export function unifiedEntries(data: SocietyData): GenericEntry[] {
   const entries: GenericEntry[] = data.vouchers.map((v) => ({
     date: v.date,
@@ -167,56 +207,55 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
     })),
   }));
   const receivableId = receivableIdOf(data);
-  if (receivableId) {
-    // A generated bill is an accrual — Dr Members Receivable / Cr income
-    // heads — and is never a cash movement. The Bank Book therefore never
-    // shows bill rows; the Trial Balance, Balance Sheet and General Ledger
-    // read the same postings and must agree with it, so a bill line may not
-    // post to a bank-cash ledger either. A line can only sit on one through a
-    // tariff head mis-mapped in the Tariff Schedule, and letting it through
-    // made the bank balance in the TB/BS drift away from the Bank Book. The
-    // same guard covers the receivable total line itself, should the
-    // receivable account ever be (mis)set to a bank-cash ledger.
-    //
-    // Every bill entry must BALANCE: the receivable debit is the sum of the
-    // credit lines actually emitted — never the stored total. A carried
-    // opening-balance line restates dues the books already carry (it is not
-    // credited anywhere), and a mis-mapped line posts nowhere; debiting the
-    // full total used to leave the Trial Balance's Current Period and
-    // Closing columns short on credits by exactly those amounts.
-    const isBankCash = (id: Id<"accounts">) =>
-      data.accounts.find((a) => a._id === id)?.kind === "bank_cash";
-    for (const b of data.bills) {
-      if (isBankCash(receivableId)) continue; // misconfigured control: post nothing rather than an unbalanced credit-only entry
-      const credits = b.lines.filter(
-        (l) =>
-          l.accountId !== receivableId &&
-          !isCarriedOpeningLine(l, receivableId) &&
-          !isBankCash(l.accountId),
-      );
-      if (credits.length === 0) continue; // carried-only / line-less bill: it restates dues, it posts nothing
-      const charged = credits.reduce((s, l) => s + l.amount, 0);
-      entries.push({
-        date: b.issueDate,
-        voucherNo: b.billNo,
-        type: "bill",
-        memberId: b.memberId,
-        narration: `Bill ${b.period}`,
-        lines: [
-          {
-            accountId: receivableId,
-            debit: charged,
-            credit: 0,
-            note: `Period ${b.period}`,
-          },
-          ...credits.map((l) => ({
-            accountId: l.accountId,
-            debit: 0,
-            credit: l.amount,
-          })),
-        ],
-      });
-    }
+  const control = receivableId !== undefined
+    ? data.accounts.find((a) => a._id === receivableId)
+    : undefined;
+  // The receivable side of a bill can only post while the chart HAS a
+  // proper control ledger; the income credits must reach the statements
+  // regardless — a missing (or bank-mis-set) control used to make every bill
+  // vanish from the Trial Balance, Income & Expenditure and the Balance
+  // Sheet's Income over Expenses head. A generated bill is an accrual — Dr
+  // Members Receivable / Cr income heads — and is never a cash movement, so
+  // a bill line may not post to a bank-cash ledger either (mis-mapped tariff
+  // heads previously let the TB/BS bank balance drift from the Bank Book).
+  //
+  // Every bill entry must BALANCE: the receivable debit is the sum of the
+  // credit lines actually emitted — never the stored total. A carried
+  // opening-balance line restates dues the books already carry (it is not
+  // credited anywhere), and a mis-mapped or deleted-account line posts
+  // nowhere; debiting the full total used to leave the Trial Balance's
+  // Current Period and Closing columns short on credits by exactly those
+  // amounts. When no control can post, the credits-only entry is completed
+  // by the labelled bill-debit Suspense row in computeTrialBalance.
+  const controlPosts = control !== undefined && !isBankCashAccount(control);
+  for (const b of data.bills) {
+    const credits = billPostingCredits(b, receivableId, data.accounts);
+    if (credits.length === 0) continue; // carried-only / line-less bill: it restates dues, it posts nothing
+    const charged = credits.reduce((s, l) => s + l.amount, 0);
+    entries.push({
+      date: b.issueDate,
+      voucherNo: b.billNo,
+      type: "bill",
+      memberId: b.memberId,
+      narration: `Bill ${b.period}`,
+      lines: [
+        ...(controlPosts && receivableId
+          ? [
+              {
+                accountId: receivableId,
+                debit: charged,
+                credit: 0,
+                note: `Period ${b.period}`,
+              },
+            ]
+          : []),
+        ...credits.map((l) => ({
+          accountId: l.accountId,
+          debit: 0,
+          credit: l.amount,
+        })),
+      ],
+    });
   }
   return entries;
 }
@@ -324,31 +363,34 @@ export async function computeTrialBalance(
     }
   }
   // Bill charges that never reach a credit ledger (a line mis-mapped onto
-  // the control itself or onto a bank-cash ledger) post NOWHERE — the bill's
-  // receivable debit is the sum of the emitted credits. The books still owe
-  // the member that charge, so the receivable row keeps it and a labelled
-  // SYSTEM suspense row carries the unmatched credit — without it the
-  // Current Period and Closing columns would run short by exactly the
-  // mis-mapped amounts. `gap*` covers every bill; the `unmirrored*` split
-  // supplements only bills whose member is gone (their member figures do
-  // not exist, so their posted leg already showed the charge minus gap).
+  // the control itself, onto a bank-cash ledger, or pointing at a
+  // since-deleted account) post NOWHERE — the bill's receivable debit is the
+  // sum of the emitted credits. The books still owe the member that charge,
+  // so the receivable row keeps it and a labelled SYSTEM suspense row
+  // carries the unmatched credit — without it the Current Period and
+  // Closing columns would run short by exactly the unpostable amounts.
+  // `gap*` covers every bill; the `unmirrored*` split supplements only bills
+  // whose member is gone (their member figures do not exist, so their
+  // posted leg already showed the charge minus gap). Only meaningful while
+  // the control IS a receivable ledger — the receivable row that carries the
+  // charge exists only then; a bank-mis-set or missing control presents
+  // bills through the credit-only postings plus the bill-debit Suspense row.
+  const controlIsReceivableLedger =
+    receivableId !== undefined &&
+    data.accounts.some(
+      (a) => a._id === receivableId && a.kind === "receivable",
+    );
   let gapPre = 0;
   let gapPeriod = 0;
   let gapUnmirroredPre = 0;
   let gapUnmirroredPeriod = 0;
-  if (receivableId) {
-    const isBankCash = (id: Id<"accounts">) =>
-      data.accounts.find((a) => a._id === id)?.kind === "bank_cash";
+  if (controlIsReceivableLedger) {
     for (const b of data.bills) {
       if (b.issueDate > toDate) continue;
-      const posted = b.lines
-        .filter(
-          (l) =>
-            l.accountId !== receivableId &&
-            !isCarriedOpeningLine(l, receivableId) &&
-            !isBankCash(l.accountId),
-        )
-        .reduce((s, l) => s + l.amount, 0);
+      const posted = billPostingCredits(b, receivableId, data.accounts).reduce(
+        (s, l) => s + l.amount,
+        0,
+      );
       const delta = billChargeAmount(b, receivableId) - posted;
       if (delta === 0) continue;
       const mirrored =
@@ -424,13 +466,53 @@ export async function computeTrialBalance(
       printNo: a.printNo,
     });
   }
+  // Bill debits that have nowhere to land: with no receivable ledger in
+  // the chart (or the control mis-set to a bank/cash account), the Dr side
+  // of every bill cannot post — while its income credits still MUST reach
+  // the Trial Balance, Income & Expenditure and the Balance Sheet. This
+  // SYSTEM row carries that debit the way a suspense account would, so all
+  // three column groups still foot and the missing ledger stays visible.
+  // Zero in the normal case: the real receivable row carries the charges.
+  let billDebitPre = 0;
+  let billDebitPeriod = 0;
+  if (!controlIsReceivableLedger) {
+    for (const e of unifiedEntries(data)) {
+      if (e.type !== "bill" || e.date > toDate) continue;
+      let debit = 0;
+      let credit = 0;
+      for (const l of e.lines) {
+        debit += l.debit;
+        credit += l.credit;
+      }
+      const missing = credit - debit; // credits-only entry → the whole charge
+      if (missing === 0) continue;
+      if (e.date < fromDate) billDebitPre += missing;
+      else billDebitPeriod += missing;
+    }
+  }
+  if (billDebitPre !== 0 || billDebitPeriod !== 0) {
+    const billDebitTotal = billDebitPre + billDebitPeriod;
+    rows.push({
+      accountId: null,
+      code: "",
+      name: "Members Receivable — no ledger posting (Suspense)",
+      type: "asset",
+      openingDr: billDebitPre > 0 ? billDebitPre : 0,
+      openingCr: billDebitPre < 0 ? -billDebitPre : 0,
+      periodDr: billDebitPeriod > 0 ? billDebitPeriod : 0,
+      periodCr: billDebitPeriod < 0 ? -billDebitPeriod : 0,
+      closingDr: billDebitTotal > 0 ? billDebitTotal : 0,
+      closingCr: billDebitTotal < 0 ? -billDebitTotal : 0,
+      system: true,
+    });
+  }
   // The unmatched credit of bill charges that could not post (mis-mapped
   // tariff heads): the receivable row above keeps the member's charge — the
   // member really owes it — so this SYSTEM row carries the other side, the
   // way a suspense account would, keeping every column in foot while making
   // the mapping error visible on the printed statement.
   const gapClosing = gapPre + gapPeriod;
-  if (receivableId && (gapPre !== 0 || gapPeriod !== 0)) {
+  if (controlIsReceivableLedger && (gapPre !== 0 || gapPeriod !== 0)) {
     rows.push({
       accountId: null,
       code: "",
