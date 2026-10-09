@@ -177,9 +177,25 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
     // made the bank balance in the TB/BS drift away from the Bank Book. The
     // same guard covers the receivable total line itself, should the
     // receivable account ever be (mis)set to a bank-cash ledger.
+    //
+    // Every bill entry must BALANCE: the receivable debit is the sum of the
+    // credit lines actually emitted — never the stored total. A carried
+    // opening-balance line restates dues the books already carry (it is not
+    // credited anywhere), and a mis-mapped line posts nowhere; debiting the
+    // full total used to leave the Trial Balance's Current Period and
+    // Closing columns short on credits by exactly those amounts.
     const isBankCash = (id: Id<"accounts">) =>
       data.accounts.find((a) => a._id === id)?.kind === "bank_cash";
     for (const b of data.bills) {
+      if (isBankCash(receivableId)) continue; // misconfigured control: post nothing rather than an unbalanced credit-only entry
+      const credits = b.lines.filter(
+        (l) =>
+          l.accountId !== receivableId &&
+          !isCarriedOpeningLine(l, receivableId) &&
+          !isBankCash(l.accountId),
+      );
+      if (credits.length === 0) continue; // carried-only / line-less bill: it restates dues, it posts nothing
+      const charged = credits.reduce((s, l) => s + l.amount, 0);
       entries.push({
         date: b.issueDate,
         voucherNo: b.billNo,
@@ -187,28 +203,17 @@ export function unifiedEntries(data: SocietyData): GenericEntry[] {
         memberId: b.memberId,
         narration: `Bill ${b.period}`,
         lines: [
-          ...(isBankCash(receivableId)
-            ? []
-            : [
-                {
-                  accountId: receivableId,
-                  debit: b.total,
-                  credit: 0,
-                  note: `Period ${b.period}`,
-                },
-              ]),
-          // The carried opening-balance line is part of the receivable debit
-          // itself (it predates the system), so it is not credited anywhere.
-          ...b.lines
-            .filter(
-              (l) =>
-                l.accountId !== receivableId && !isBankCash(l.accountId),
-            )
-            .map((l) => ({
-              accountId: l.accountId,
-              debit: 0,
-              credit: l.amount,
-            })),
+          {
+            accountId: receivableId,
+            debit: charged,
+            credit: 0,
+            note: `Period ${b.period}`,
+          },
+          ...credits.map((l) => ({
+            accountId: l.accountId,
+            debit: 0,
+            credit: l.amount,
+          })),
         ],
       });
     }
@@ -262,8 +267,13 @@ export async function computeTrialBalance(
   >();
   for (const a of accounts) movement.set(a._id, { pre: 0, dr: 0, cr: 0 });
   // GL-only movements on the member receivable control: entries the member
-  // ledgers do not mirror (bills and member receipts ARE the mirror).
+  // ledgers do not mirror (bills and member receipts ARE the mirror — while
+  // their member still exists).
   const controlGlOnly = { pre: 0, dr: 0, cr: 0 };
+  // Control movements from bills/receipts whose member is gone (deleted or
+  // never bound): the member ledgers present no figure for them, so the
+  // receivable row must show their GL leg instead of losing them.
+  const unmirrored = { pre: 0, dr: 0, cr: 0 };
   for (const e of unifiedEntries(data)) {
     if (e.date > toDate) continue;
     const prePeriod = e.date < fromDate;
@@ -276,16 +286,25 @@ export async function computeTrialBalance(
           m.cr += l.credit;
         }
       }
-      if (
-        receivableId &&
-        l.accountId === receivableId &&
-        e.type !== "bill" &&
-        e.type !== "member_receipt"
-      ) {
-        if (prePeriod) controlGlOnly.pre += l.debit - l.credit;
-        else {
-          controlGlOnly.dr += l.debit;
-          controlGlOnly.cr += l.credit;
+      if (receivableId && l.accountId === receivableId) {
+        const memberWorld = e.type === "bill" || e.type === "member_receipt";
+        const mirrored =
+          memberWorld &&
+          e.memberId !== undefined &&
+          e.memberId !== null &&
+          data.members.some((mm) => mm._id === e.memberId);
+        if (memberWorld && !mirrored) {
+          if (prePeriod) unmirrored.pre += l.debit - l.credit;
+          else {
+            unmirrored.dr += l.debit;
+            unmirrored.cr += l.credit;
+          }
+        } else if (!memberWorld) {
+          if (prePeriod) controlGlOnly.pre += l.debit - l.credit;
+          else {
+            controlGlOnly.dr += l.debit;
+            controlGlOnly.cr += l.credit;
+          }
         }
       }
     }
@@ -302,6 +321,45 @@ export async function computeTrialBalance(
       memberOpening += r.opening;
       memberBilled += r.billed;
       memberReceived += r.received;
+    }
+  }
+  // Bill charges that never reach a credit ledger (a line mis-mapped onto
+  // the control itself or onto a bank-cash ledger) post NOWHERE — the bill's
+  // receivable debit is the sum of the emitted credits. The books still owe
+  // the member that charge, so the receivable row keeps it and a labelled
+  // SYSTEM suspense row carries the unmatched credit — without it the
+  // Current Period and Closing columns would run short by exactly the
+  // mis-mapped amounts. `gap*` covers every bill; the `unmirrored*` split
+  // supplements only bills whose member is gone (their member figures do
+  // not exist, so their posted leg already showed the charge minus gap).
+  let gapPre = 0;
+  let gapPeriod = 0;
+  let gapUnmirroredPre = 0;
+  let gapUnmirroredPeriod = 0;
+  if (receivableId) {
+    const isBankCash = (id: Id<"accounts">) =>
+      data.accounts.find((a) => a._id === id)?.kind === "bank_cash";
+    for (const b of data.bills) {
+      if (b.issueDate > toDate) continue;
+      const posted = b.lines
+        .filter(
+          (l) =>
+            l.accountId !== receivableId &&
+            !isCarriedOpeningLine(l, receivableId) &&
+            !isBankCash(l.accountId),
+        )
+        .reduce((s, l) => s + l.amount, 0);
+      const delta = billChargeAmount(b, receivableId) - posted;
+      if (delta === 0) continue;
+      const mirrored =
+        !!b.memberId && data.members.some((mm) => mm._id === b.memberId);
+      if (b.issueDate < fromDate) {
+        gapPre += delta;
+        if (!mirrored) gapUnmirroredPre += delta;
+      } else {
+        gapPeriod += delta;
+        if (!mirrored) gapUnmirroredPeriod += delta;
+      }
     }
   }
   const rows: TrialBalanceColumnRow[] = [];
@@ -321,17 +379,25 @@ export async function computeTrialBalance(
       const glCarriesOpening = debitAdjusted !== 0 || controlGlOnly.pre !== 0;
       if (glCarriesOpening) {
         // GL basis: the control ledger carries the opening (its own balance
-        // or pre-period postings) — the row is its plain GL movement.
-        opening = debitAdjusted + m.pre;
-        dr = m.dr;
+        // or pre-period postings) — the row is its plain GL movement, plus
+        // the unposted bill charges it never received a leg for.
+        opening = debitAdjusted + m.pre + gapPre;
+        dr = m.dr + gapPeriod;
         cr = m.cr;
       } else {
         // Member basis: the GL knows nothing of the opening, so the row
         // presents the member ledgers (openings per member, bills, receipts)
-        // plus the GL-only adjustments (journals) they cannot mirror.
-        opening = memberOpening;
-        dr = memberBilled + controlGlOnly.dr;
-        cr = memberReceived + controlGlOnly.cr;
+        // plus the GL-only adjustments (journals) they cannot mirror. The
+        // member figures already carry every mirrored bill's full charge
+        // (posted or not); bills whose member is gone need their posted leg
+        // plus that member-less charge's unposted part added back.
+        opening = memberOpening + unmirrored.pre + gapUnmirroredPre;
+        dr =
+          memberBilled +
+          controlGlOnly.dr +
+          unmirrored.dr +
+          gapUnmirroredPeriod;
+        cr = memberReceived + controlGlOnly.cr + unmirrored.cr;
       }
     } else {
       opening = debitAdjusted + m.pre;
@@ -356,6 +422,29 @@ export async function computeTrialBalance(
       closingDr,
       closingCr,
       printNo: a.printNo,
+    });
+  }
+  // The unmatched credit of bill charges that could not post (mis-mapped
+  // tariff heads): the receivable row above keeps the member's charge — the
+  // member really owes it — so this SYSTEM row carries the other side, the
+  // way a suspense account would, keeping every column in foot while making
+  // the mapping error visible on the printed statement.
+  const gapClosing = gapPre + gapPeriod;
+  if (receivableId && (gapPre !== 0 || gapPeriod !== 0)) {
+    rows.push({
+      accountId: null,
+      code: "",
+      name: "Unposted bill charges — mis-mapped heads (Suspense)",
+      type: "asset",
+      // Credit side by construction: the receivable row above keeps the
+      // debit (the member owes the charge), this row is its unmatched twin.
+      openingDr: gapPre < 0 ? -gapPre : 0,
+      openingCr: gapPre > 0 ? gapPre : 0,
+      periodDr: gapPeriod < 0 ? -gapPeriod : 0,
+      periodCr: gapPeriod > 0 ? gapPeriod : 0,
+      closingDr: gapClosing < 0 ? -gapClosing : 0,
+      closingCr: gapClosing > 0 ? gapClosing : 0,
+      system: true,
     });
   }
   // The system "Income over Expenses" ledger, as the user asked for it: its
@@ -417,9 +506,11 @@ export async function computeTrialBalance(
     });
     for (const r of rows) {
       if (r.accountId === ioe._id) {
-        // Recompute the IoE closing from its credit-positive opening plus
-        // the (possibly updated) period columns.
-        const open = -ioe.openingBalance;
+        // Recompute the IoE closing from the row's OWN opening (typed
+        // balance plus pre-period postings) plus the updated period columns.
+        // Reading the typed balance alone dropped any pre-period closing
+        // journal from the Closing column and left it out of foot.
+        const open = r.openingDr - r.openingCr;
         const net = open + (r.periodDr - r.periodCr);
         r.closingDr = net > 0 ? net : 0;
         r.closingCr = net < 0 ? -net : 0;

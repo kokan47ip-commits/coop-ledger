@@ -58,7 +58,15 @@ export default function TrialBalance() {
     }),
     { openingDr: 0, openingCr: 0, periodDr: 0, periodCr: 0, closingDr: 0, closingCr: 0 },
   );
-  const balanced = Math.abs(totals.closingDr - totals.closingCr) < 0.5;
+  // The statement must foot under EVERY column group — Opening, Current
+  // Period and Closing — so the badge checks each Dr/Cr pair separately
+  // (an opening and a period error of opposite signs can cancel in Closing).
+  const outBy = Math.max(
+    Math.abs(totals.openingDr - totals.openingCr),
+    Math.abs(totals.periodDr - totals.periodCr),
+    Math.abs(totals.closingDr - totals.closingCr),
+  );
+  const balanced = outBy < 0.5;
 
   const meta: ExportMeta | null = society
     ? {
@@ -177,8 +185,8 @@ export default function TrialBalance() {
             }`}
           >
             {balanced
-              ? "✓ Books balanced — closing debits equal credits"
-              : `Closing balance out by ${formatMoney(Math.abs(totals.closingDr - totals.closingCr))}`}
+              ? "✓ Books balanced — every column foots (Dr = Cr)"
+              : `Out by ${formatMoney(outBy)} — a column group does not foot`}
           </p>
         )}
       </div>
