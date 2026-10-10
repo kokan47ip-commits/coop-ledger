@@ -69,6 +69,18 @@ const TYPES = [
 /** Selectable statement sections — one at a time in the Chart of Accounts. */
 const SECTIONS = TYPES;
 
+/**
+ * The Form N system ledgers, by exact name. They're auto-created per society
+ * and the statement engine resolves them by name, so in bulk "Edit all" they
+ * render locked: only Opening balance and Print No. can change.
+ */
+const SYSTEM_LEDGER_NAMES = new Set([
+  "dues from members",
+  "advance from members",
+  "income over expenses",
+]);
+const isSystemLedger = (name: string) => SYSTEM_LEDGER_NAMES.has(name.trim().toLowerCase());
+
 /** Inline-editable fields for one row in bulk "Edit all" mode. */
 type AccountDraft = {
   code: string;
@@ -690,7 +702,7 @@ export default function ChartOfAccounts() {
                       variant="outline"
                       size="sm"
                       className="rounded-lg"
-                      disabled={!canEdit || selected.size === 0}
+                      disabled={!canEdit || selected.size === 0 || editingAll}
                       onClick={() => setBulkOpen(true)}
                     >
                       Assign group…
@@ -753,6 +765,7 @@ export default function ChartOfAccounts() {
                         <TableBody>
                           {g.rows.map((a) => {
                             const d = editingAll ? drafts[a._id] : undefined;
+                            const locked = editingAll && isSystemLedger(a.name);
                             const groupOptions = (groups ?? []).filter((grp) => grp.type === a.type);
                             return (
                             <TableRow key={a._id} className={d ? "bg-muted/30" : undefined}>
@@ -771,6 +784,7 @@ export default function ChartOfAccounts() {
                                       className="h-8 font-mono text-xs"
                                       value={d.code}
                                       aria-label={`Code for ${a.name}`}
+                                      disabled={locked}
                                       onChange={(e) => patchDraft(a._id, { code: e.target.value })}
                                     />
                                   </TableCell>
@@ -779,6 +793,7 @@ export default function ChartOfAccounts() {
                                       className="h-8 text-sm"
                                       value={d.name}
                                       aria-label={`Account name for ${a.name}`}
+                                      disabled={locked}
                                       onChange={(e) => patchDraft(a._id, { name: e.target.value })}
                                     />
                                   </TableCell>
@@ -796,7 +811,7 @@ export default function ChartOfAccounts() {
                                       value={d.groupId || "none"}
                                       onValueChange={(v) => patchDraft(a._id, { groupId: v === "none" ? "" : (v as Id<"accountGroups">) })}
                                     >
-                                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="No group" /></SelectTrigger>
+                                      <SelectTrigger className="h-8 text-xs" disabled={locked}><SelectValue placeholder="No group" /></SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="none">No group</SelectItem>
                                         {groupOptions.map((grp) => (
@@ -810,7 +825,7 @@ export default function ChartOfAccounts() {
                                       value={d.kind}
                                       onValueChange={(v) => patchDraft(a._id, { kind: v })}
                                     >
-                                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                      <SelectTrigger className="h-8 text-xs" disabled={locked}><SelectValue /></SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="none">General</SelectItem>
                                         <SelectItem value="bank_cash">Bank / Cash</SelectItem>

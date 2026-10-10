@@ -2,6 +2,14 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireSociety, requireSocietyWrite } from "./lib";
+import type { AccountType } from "../lib/bulkUpdateRules";
+import {
+  batchDuplicateProblem,
+  blankFieldProblem,
+  crossChartDuplicateProblem,
+  groupMismatchProblem,
+  systemRenameProblem,
+} from "../lib/bulkUpdateRules";
 import type { MutationCtx } from "./_generated/server";
 
 /**
@@ -158,50 +166,46 @@ export const bulkUpdate = mutation({
       throw new Error("Some accounts don't belong to this society — reload the page and try again.");
     }
 
-    const systemNames = new Set(FORM_N_LEDGERS.map((l) => l.name.toLowerCase()));
-    const forSystem = rows.some((r) => r && systemNames.has(r.name.toLowerCase()));
-    if (forSystem) {
-      throw new Error(
-        "System ledgers (Dues from Members, Advance from Members, Income over Expenses) cannot be renamed or re-coded — they're used by the statement engine. Edit other accounts, or create a new ledger.",
-      );
+    // System ledgers are reserved for the Form N statement engine, which
+    // resolves them by exact name/code — their IDENTITY must survive this
+    // mutation. Balances, print order and grouping may still be edited.
+    for (let i = 0; i < updates.length; i++) {
+      const row = rows[i];
+      const u = updates[i];
+      if (!row || !u) continue;
+      const renameProblem = systemRenameProblem(row, u);
+      if (renameProblem) throw new Error(renameProblem);
     }
 
-    // Duplicate-code guard: compare each edited code against the full society
-    // chart, excluding the row it belongs to.
-    const seen = new Map<string, string>(); // normCode → code
     for (const u of updates) {
-      const code = u.code.trim();
-      if (!code) throw new Error("Every account needs a code.");
-      if (!u.name.trim()) throw new Error("Every account needs a name.");
-      const key = code.toLowerCase();
-      const other = seen.get(key);
-      if (other && other !== u.id) {
-        throw new Error(`Duplicate code "${code}" — two rows would share the same ledger code.`);
-      }
-      seen.set(key, u.id);
+      const blank = blankFieldProblem(u);
+      if (blank) throw new Error(blank);
     }
-    if (rows.length > 0) {
-      const otherAccounts = await ctx.db
+    const batchDup = batchDuplicateProblem(updates);
+    if (batchDup) {
+      throw new Error(`Duplicate code "${batchDup}" — two rows would share the same ledger code.`);
+    }
+    {
+      const chart = await ctx.db
         .query("accounts")
         .withIndex("by_society", (q) => q.eq("societyId", societyId))
         .collect();
-      const editedIds = new Set(updates.map((u) => u.id));
-      const editedKeys = new Set(updates.map((u) => u.code.trim().toLowerCase()));
-      for (const a of otherAccounts) {
-        if (editedIds.has(a._id)) continue;
-        const key = a.code.trim().toLowerCase();
-        if (editedKeys.has(key)) {
-          throw new Error(
-            `Code "${a.code}" is already used by another ledger (${a.name}). Codes must be unique across the whole chart.`,
-          );
-        }
+      const cross = crossChartDuplicateProblem(
+        updates,
+        chart.map((a) => ({ id: a._id, code: a.code, name: a.name })),
+      );
+      if (cross) {
+        const other = chart.find((a) => a.code.trim().toLowerCase() === cross.toLowerCase());
+        throw new Error(
+          `Code "${cross}" is already used by another ledger (${other?.name ?? "unknown"}). Codes must be unique across the whole chart.`,
+        );
       }
     }
 
     // Groups — section consistency: only assign a group whose type matches
     // the account's existing type.
     const groupIds = [...new Set(updates.map((u) => u.groupId).filter((g): g is Id<"accountGroups"> => !!g))];
-    const groupTypes: Map<Id<"accountGroups">, string> = new Map();
+    const groupTypes: Map<Id<"accountGroups">, AccountType> = new Map();
     for (const gid of groupIds) {
       const g = await ctx.db.get(gid);
       if (!g || g.societyId !== societyId) {
@@ -213,14 +217,8 @@ export const bulkUpdate = mutation({
       const row = rows[i];
       const u = updates[i];
       if (!row || !u) continue;
-      if (u.groupId) {
-        const gt = groupTypes.get(u.groupId);
-        if (gt && gt !== row.type) {
-          throw new Error(
-            `"${u.name.trim()}" is a ${row.type} account — "${gt}" groups can't hold it.`,
-          );
-        }
-      }
+      const mismatch = groupMismatchProblem(row, u, (gid) => groupTypes.get(gid as Id<"accountGroups">));
+      if (mismatch) throw new Error(mismatch);
     }
 
     let updated = 0;
