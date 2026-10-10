@@ -3,6 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireSociety, requireSocietyWrite } from "./lib";
 import type { AccountType } from "../lib/bulkUpdateRules";
+import { propagateNewAccount } from "./chartSync";
 import {
   batchDuplicateProblem,
   blankFieldProblem,
@@ -92,12 +93,20 @@ export const upsert = mutation({
     printNo: v.optional(v.string()),
   },
   handler: async (ctx, { societyId, id, ...data }) => {
-    await requireSocietyWrite(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     if (id) {
       await ctx.db.patch(id, data);
       return id;
     }
-    return await ctx.db.insert("accounts", { societyId, ...data });
+    const newId = await ctx.db.insert("accounts", { societyId, ...data });
+    // Master chart sharing: a ledger added to a master society flows to every
+    // linked (child) society — structure only, never balances. Rows inserted
+    // by the sync itself carry origin "master" and skip re-propagation.
+    const row = await ctx.db.get(newId);
+    if (!society.masterSocietyId && row?.origin !== "master") {
+      await propagateNewAccount(ctx, societyId, { _id: newId, ...data });
+    }
+    return newId;
   },
 });
 
@@ -157,13 +166,20 @@ export const bulkUpdate = mutation({
     ),
   },
   handler: async (ctx, { societyId, updates }) => {
+    // Every rejection names the offending row — an opaque "Call by client"
+    // server error leaves the office unable to fix anything.
+    const reject = (rowIndex: number, msg: string): never => {
+      const u = updates[rowIndex];
+      throw new Error(u ? `Row "${u.code} — ${u.name}": ${msg}` : msg);
+    };
     await requireSocietyWrite(ctx, societyId);
     if (updates.length === 0) return { updated: 0 };
 
     // Fresh read of the rows being edited (authority check + original values).
     const rows = await Promise.all(updates.map((u) => ctx.db.get(u.id)));
-    if (rows.some((r) => !r || r.societyId !== societyId)) {
-      throw new Error("Some accounts don't belong to this society — reload the page and try again.");
+    const orphan = rows.findIndex((r) => !r || r.societyId !== societyId);
+    if (orphan !== -1) {
+      reject(orphan, "this ledger can no longer be found in this society — reload the page and try again.");
     }
 
     // System ledgers are reserved for the Form N statement engine, which
@@ -174,16 +190,16 @@ export const bulkUpdate = mutation({
       const u = updates[i];
       if (!row || !u) continue;
       const renameProblem = systemRenameProblem(row, u);
-      if (renameProblem) throw new Error(renameProblem);
+      if (renameProblem) reject(i, renameProblem);
     }
 
-    for (const u of updates) {
-      const blank = blankFieldProblem(u);
-      if (blank) throw new Error(blank);
+    for (let i = 0; i < updates.length; i++) {
+      const blank = blankFieldProblem(updates[i]!);
+      if (blank) reject(i, blank);
     }
     const batchDup = batchDuplicateProblem(updates);
     if (batchDup) {
-      throw new Error(`Duplicate code "${batchDup}" — two rows would share the same ledger code.`);
+      throw new Error(`Duplicate code "${batchDup}" — two rows in this save would share the same ledger code.`);
     }
     {
       const chart = await ctx.db
@@ -196,9 +212,8 @@ export const bulkUpdate = mutation({
       );
       if (cross) {
         const other = chart.find((a) => a.code.trim().toLowerCase() === cross.toLowerCase());
-        throw new Error(
-          `Code "${cross}" is already used by another ledger (${other?.name ?? "unknown"}). Codes must be unique across the whole chart.`,
-        );
+        const i = updates.findIndex((u) => u.code.trim().toLowerCase() === cross.toLowerCase());
+        reject(i, `code "${cross}" is already used by another ledger (${other?.name ?? "unknown"}). Codes must be unique across the whole chart.`);
       }
     }
 
@@ -209,16 +224,17 @@ export const bulkUpdate = mutation({
     for (const gid of groupIds) {
       const g = await ctx.db.get(gid);
       if (!g || g.societyId !== societyId) {
-        throw new Error("A referenced group doesn't exist in this society.");
+        const i = updates.findIndex((u) => u.groupId === gid);
+        reject(i, "its group no longer exists in this society — pick another group or save without one.");
       }
-      groupTypes.set(gid, g.type);
+      groupTypes.set(gid, g!.type);
     }
     for (let i = 0; i < updates.length; i++) {
       const row = rows[i];
       const u = updates[i];
       if (!row || !u) continue;
       const mismatch = groupMismatchProblem(row, u, (gid) => groupTypes.get(gid as Id<"accountGroups">));
-      if (mismatch) throw new Error(mismatch);
+      if (mismatch) reject(i, mismatch);
     }
 
     let updated = 0;

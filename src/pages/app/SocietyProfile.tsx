@@ -17,10 +17,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { saveClaimCode, useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { effectiveFyPeriod, fyYearLabel, todayISO } from "@/lib/format";
-import { CheckCircle2, Circle, Save, TriangleAlert, Users } from "lucide-react";
+import { CheckCircle2, Circle, Copy, Save, TriangleAlert, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -84,6 +85,14 @@ export default function SocietyProfile() {
     treasurerMemberId: "",
   });
   const [saving, setSaving] = useState(false);
+  /** Onboard-with-master: clone another society's chart structure (no balances). */
+  const [masterSocietyId, setMasterSocietyId] = useState<Id<"societies"> | "">("");
+
+  /** Societies this user can read — candidates for the master chart. */
+  const masterCandidates = useQuery(
+    api.societies.listMine,
+    isNew ? {} : "skip",
+  ) as { _id: Id<"societies">; name: string }[] | undefined;
 
   // Form state syncs from the loaded society during render (not in an
   // effect): one sync per society identity, and a background refetch can
@@ -167,12 +176,17 @@ export default function SocietyProfile() {
           fyStartMonth: form.fyStartMonth,
           fyYear: form.fyYear || undefined,
           fyStartDate: form.fyStartDate || undefined,
+          masterSocietyId: masterSocietyId || undefined,
         });
         // Guest-created societies get a claim code kept on this device; after
         // email sign-in the society is adopted automatically into the account.
         if (claimCode) saveClaimCode(id, claimCode);
         setActiveId(id);
-        toast.success("Society onboarded — chart of accounts generated");
+        toast.success(
+          masterSocietyId
+            ? "Society onboarded — ledgers and groups copied from the master society (balances start at zero)"
+            : "Society onboarded — chart of accounts generated",
+        );
         navigate("/app/society");
       } else if (society) {
         await updateSociety({
@@ -383,6 +397,47 @@ export default function SocietyProfile() {
                   <Input id="email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
               </div>
             </section>
+
+            {isNew && (
+              <section className="space-y-4">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Chart of accounts source
+                </h3>
+                <div className="panel space-y-3 p-5">
+                  <div className="flex items-start gap-3">
+                    <Copy className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <div className="space-y-1">
+                      <Label htmlFor="master">Copy the chart from a master society (optional)</Label>
+                      <p className="text-sm leading-6 text-muted-foreground">
+                        Pick a society whose ledger heads and groups this new one should start with —
+                        e.g. an existing client like <em>Shama-1 Co-operative Housing Society Ltd.</em> Only
+                        the chart structure is copied (codes, names, groups, print order); opening
+                        balances stay at zero. Afterwards, ledgers and groups added to the master
+                        appear here automatically.
+                      </p>
+                    </div>
+                  </div>
+                  <Select
+                    value={masterSocietyId || "none"}
+                    onValueChange={(v) => setMasterSocietyId(v === "none" ? "" : (v as Id<"societies">))}
+                  >
+                    <SelectTrigger id="master"><SelectValue placeholder="Start from the standard chart" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Standard chart (default)</SelectItem>
+                      {(masterCandidates ?? [])
+                        .filter((s) => s._id !== society?._id)
+                        .map((s) => (
+                          <SelectItem key={s._id} value={s._id}>{s.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    You can still add, rename or remove ledgers in the new society afterwards — the
+                    copied chart is just the starting point, and master additions keep flowing in.
+                  </p>
+                </div>
+              </section>
+            )}
           </TabsContent>
 
           {/* --- Financial Period tab --- */}

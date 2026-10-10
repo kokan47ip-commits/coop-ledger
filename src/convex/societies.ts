@@ -3,6 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
 import { ensureFormNLedgers } from "./accounts";
+import { cloneMasterChart } from "./chartSync";
 import {
   DEFAULT_ACCOUNTS,
   isSoftwareAdmin,
@@ -100,6 +101,12 @@ export const create = mutation({
     fyYear: v.optional(v.string()),
     fyStartDate: v.optional(v.string()),
     withSampleData: v.optional(v.boolean()),
+    /**
+     * Onboard this society from a "master" society: immediately clone its
+     * groups + ledger heads (codes/names only, zero balances) instead of the
+     * default starter chart, and link it for ongoing sync.
+     */
+    masterSocietyId: v.optional(v.id("societies")),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
@@ -129,25 +136,33 @@ export const create = mutation({
       claimEmail: isGuest ? (args.email?.toLowerCase().trim() || undefined) : undefined,
       createdBy: userId,
       claimCode,
+      masterSocietyId: args.masterSocietyId,
     });
-    await seedDefaultGroups(ctx, societyId);
-    const groups = await ctx.db
-      .query("accountGroups")
-      .withIndex("by_society", (q) => q.eq("societyId", societyId))
-      .collect();
-    for (const a of DEFAULT_ACCOUNTS) {
-      await ctx.db.insert("accounts", {
-        societyId,
-        code: a.code,
-        name: a.name,
-        type: a.type,
-        kind: a.kind,
-        openingBalance: 0,
-        groupId: groups.find((g) => g.name === a.group)?._id,
-      });
+    if (args.masterSocietyId) {
+      // Master chart: groups + ledger heads cloned structure-only (openings
+      // are zero), and the society is linked for ongoing master→child sync.
+      await cloneMasterChart(ctx, args.masterSocietyId, societyId);
+    } else {
+      await seedDefaultGroups(ctx, societyId);
+      const groups = await ctx.db
+        .query("accountGroups")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect();
+      for (const a of DEFAULT_ACCOUNTS) {
+        await ctx.db.insert("accounts", {
+          societyId,
+          code: a.code,
+          name: a.name,
+          type: a.type,
+          kind: a.kind,
+          openingBalance: 0,
+          groupId: groups.find((g) => g.name === a.group)?._id,
+        });
+      }
     }
     // The system Form N ledgers (Dues from Members / Advance from Members /
-    // Income over Expenses) are part of every society's chart from day one.
+    // Income over Expenses) are part of every society's chart from day one,
+    // regardless of master linking — the statement engine needs them.
     await ensureFormNLedgers(ctx, societyId);
     return { societyId, claimCode: claimCode ?? null };
   },

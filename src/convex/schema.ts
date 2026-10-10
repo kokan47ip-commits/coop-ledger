@@ -83,10 +83,18 @@ const schema = defineSchema(
        * 1.5 % p.m. ≈ 18 % per annum.
        */
       lateFeePercent: v.optional(v.number()),
+      /**
+       * Master-society chart sharing: this society's ledgers/groups were
+       * cloned from the master (whose id is stored here) and stay in sync —
+       * new ledgers/groups added to the master flow into every linked
+       * society automatically (no balances, ever — chart structure only).
+       */
+      masterSocietyId: v.optional(v.id("societies")),
     })
       .index("by_creator", ["createdBy"])
       .index("by_claim_code", ["claimCode"])
-      .index("by_claim_email", ["claimEmail"]),
+      .index("by_claim_email", ["claimEmail"])
+      .index("by_master", ["masterSocietyId"]),
 
     accounts: defineTable({
       societyId: v.id("societies"),
@@ -105,7 +113,18 @@ const schema = defineSchema(
       groupId: v.optional(v.id("accountGroups")),
       /** User-defined printing serial no. — orders this ledger on printed statements. */
       printNo: v.optional(v.string()),
-    }).index("by_society", ["societyId"]),
+      /**
+       * Chart-sync provenance: masterSocietyId + masterKey tie this account
+       * to its source ledger in the master society, so master-side additions
+       * land (idempotently) on every linked society.
+       */
+      masterSocietyId: v.optional(v.id("societies")),
+      masterKey: v.optional(v.string()), // master account _id (as string key)
+      origin: v.optional(v.union(
+        v.literal("master"),
+        v.literal("local"),
+      )),
+    }).index("by_society", ["societyId"]).index("by_master_key", ["masterSocietyId", "masterKey"]),
 
     // Ledger classification groups (e.g. Fixed Assets, Reserve & Surplus) that
     // accounts are filed under for statement presentation.
@@ -120,7 +139,14 @@ const schema = defineSchema(
         v.literal("expense"),
       ),
       sequence: v.number(), // display order within the statement
-    }).index("by_society", ["societyId"]),
+      /** Chart-sync provenance (see accounts). */
+      masterSocietyId: v.optional(v.id("societies")),
+      masterKey: v.optional(v.string()),
+      origin: v.optional(v.union(
+        v.literal("master"),
+        v.literal("local"),
+      )),
+    }).index("by_society", ["societyId"]).index("by_master_key", ["masterSocietyId", "masterKey"]),
 
     members: defineTable({
       societyId: v.id("societies"),
