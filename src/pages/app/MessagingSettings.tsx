@@ -79,12 +79,12 @@ export default function MessagingSettings() {
   const [copied, setCopied] = useState(false);
 
   // ---- Society UPI ID (VPA) → dynamic QR on member bills ----
-  // Draft starts from the saved value and re-syncs when the query lands.
+  // Draft tracks the SAVED value until the office touches it (vpaDirty), so a
+  // save from another session/device re-syncs instead of drifting silently.
   const [vpaDraft, setVpaDraft] = useState("");
-  const [vpaSynced, setVpaSynced] = useState(false);
+  const [vpaDirty, setVpaDirty] = useState(false);
   const [vpaQrUrl, setVpaQrUrl] = useState<string | null>(null);
-  if (!vpaSynced && upiSettings !== undefined) {
-    setVpaSynced(true);
+  if (!vpaDirty && upiSettings !== undefined && vpaDraft !== (upiSettings.upiVpa ?? "")) {
     setVpaDraft(upiSettings.upiVpa ?? "");
   }
   // Preview QR mirrors the DRAFT, so the office can sanity-scan before saving.
@@ -112,6 +112,7 @@ export default function MessagingSettings() {
     if (!societyId) return;
     try {
       await saveUpi({ societyId, upiVpa: vpaDraft.trim() || null });
+      setVpaDirty(false);
       toast.success(
         vpaDraft.trim()
           ? "UPI ID saved — every member bill now prints a scannable payment QR."
@@ -543,7 +544,10 @@ export default function MessagingSettings() {
                   <div className="flex items-center gap-2">
                     <Input
                       value={vpaDraft}
-                      onChange={(e) => setVpaDraft(e.target.value)}
+                      onChange={(e) => {
+                        setVpaDraft(e.target.value);
+                        setVpaDirty(true);
+                      }}
                       disabled={!canEdit}
                       placeholder="e.g. shamachsl@hdfcbank"
                       autoComplete="off"

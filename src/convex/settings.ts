@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireSociety, requireSocietyWrite } from "./lib";
+import { normalizeVpa } from "../lib/bulkUpdateRules";
 
 /**
  * Office-facing configuration screen for outbound messaging (Email + WhatsApp).
@@ -135,13 +136,9 @@ export const saveUpiSettings = mutation({
       });
     }
     if (upiVpa !== undefined) {
-      const vpa = upiVpa?.trim() || undefined;
-      if (vpa && !vpa.includes("@")) {
-        throw new ConvexError(
-          "That doesn't look like a UPI ID — it needs the bank part after the @ (e.g. societynme@hdfcbank).",
-        );
-      }
-      await ctx.db.patch(societyId, { upiVpa: vpa });
+      const n = normalizeVpa(upiVpa);
+      if (!n.ok) throw new ConvexError(n.problem);
+      await ctx.db.patch(societyId, { upiVpa: n.vpa });
     }
     return true;
   },

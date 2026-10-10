@@ -68,6 +68,27 @@ export function blankFieldProblem(
 }
 
 /**
+ * Society UPI ID (VPA) validation — shared by BOTH save paths
+ * (Messaging & Payments → settings.saveUpiSettings, and Society Profile →
+ * societies.update) so an invalid payee can never reach a printed bill QR.
+ * Returns the trimmed VPA, or null to clear, or the problem message.
+ */
+export function normalizeVpa(raw: string | null | undefined):
+  | { ok: true; vpa: string | undefined }
+  | { ok: false; problem: string } {
+  const vpa = raw?.trim() || undefined;
+  if (!vpa) return { ok: true, vpa: undefined };
+  if (!vpa.includes("@")) {
+    return {
+      ok: false,
+      problem:
+        "That doesn't look like a UPI ID — it needs the bank part after the @ (e.g. societynme@hdfcbank).",
+    };
+  }
+  return { ok: true, vpa };
+}
+
+/**
  * Within the batch, two rows may not end up with the same (case-insensitive)
  * code. Returns the first colliding code.
  */

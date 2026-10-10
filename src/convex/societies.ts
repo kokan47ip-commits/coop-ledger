@@ -4,6 +4,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
 import { ensureFormNLedgers } from "./accounts";
 import { cloneMasterChart } from "./chartSync";
+import { normalizeVpa } from "../lib/bulkUpdateRules";
 import {
   DEFAULT_ACCOUNTS,
   isSoftwareAdmin,
@@ -312,7 +313,9 @@ export const update = mutation({
     secretaryMemberId: v.optional(v.id("members")),
     treasurerMemberId: v.optional(v.id("members")),
     receivableAccountId: v.optional(v.id("accounts")),
-    /** Society's UPI ID (VPA) for member QR codes and bill printing. */
+    /** Society's UPI ID (VPA) for member QR codes and bill printing. Validated
+     *  by the same shared rule as the Messaging & Payments save — an invalid
+     *  payee may never reach a printed bill QR. */
     upiVpa: v.optional(v.string()),
     /** Stable late-fee / interest rate (% per month) charged on arrears. */
     lateFeePercent: v.optional(v.number()),
@@ -321,6 +324,11 @@ export const update = mutation({
     const userId = await requireUserId(ctx);
     const s = await ctx.db.get(id);
     if (!s || s.createdBy !== userId) throw new Error("Society not found.");
+    if (patch.upiVpa !== undefined) {
+      const n = normalizeVpa(patch.upiVpa);
+      if (!n.ok) throw new Error(n.problem);
+      patch = { ...patch, upiVpa: n.vpa };
+    }
     await ctx.db.patch(id, patch);
   },
 });
