@@ -3,7 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireSociety, requireSocietyWrite } from "./lib";
 import type { AccountType } from "../lib/bulkUpdateRules";
-import { propagateNewAccount } from "./chartSync";
+import { propagateAccountEdit, propagateNewAccount } from "./chartSync";
 import {
   batchDuplicateProblem,
   blankFieldProblem,
@@ -95,7 +95,25 @@ export const upsert = mutation({
   handler: async (ctx, { societyId, id, ...data }) => {
     const society = await requireSocietyWrite(ctx, societyId);
     if (id) {
+      const before = await ctx.db.get(id);
+      if (!before || before.societyId !== societyId) {
+        throw new Error("Account not found in this society.");
+      }
       await ctx.db.patch(id, data);
+      // Master chart sharing: identity edits on a master ledger flow to every
+      // linked society — structure only, never balances (and never for rows
+      // the sync itself created).
+      if (!society.masterSocietyId && before.origin !== "master" && (before.code !== data.code || before.name !== data.name || before.kind !== data.kind || before.printNo !== data.printNo || before.groupId !== data.groupId)) {
+        await propagateAccountEdit(ctx, societyId, {
+          _id: id,
+          code: data.code,
+          name: data.name,
+          type: data.type,
+          kind: data.kind,
+          printNo: data.printNo,
+          groupId: data.groupId,
+        });
+      }
       return id;
     }
     const newId = await ctx.db.insert("accounts", { societyId, ...data });
@@ -158,6 +176,12 @@ export const bulkUpdate = mutation({
         id: v.id("accounts"),
         code: v.string(),
         name: v.string(),
+        type: v.optional(v.union(
+          v.literal("asset"),
+          v.literal("liability"),
+          v.literal("income"),
+          v.literal("expense"),
+        )),
         openingBalance: v.number(),
         groupId: v.optional(v.id("accountGroups")),
         kind: v.optional(v.union(v.literal("bank_cash"), v.literal("receivable"))),
@@ -172,7 +196,7 @@ export const bulkUpdate = mutation({
       const u = updates[rowIndex];
       throw new Error(u ? `Row "${u.code} — ${u.name}": ${msg}` : msg);
     };
-    await requireSocietyWrite(ctx, societyId);
+    const society = await requireSocietyWrite(ctx, societyId);
     if (updates.length === 0) return { updated: 0 };
 
     // Fresh read of the rows being edited (authority check + original values).
@@ -180,6 +204,19 @@ export const bulkUpdate = mutation({
     const orphan = rows.findIndex((r) => !r || r.societyId !== societyId);
     if (orphan !== -1) {
       reject(orphan, "this ledger can no longer be found in this society — reload the page and try again.");
+    }
+
+    // A stale browser tab can still hold a draft under a ledger whose
+    // statement section changed in the meantime (or the sheet import moved
+    // it). A silent type flip corrupts the Balance Sheet vs I&E split, so it
+    // is refused with a row-named message instead of slipping through.
+    for (let i = 0; i < updates.length; i++) {
+      const row = rows[i];
+      const u = updates[i];
+      if (!row || !u) continue;
+      if (u.type && u.type !== row.type) {
+        reject(i, `this ledger now sits under "${row.type}" — change its section by editing the ledger (not bulk edit), or reload the page.`);
+      }
     }
 
     // System ledgers are reserved for the Form N statement engine, which
@@ -238,6 +275,15 @@ export const bulkUpdate = mutation({
     }
 
     let updated = 0;
+    const editedMasterAccounts: {
+      _id: Id<"accounts">;
+      code: string;
+      name: string;
+      type: AccountType;
+      kind?: "bank_cash" | "receivable";
+      printNo?: string;
+      groupId?: Id<"accountGroups">;
+    }[] = [];
     for (let i = 0; i < updates.length; i++) {
       const row = rows[i];
       const u = updates[i];
@@ -260,8 +306,23 @@ export const bulkUpdate = mutation({
       ) {
         await ctx.db.patch(u.id, next);
         updated++;
+        // Master chart sharing: an IDENTITY edit (code/name/printNo/kind/
+        // group) flows to every linked society — structure only, never a
+        // balance. Rows the sync itself created skip (origin "master").
+        if (!society.masterSocietyId && row.origin !== "master") {
+          editedMasterAccounts.push({
+            _id: u.id,
+            code: next.code,
+            name: next.name,
+            type: row.type,
+            kind: next.kind,
+            printNo: next.printNo,
+            groupId: next.groupId,
+          });
+        }
       }
     }
+    for (const a of editedMasterAccounts) await propagateAccountEdit(ctx, societyId, a);
     return { updated };
   },
 });

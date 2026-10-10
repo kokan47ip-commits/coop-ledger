@@ -32,6 +32,7 @@ import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportExcel, exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
 import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
+import { memberUpiUri } from "@/lib/upiQr";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
 import { BookText, Download, FileSpreadsheet, FileText, HandCoins, Mail, MessageCircle, Plus, Printer, Receipt as ReceiptIcon, RefreshCw, Save, Trash2, X } from "lucide-react";
@@ -347,6 +348,23 @@ export default function BillRegister() {
         (b as { billKind?: string }).billKind === "supplementary"
           ? { category: b.category }
           : undefined,
+      // Bill QR: pays this bill's exact due amount into the society's UPI ID,
+      // tagged with the flat so the office can match the payment. Every export
+      // of this register (single PDF/Word, emailed and WhatsApp bill PDFs)
+      // flows through this builder, so setting the payload here makes the QR
+      // print everywhere — matching the Bill View and Printing Hub export.
+      upi:
+        society.upiVpa
+          ? {
+              uri: memberUpiUri({
+                payeeName: society.name,
+                vpa: society.upiVpa,
+                flat: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
+                code: m?.code,
+              }),
+              amount: currentCharges + arrears,
+            }
+          : undefined,
     };
   };
 
@@ -355,6 +373,8 @@ export default function BillRegister() {
     if (!data) return;
     const m = memberOf(b.memberId);
     const name = m ? `${m.code}-${b.billNo}` : b.billNo;
+    // Word embeds the QR as an image — cache it before rendering (the PDF
+    // path draws the module matrix synchronously and needs no preload).
     if (kind === "pdf") billPdf(data, `${name}.pdf`);
     else billWord(data, `${name}.doc`);
   };

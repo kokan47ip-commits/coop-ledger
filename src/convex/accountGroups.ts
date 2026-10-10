@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { DEFAULT_GROUPS, requireSociety, requireSocietyWrite } from "./lib";
-import { propagateNewGroup } from "./chartSync";
+import { propagateGroupEdit, propagateNewGroup } from "./chartSync";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -35,7 +35,22 @@ export const upsert = mutation({
   handler: async (ctx, { societyId, id, sequence, ...data }) => {
     const society = await requireSocietyWrite(ctx, societyId);
     if (id) {
-      await ctx.db.patch(id, { ...data, sequence: sequence ?? 99 });
+      const before = await ctx.db.get(id);
+      if (!before || before.societyId !== societyId) {
+        throw new Error("Group not found in this society.");
+      }
+      const seq = sequence ?? 99;
+      await ctx.db.patch(id, { ...data, sequence: seq });
+      // Master chart sharing: group edits flow to every linked society.
+      if (!society.masterSocietyId && before.origin !== "master" && (before.code !== data.code || before.name !== data.name || before.type !== data.type || before.sequence !== seq)) {
+        await propagateGroupEdit(ctx, societyId, {
+          _id: id,
+          code: data.code,
+          name: data.name,
+          type: data.type,
+          sequence: seq,
+        });
+      }
       return id;
     }
     const newId = await ctx.db.insert("accountGroups", {

@@ -407,15 +407,21 @@ export default function ChartOfAccounts() {
 
   const saveEditAll = async () => {
     if (!societyId) return;
-    const updates = Object.entries(drafts).map(([id, d]) => ({
-      id: id as Id<"accounts">,
-      code: d.code.trim(),
-      name: d.name.trim(),
-      openingBalance: Number(d.opening) || 0,
-      groupId: d.groupId || undefined,
-      kind: d.kind === "none" ? undefined : (d.kind as "bank_cash" | "receivable"),
-      printNo: d.printNo.trim() || undefined,
-    }));
+    const updates = Object.entries(drafts).map(([id, d]) => {
+      const row = (accounts ?? []).find((a) => a._id === (id as Id<"accounts">));
+      return {
+        id: id as Id<"accounts">,
+        // Echo the row's statement section so the server can refuse a stale
+        // tab that tries to move a ledger across sections silently.
+        type: row?.type,
+        code: d.code.trim(),
+        name: d.name.trim(),
+        openingBalance: Number(d.opening) || 0,
+        groupId: d.groupId || undefined,
+        kind: d.kind === "none" ? undefined : (d.kind as "bank_cash" | "receivable"),
+        printNo: d.printNo.trim() || undefined,
+      };
+    });
     const blank = updates.find((u) => !u.code || !u.name);
     if (blank) {
       toast.error("Every row needs both a Code and an Account name.");

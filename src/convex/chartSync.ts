@@ -108,6 +108,111 @@ export async function cloneMasterChart(
 }
 
 /**
+ * Propagate an EDIT of a master ledger to its cloned row in every linked
+ * society — identity fields only (code, name, printNo, kind, group). Never
+ * touches balances, and never fires when the master row was itself inserted
+ * by the sync (origin "master"). Skips silently when the linked society has
+ * no clone (e.g. it was deleted locally) or when an edited code collides
+ * with a locally-created ledger in the child.
+ */
+export async function propagateAccountEdit(
+  ctx: MutationCtx,
+  masterId: Id<"societies">,
+  account: {
+    _id: Id<"accounts">;
+    code: string;
+    name: string;
+    type: "asset" | "liability" | "income" | "expense";
+    kind?: "bank_cash" | "receivable";
+    printNo?: string;
+    groupId?: Id<"accountGroups">;
+  },
+): Promise<number> {
+  const children = await ctx.db
+    .query("societies")
+    .withIndex("by_master", (q) => q.eq("masterSocietyId", masterId))
+    .collect();
+  let updated = 0;
+  for (const child of children) {
+    const clone = await ctx.db
+      .query("accounts")
+      .withIndex("by_master_key", (q) =>
+        q.eq("masterSocietyId", masterId).eq("masterKey", account._id),
+      )
+      .first();
+    if (!clone) continue;
+    // Skip when another (locally created) ledger in the child already holds
+    // the new code — propagate everything EXCEPT the colliding identity.
+    const allChild = await ctx.db
+      .query("accounts")
+      .withIndex("by_society", (q) => q.eq("societyId", child._id))
+      .collect();
+    const codeTaken = allChild.some(
+      (c) => c._id !== clone._id && c.code.trim().toLowerCase() === account.code.trim().toLowerCase(),
+    );
+    let childGroupId: Id<"accountGroups"> | undefined;
+    if (account.groupId) {
+      const childGroup = await ctx.db
+        .query("accountGroups")
+        .withIndex("by_master_key", (q) =>
+          q.eq("masterSocietyId", masterId).eq("masterKey", account.groupId),
+        )
+        .first();
+      childGroupId = childGroup?._id;
+    }
+    await ctx.db.patch(clone._id, {
+      code: codeTaken ? clone.code : account.code,
+      name: account.name,
+      type: account.type,
+      kind: account.kind,
+      printNo: account.printNo,
+      groupId: childGroupId === undefined ? undefined : childGroupId,
+    });
+    updated++;
+  }
+  return updated;
+}
+
+/**
+ * Propagate an EDIT of a master group (code, name, sequence) to its clones.
+ */
+export async function propagateGroupEdit(
+  ctx: MutationCtx,
+  masterId: Id<"societies">,
+  group: { _id: Id<"accountGroups">; code: string; name: string; type: "asset" | "liability" | "income" | "expense"; sequence: number },
+): Promise<number> {
+  const children = await ctx.db
+    .query("societies")
+    .withIndex("by_master", (q) => q.eq("masterSocietyId", masterId))
+    .collect();
+  let updated = 0;
+  for (const child of children) {
+    const clone = await ctx.db
+      .query("accountGroups")
+      .withIndex("by_master_key", (q) =>
+        q.eq("masterSocietyId", masterId).eq("masterKey", group._id),
+      )
+      .first();
+    if (!clone) continue;
+    const allChild = await ctx.db
+      .query("accountGroups")
+      .withIndex("by_society", (q) => q.eq("societyId", child._id))
+      .collect();
+    const codeTaken = allChild.some(
+      (c) => c._id !== clone._id && c.code.trim().toLowerCase() === group.code.trim().toLowerCase(),
+    );
+    await ctx.db.patch(clone._id, {
+      code: codeTaken ? clone.code : group.code,
+      name: group.name,
+      type: group.type,
+      sequence: group.sequence,
+    });
+    updated++;
+  }
+  return updated;
+}
+
+/**
  * Propagate a single NEW group from the master to every society linked to it.
  * Idempotent: a linked society that already carries masterKey (or an
  * identical code) is skipped.
