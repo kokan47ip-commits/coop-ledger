@@ -26,6 +26,8 @@ type Society = {
   upiVpa?: string;
   /** Stable late-fee / interest rate (% per month) charged on arrears. */
   lateFeePercent?: number;
+  /** Billing frequency: months one regular bill covers (1/2/3/6/12). */
+  billingFrequency?: 1 | 2 | 3 | 6 | 12;
   registrationNo?: string;
   registrationDate?: string;
   chairmanMemberId?: Id<"members">;

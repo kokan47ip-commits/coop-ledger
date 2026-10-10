@@ -116,6 +116,23 @@ export function periodLabelLong(period: string): string {
   return `${months[Number(m) - 1] ?? m},${y}`;
 }
 
+/**
+ * Billing-cycle range label: "April,2026 – June,2026" when the bill covers
+ * `months` months from its anchor period, else the plain single-month label.
+ * Multi-month bills (bi-monthly/quarterly/half-yearly/yearly) show the span
+ * their amount covers; monthly bills are unchanged.
+ */
+export function periodLabelRange(period: string, months: number): string {
+  if (months <= 1) return periodLabelLong(period);
+  const [y, m] = period.split("-").map(Number);
+  const end = new Date(Date.UTC(y, m - 1 + (months - 1), 1));
+  const months2 = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return `${periodLabelLong(period)} – ${months2[end.getUTCMonth()] ?? ""},${end.getUTCFullYear()}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Shared document palette — deep indigo, gold rule, tinted panels.    */
 /* ------------------------------------------------------------------ */

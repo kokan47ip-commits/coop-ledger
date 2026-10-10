@@ -102,8 +102,13 @@ export const upsert = mutation({
       await ctx.db.patch(id, data);
       // Master chart sharing: identity edits on a master ledger flow to every
       // linked society — structure only, never balances (and never for rows
-      // the sync itself created).
-      if (!society.masterSocietyId && before.origin !== "master" && (before.code !== data.code || before.name !== data.name || before.kind !== data.kind || before.printNo !== data.printNo || before.groupId !== data.groupId)) {
+      // the sync itself created). Same relaxation the bulk path exercises:
+      // propagate AFTER the master's own patch commits.
+      if (
+        !society.masterSocietyId &&
+        before.origin !== "master" &&
+        (before.code !== data.code || before.name !== data.name || before.kind !== data.kind || before.printNo !== data.printNo || before.groupId !== data.groupId)
+      ) {
         await propagateAccountEdit(ctx, societyId, {
           _id: id,
           code: data.code,

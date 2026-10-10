@@ -90,6 +90,22 @@ const schema = defineSchema(
        * society automatically (no balances, ever — chart structure only).
        */
       masterSocietyId: v.optional(v.id("societies")),
+      /**
+       * Billing frequency: how many months one regular bill covers. Tariff
+       * amounts are per month; bills multiply them by this factor (2 =
+       * bi-monthly, 3 = quarterly, 6 = half-yearly, 12 = yearly). Same
+       * society setting drives the register UI's expectation that generation
+       * starts on cycle-anchor months. Default 1 = monthly.
+       */
+      billingFrequency: v.optional(
+        v.union(
+          v.literal(1),
+          v.literal(2),
+          v.literal(3),
+          v.literal(6),
+          v.literal(12),
+        ),
+      ),
     })
       .index("by_creator", ["createdBy"])
       .index("by_claim_code", ["claimCode"])
@@ -227,6 +243,13 @@ const schema = defineSchema(
         v.literal("partial"),
         v.literal("paid"),
       ),
+      /**
+       * Months this bill covers (1 = monthly). Billed amounts are the
+       * per-month tariff × this factor; the printed period label spans it.
+       * Carried per bill so later changes to the society's billing frequency
+       * never rewrite history.
+       */
+      monthsPerCycle: v.optional(v.number()),
       /** "supplementary" = billed outside the regular maintenance cycle. */
       billKind: v.optional(
         v.union(v.literal("regular"), v.literal("supplementary")),

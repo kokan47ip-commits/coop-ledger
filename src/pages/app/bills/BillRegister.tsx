@@ -31,7 +31,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportExcel, exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
-import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
+import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, periodLabelRange, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { memberUpiUri } from "@/lib/upiQr";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
@@ -62,6 +62,24 @@ function isArrearsLine(name: string): boolean {
   return n.startsWith("arrears") || n.startsWith("credit balance");
 }
 
+/** Human label for the society's billing frequency (months per bill). */
+function billingFrequencyLabel(months: number): string {
+  switch (months) {
+    case 2: return "Bi-monthly";
+    case 3: return "Quarterly";
+    case 6: return "Half-yearly";
+    case 12: return "Yearly";
+    default: return "Monthly";
+  }
+}
+
+/** "August 2026" — end month of a cycle starting at `period` for `n` months. */
+function periodRangeEnd(period: string, n: number): string {
+  const [y, m] = period.split("-").map(Number);
+  const end = new Date(Date.UTC(y, m - 1 + (n - 1), 1));
+  return `${MONTHS_FULL[end.getUTCMonth()]} ${end.getUTCFullYear()}`;
+}
+
 export default function BillRegister() {
   const { societyId, society, canEdit } = useSociety();
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip") as Bill[] | undefined;
@@ -79,6 +97,9 @@ export default function BillRegister() {
   const sendWhatsappDocs = useAction(api.whatsapp.sendWhatsapp);
   const signatures = useCommitteeSignatures();
   const navigate = useNavigate();
+
+  /** Society's billing frequency (months one regular bill covers). */
+  const societyBillingMonths = society?.billingFrequency ?? 1;
 
   const [payOpen, setPayOpen] = useState(false);
   const [payBill, setPayBill] = useState<Bill | null>(null);
@@ -325,7 +346,14 @@ export default function BillRegister() {
       billNo: b.billNo.replace(/^BILL-/, ""),
       billDate: b.issueDate,
       dueDate: b.dueDate,
-      periodLabel: periodLabelLong(b.period),
+      // Multi-month bills print the span their amount covers (e.g. "April,2026
+      // – June,2026" for a quarterly bill); monthly bills keep the plain label.
+      // The bill's own saved cycle length wins (it can differ from today's
+      // setting when the profile changed after generation).
+      periodLabel: periodLabelRange(
+        b.period,
+        (b as { monthsPerCycle?: number }).monthsPerCycle ?? societyBillingMonths,
+      ),
       memberName: m?.name ?? "Member",
       flatNo: [m?.wing, m?.flatNo].filter(Boolean).join("-") || undefined,
       lines: (b.lines ?? [])
@@ -846,8 +874,17 @@ export default function BillRegister() {
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="space-y-2">
-            <Label htmlFor="b-period">Period</Label>
+            <Label htmlFor="b-period">Period (cycle start)</Label>
             <Input id="b-period" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} />
+            {societyBillingMonths > 1 && (
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                {billingFrequencyLabel(societyBillingMonths)}: this bill covers{" "}
+                <span className="font-medium text-foreground">
+                  {periodLong(period)} – {periodRangeEnd(period, societyBillingMonths)}
+                </span>
+                {" "}(each tariff charges {societyBillingMonths}× its monthly amount).
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="b-issue">Issue date</Label>

@@ -81,6 +81,7 @@ export default function SocietyProfile() {
     receivableAccountId: "",
     upiVpa: "",
     lateFeePercent: "",
+    billingFrequency: "1" as string,
     chairmanMemberId: "",
     secretaryMemberId: "",
     treasurerMemberId: "",
@@ -120,6 +121,7 @@ export default function SocietyProfile() {
       upiVpa: society.upiVpa ?? "",
       lateFeePercent:
         society.lateFeePercent !== undefined ? String(society.lateFeePercent) : "",
+      billingFrequency: String(society.billingFrequency ?? 1),
       chairmanMemberId: society.chairmanMemberId ?? "",
       secretaryMemberId: society.secretaryMemberId ?? "",
       treasurerMemberId: society.treasurerMemberId ?? "",
@@ -223,6 +225,7 @@ export default function SocietyProfile() {
             form.lateFeePercent.trim() !== "" && Number(form.lateFeePercent) > 0
               ? Number(form.lateFeePercent)
               : undefined,
+          billingFrequency: (Number(form.billingFrequency) || 1) as 1 | 2 | 3 | 6 | 12,
         });
         toast.success("Society profile updated");
       }
@@ -663,6 +666,36 @@ export default function SocietyProfile() {
                     bill carries a scannable QR that pays straight into this UPI ID. No gateway
                     or fees — money lands directly in your society's bank account. Verify with
                     a ₹1 transfer first.
+                  </p>
+                </div>
+              </section>
+              <section className="space-y-4">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Billing frequency (regular bills)
+                </h3>
+                <div className="max-w-md space-y-2">
+                  <Label htmlFor="billing-frequency">Bills are raised</Label>
+                  <Select
+                    value={form.billingFrequency}
+                    onValueChange={(v) => setForm({ ...form, billingFrequency: v })}
+                  >
+                    <SelectTrigger id="billing-frequency" className="w-56">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">Monthly — one bill every month</SelectItem>
+                      <SelectItem value="2">Bi-monthly — one bill every 2 months</SelectItem>
+                      <SelectItem value="3">Quarterly — one bill every 3 months</SelectItem>
+                      <SelectItem value="6">Half-yearly — one bill every 6 months</SelectItem>
+                      <SelectItem value="12">Yearly — one bill per year</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Tariff amounts are per month. Longer cycles charge the same monthly
+                    amount × the months covered on one bill — e.g. ₹2,000 monthly becomes
+                    ₹6,000 on a quarterly bill. Generate in the Bill Register from the
+                    FIRST month of the cycle (April, July, October, January for quarters).
+                    Change only before the cycle starts: existing bills stay untouched.
                   </p>
                 </div>
               </section>

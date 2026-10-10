@@ -319,6 +319,16 @@ export const update = mutation({
     upiVpa: v.optional(v.string()),
     /** Stable late-fee / interest rate (% per month) charged on arrears. */
     lateFeePercent: v.optional(v.number()),
+    /** Billing frequency: months one regular bill covers (1/2/3/6/12). */
+    billingFrequency: v.optional(
+      v.union(
+        v.literal(1),
+        v.literal(2),
+        v.literal(3),
+        v.literal(6),
+        v.literal(12),
+      ),
+    ),
   },
   handler: async (ctx, { id, ...patch }) => {
     const userId = await requireUserId(ctx);

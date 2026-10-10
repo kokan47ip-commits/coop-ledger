@@ -12,7 +12,6 @@
 import { describe, expect, test } from "bun:test";
 import * as accountsMod from "../src/convex/accounts";
 import * as groupsMod from "../src/convex/accountGroups";
-import * as societiesMod from "../src/convex/societies";
 
 /* ----------------------------- fake convex ctx ---------------------------- */
 

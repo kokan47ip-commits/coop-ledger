@@ -82,6 +82,11 @@ export const generate = mutation({
     const society = await requireSocietyWrite(ctx, societyId);
     // Bills post income to the books — decline bills issued outside the year.
     assertInFy(society, issueDate, "Bill");
+    // Billing frequency (Society Profile): how many months one bill covers.
+    // Tariff amounts are per month — each line is charged × the cycle length
+    // so a quarterly bill = 3 months of maintenance on one bill, tagged to
+    // its anchor (first) month. 1 = monthly (default, all existing books).
+    const monthsPerCycle = society.billingFrequency ?? 1;
     const receivableId =
       society.receivableAccountId ??
       (await ctx.db
@@ -201,7 +206,9 @@ export const generate = mutation({
             // Print label: always the full head name (short names stay for
             // register columns only).
             name: t.name,
-            amount: base,
+            // Multi-month billing (bi-monthly/quarterly/half-yearly/yearly):
+            // the per-month schedule amount × the months this bill covers.
+            amount: base * monthsPerCycle,
             printNo: t.printNo,
           };
         })
@@ -225,9 +232,12 @@ export const generate = mutation({
       const interestAmount =
         outstandingBefore > 0 && interestAccount
           ? interestMode === "percent" && interestRate > 0
-            ? Math.round(outstandingBefore * (interestRate / 100))
+            ? // The rate is % per month of arrears; a longer billing cycle
+              // spans monthsPerCycle months, so the charge accumulates over
+              // the whole cycle.
+              Math.round(outstandingBefore * (interestRate / 100) * monthsPerCycle)
             : interestMode === "fixed"
-              ? Math.round(interestFixed)
+              ? Math.round(interestFixed * monthsPerCycle)
               : 0
           : 0;
       if (interestAmount > 0) interestCharged = true;
@@ -283,6 +293,10 @@ export const generate = mutation({
         billNo: `BILL-${pad(n)}`,
         memberId,
         period,
+        // Cycle length the bill covers (billing frequency at generation
+        // time) — carried on the bill so its printed label and totals stay
+        // correct even after the society later changes its frequency.
+        monthsPerCycle,
         issueDate,
         dueDate,
         arrearsDate,
