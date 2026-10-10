@@ -26,6 +26,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
+import { convexErrorText } from "@/lib/convexErrors";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -88,11 +89,13 @@ export default function SocietyProfile() {
   /** Onboard-with-master: clone another society's chart structure (no balances). */
   const [masterSocietyId, setMasterSocietyId] = useState<Id<"societies"> | "">("");
 
-  /** Societies this user can read — candidates for the master chart. */
+  /** Societies eligible as the master chart source — with their chart sizes. */
   const masterCandidates = useQuery(
-    api.societies.listMine,
+    api.societies.masterCandidates,
     isNew ? {} : "skip",
-  ) as { _id: Id<"societies">; name: string }[] | undefined;
+  ) as
+    | { _id: Id<"societies">; name: string; groupsCount: number; accountsCount: number }[]
+    | undefined;
 
   // Form state syncs from the loaded society during render (not in an
   // effect): one sync per society identity, and a background refetch can
@@ -224,7 +227,7 @@ export default function SocietyProfile() {
         toast.success("Society profile updated");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save");
+      toast.error(convexErrorText(err, "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -424,13 +427,19 @@ export default function SocietyProfile() {
                     <SelectTrigger id="master"><SelectValue placeholder="Start from the standard chart" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Standard chart (default)</SelectItem>
-                      {(masterCandidates ?? [])
-                        .filter((s) => s._id !== society?._id)
-                        .map((s) => (
-                          <SelectItem key={s._id} value={s._id}>{s.name}</SelectItem>
-                        ))}
+                      {(masterCandidates ?? []).map((s) => (
+                        <SelectItem key={s._id} value={s._id}>
+                          {s.name} — {s.accountsCount} ledger{s.accountsCount === 1 ? "" : "s"}, {s.groupsCount} group{s.groupsCount === 1 ? "" : "s"}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                  {masterCandidates !== undefined && masterCandidates.length === 0 && (
+                    <p className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300">
+                      No other society is available to copy from yet. Onboard the first society with the
+                      standard chart, fill in its ledgers, and later societies can copy from it.
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     You can still add, rename or remove ledgers in the new society afterwards — the
                     copied chart is just the starting point, and master additions keep flowing in.

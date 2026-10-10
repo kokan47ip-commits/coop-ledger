@@ -32,6 +32,7 @@ import { exportExcel, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { diffChart, groupCodeFromLabel, parseChartWorkbook, type ChartDiff } from "@/lib/chartImport";
 import { formatINR } from "@/lib/format";
+import { convexErrorText } from "@/lib/convexErrors";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download, FolderOpen, ListChecks, Pencil, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -431,7 +432,7 @@ export default function ChartOfAccounts() {
       setEditingAll(false);
       setDrafts({});
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save the chart");
+      toast.error(convexErrorText(err, "Failed to save the chart"));
     } finally {
       setBulkEditBusy(false);
     }
@@ -471,7 +472,7 @@ export default function ChartOfAccounts() {
       setBulkGroupId("");
       deselectAll();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to assign group");
+      toast.error(convexErrorText(err, "Failed to assign group"));
     }
   };
 
@@ -493,7 +494,7 @@ export default function ChartOfAccounts() {
       toast.success(form.id ? "Account updated" : "Account added");
       setOpen(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save account");
+      toast.error(convexErrorText(err, "Failed to save account"));
     }
   };
 
@@ -504,7 +505,7 @@ export default function ChartOfAccounts() {
       await removeAccount({ societyId, id: a._id });
       toast.success("Account deleted");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete");
+      toast.error(convexErrorText(err, "Failed to delete"));
     }
   };
 

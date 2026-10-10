@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { seedDefaultGroups } from "./accountGroups";
 import { ensureFormNLedgers } from "./accounts";
@@ -66,6 +66,57 @@ export const listMine = query({
       ...shared,
     ];
     return result;
+  },
+});
+
+/**
+ * Candidates for the "copy the chart from a master society" picker shown
+ * while onboarding a new society: every society the caller can read (creations;
+ * software admins see all), annotated with its live chart sizes and its own
+ * master link. Societies that are THEMSELVES linked to a master are
+ * excluded — a master must be independent (chart-sync is one level, top-down).
+ */
+export const masterCandidates = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const mine = await ctx.db
+      .query("societies")
+      .withIndex("by_creator", (q) => q.eq("createdBy", userId))
+      .collect();
+    let rows: Doc<"societies">[] = mine;
+    if (await isSoftwareAdmin(ctx, userId)) {
+      const all = await ctx.db.query("societies").collect();
+      const seen = new Set(mine.map((s) => s._id));
+      rows = [...mine, ...all.filter((s) => !seen.has(s._id))];
+    }
+    const out = [];
+    for (const s of rows) {
+      if (s.masterSocietyId) continue; // linked child — not master material
+      const [groupsCount, accountsCount] = await Promise.all([
+        ctx.db
+          .query("accountGroups")
+          .withIndex("by_society", (q) => q.eq("societyId", s._id))
+          .collect(),
+        ctx.db
+          .query("accounts")
+          .withIndex("by_society", (q) => q.eq("societyId", s._id))
+          .collect(),
+      ]);
+      out.push({
+        _id: s._id,
+        name: s.name,
+        isCurrentMasterFor: (
+          await ctx.db
+            .query("societies")
+            .withIndex("by_master", (q) => q.eq("masterSocietyId", s._id))
+            .collect()
+        ).length,
+        groupsCount: groupsCount.length,
+        accountsCount: accountsCount.length,
+      });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
