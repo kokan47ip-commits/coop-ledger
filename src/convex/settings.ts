@@ -92,6 +92,9 @@ export const getUpiSettings = query({
       settlementAccountName: settlement
         ? `${settlement.code} — ${settlement.name}`
         : null,
+      /** Society UPI ID (VPA) — payee for the dynamic QRs on member bills. */
+      upiVpa: society.upiVpa ?? null,
+      upiPayeeName: society.name,
       bankCashAccounts: accounts
         .filter((a) => a.kind === "bank_cash")
         .map((a) => ({ _id: a._id, label: `${a.code} — ${a.name}` }))
@@ -113,8 +116,10 @@ export const saveUpiSettings = mutation({
   args: {
     societyId: v.id("societies"),
     settlementAccountId: v.optional(v.union(v.id("accounts"), v.null())),
+    /** Society's UPI ID (VPA) — QRs on bills pay into it. null clears it. */
+    upiVpa: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (ctx, { societyId, settlementAccountId }) => {
+  handler: async (ctx, { societyId, settlementAccountId, upiVpa }) => {
     await requireSocietyWrite(ctx, societyId);
     if (settlementAccountId !== undefined) {
       if (settlementAccountId) {
@@ -128,6 +133,15 @@ export const saveUpiSettings = mutation({
       await ctx.db.patch(societyId, {
         upiSettlementAccountId: settlementAccountId ?? undefined,
       });
+    }
+    if (upiVpa !== undefined) {
+      const vpa = upiVpa?.trim() || undefined;
+      if (vpa && !vpa.includes("@")) {
+        throw new ConvexError(
+          "That doesn't look like a UPI ID — it needs the bank part after the @ (e.g. societynme@hdfcbank).",
+        );
+      }
+      await ctx.db.patch(societyId, { upiVpa: vpa });
     }
     return true;
   },

@@ -23,6 +23,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import { formatMoney } from "@/lib/format";
+import { qrDataUrl, memberUpiUri } from "@/lib/upiQr";
 import {
   CircleCheck,
   CircleX,
@@ -35,7 +36,7 @@ import {
   SlidersHorizontal,
   Smartphone,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 
@@ -76,6 +77,51 @@ export default function MessagingSettings() {
   const saveUpi = useMutation(api.settings.saveUpiSettings);
   const [settlementChoice, setSettlementChoice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // ---- Society UPI ID (VPA) → dynamic QR on member bills ----
+  // Draft starts from the saved value and re-syncs when the query lands.
+  const [vpaDraft, setVpaDraft] = useState("");
+  const [vpaSynced, setVpaSynced] = useState(false);
+  const [vpaQrUrl, setVpaQrUrl] = useState<string | null>(null);
+  if (!vpaSynced && upiSettings !== undefined) {
+    setVpaSynced(true);
+    setVpaDraft(upiSettings.upiVpa ?? "");
+  }
+  // Preview QR mirrors the DRAFT, so the office can sanity-scan before saving.
+  const societyUpiUri = vpaDraft.includes("@")
+    ? memberUpiUri({
+        payeeName: upiSettings?.upiPayeeName ?? "Society",
+        vpa: vpaDraft.trim(),
+      })
+    : null;
+  useEffect(() => {
+    let alive = true;
+    if (societyUpiUri) {
+      // Async subscribe to the external QR renderer; setState happens in the
+      // callback (allowed), not synchronously in the effect body.
+      qrDataUrl(societyUpiUri).then((url) => {
+        if (alive) setVpaQrUrl(url);
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [societyUpiUri]);
+
+  const saveVpa = async () => {
+    if (!societyId) return;
+    try {
+      await saveUpi({ societyId, upiVpa: vpaDraft.trim() || null });
+      toast.success(
+        vpaDraft.trim()
+          ? "UPI ID saved — every member bill now prints a scannable payment QR."
+          : "UPI ID cleared — bills will print without the payment QR.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the UPI ID.");
+    }
+  };
+
   const settlementValue =
     settlementChoice ?? upiSettings?.settlementAccountId ?? "__default__";
 
@@ -472,6 +518,69 @@ export default function MessagingSettings() {
                   <CircleCheck className="size-4" /> Save settlement account
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* -------- Society UPI ID → dynamic QR on member bills --------
+              The saved VPA drives the per-bill QR (pays the bill's exact
+              amount, tagged with the flat) and each member's portal QR. */}
+          <Card id="society-upi">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Society UPI ID (no gateway)</CardTitle>
+              <CardDescription>
+                Paste the society's UPI ID (VPA). Every member bill then prints a
+                scannable QR that opens GPay / PhonePe / Paytm with the society as
+                payee, the flat tagged in the note and the bill's exact amount
+                prefilled — money lands directly in the society's bank account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Society UPI ID (VPA)
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={vpaDraft}
+                      onChange={(e) => setVpaDraft(e.target.value)}
+                      disabled={!canEdit}
+                      placeholder="e.g. shamachsl@hdfcbank"
+                      autoComplete="off"
+                      className="font-mono text-xs"
+                    />
+                    <Button
+                      onClick={saveVpa}
+                      disabled={!canEdit || vpaDraft.trim() === (upiSettings?.upiVpa ?? "")}
+                      className="gap-1.5 shrink-0"
+                    >
+                      <CircleCheck className="size-4" /> Save UPI ID
+                    </Button>
+                  </div>
+                  {upiSettings?.upiVpa ? (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      Saved — bills print the QR below for every member.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Not set yet — bills print without a payment QR until a VPA is saved.
+                    </p>
+                  )}
+                </div>
+                {societyUpiUri && vpaQrUrl && (
+                  <div className="flex flex-col items-center gap-1 rounded-lg border bg-white p-2 dark:bg-white">
+                    <img src={vpaQrUrl} className="size-32" alt="Society UPI QR" />
+                    <span className="text-[9px] font-bold tracking-wide text-indigo-900 dark:text-indigo-700">
+                      SCAN TO PAY · SOCIETY UPI
+                    </span>
+                  </div>
+                )}
+              </div>
+              <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300">
+                Verify with a ₹1 transfer first — a wrong UPI ID sends money to the wrong bank
+                account. The QR is “dynamic”: scanning it opens the payer's UPI app with the
+                society pre-filled; the payer confirms the amount there.
+              </p>
             </CardContent>
           </Card>
 
