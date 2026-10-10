@@ -204,7 +204,7 @@ function SocietySwitcher() {
                 {society?.name ?? "No society selected"}
               </span>
               <span className="block truncate text-[10px] uppercase tracking-[0.14em] text-sidebar-foreground/50">
-                Imamm Accounting
+                Imamm Chsl Accounting
               </span>
             </span>
           </span>
@@ -746,7 +746,7 @@ export function AppLayout() {
               </span>
             )}
             <span className="brand-text hidden text-[11px] font-semibold uppercase tracking-[0.14em] md:inline">
-              Imamm Accounting Solutions
+              Imamm Chsl Accounting Solutions
             </span>
           </div>
         </header>

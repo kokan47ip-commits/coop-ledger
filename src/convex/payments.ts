@@ -718,7 +718,7 @@ export const emailMemberReceipt = action({
         ...(info.replyTo?.trim() ? { reply_to: info.replyTo.trim() } : {}),
         to: [info.to],
         subject: `Receipt ${info.voucherNo} — ${info.societyName}`,
-        html: `<p>Dear Member,</p><p>Thank you — your payment of <strong>₹${money}</strong> received on <strong>${info.date}</strong> has been recorded in the society books.</p><p>Receipt <strong>${info.voucherNo}</strong> is attached as a PDF and also available in your member portal under <em>My Receipts</em>.</p><p style="color:#64748b;font-size:12px">Automated message from ${info.societyName} · Imamm Accounting Solutions</p>`,
+        html: `<p>Dear Member,</p><p>Thank you — your payment of <strong>₹${money}</strong> received on <strong>${info.date}</strong> has been recorded in the society books.</p><p>Receipt <strong>${info.voucherNo}</strong> is attached as a PDF and also available in your member portal under <em>My Receipts</em>.</p><p style="color:#64748b;font-size:12px">Automated message from ${info.societyName} · Imamm Chsl Accounting Solutions</p>`,
         attachments: [
           { filename, content: pdfBase64 },
         ],

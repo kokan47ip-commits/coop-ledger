@@ -92,7 +92,7 @@ export default function Landing() {
               IAS
             </span>
             <span className="text-sm font-semibold tracking-tight">
-              Imamm Accounting Solutions
+              Imamm Chsl Accounting Solutions
             </span>
           </div>
           <nav className="flex items-center gap-7 text-sm">
@@ -138,7 +138,7 @@ export default function Landing() {
             <span className="brand-text">professional's discipline.</span>
           </h1>
           <p className="mt-9 max-w-xl text-lg leading-8 text-muted-foreground">
-            Imamm Accounting Solutions is the private workspace behind the practice
+            Imamm Chsl Accounting Solutions is the private workspace behind the practice
             — members, tariffs, bills, receipts and vouchers maintained in clean
             double-entry, across every society on the books, with each statement
             ready for PDF or Word.
@@ -313,7 +313,7 @@ export default function Landing() {
 
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-9 text-xs text-muted-foreground sm:flex-row">
-          <span>Imamm Accounting Solutions</span>
+          <span>Imamm Chsl Accounting Solutions</span>
           <span>Bills · Ledgers · Statements · Client-ready exports</span>
         </div>
       </footer>

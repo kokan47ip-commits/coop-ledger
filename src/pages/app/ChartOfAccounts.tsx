@@ -33,7 +33,7 @@ import { useCommitteeSignatures } from "@/lib/committee";
 import { diffChart, groupCodeFromLabel, parseChartWorkbook, type ChartDiff } from "@/lib/chartImport";
 import { formatINR } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Download, FolderOpen, ListChecks, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { Download, FolderOpen, ListChecks, Pencil, Plus, Save, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { useMutation, useQuery } from "convex/react";
@@ -69,6 +69,16 @@ const TYPES = [
 /** Selectable statement sections — one at a time in the Chart of Accounts. */
 const SECTIONS = TYPES;
 
+/** Inline-editable fields for one row in bulk "Edit all" mode. */
+type AccountDraft = {
+  code: string;
+  name: string;
+  printNo: string;
+  groupId: Id<"accountGroups"> | "";
+  kind: string;
+  opening: string;
+};
+
 const EMPTY_GROUP_FORM = {
   id: "" as Id<"accountGroups"> | "",
   code: "GA",
@@ -89,6 +99,7 @@ export default function ChartOfAccounts() {
   ) as GroupRow[] | undefined;
 
   const upsertAccount = useMutation(api.accounts.upsert);
+  const bulkUpdateAccounts = useMutation(api.accounts.bulkUpdate);
   const removeAccount = useMutation(api.accounts.remove);
   const upsertGroup = useMutation(api.accountGroups.upsert);
   const removeGroup = useMutation(api.accountGroups.remove);
@@ -102,6 +113,10 @@ export default function ChartOfAccounts() {
   const [selected, setSelected] = useState<Set<Id<"accounts">>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkGroupId, setBulkGroupId] = useState<Id<"accountGroups"> | "">("");
+  /** Bulk live-edit mode — every visible row turns into inline inputs. */
+  const [editingAll, setEditingAll] = useState(false);
+  const [drafts, setDrafts] = useState<Record<Id<"accounts">, AccountDraft>>({});
+  const [bulkEditBusy, setBulkEditBusy] = useState(false);
   const [form, setForm] = useState({
     id: "" as Id<"accounts"> | "",
     code: "",
@@ -350,6 +365,66 @@ export default function ChartOfAccounts() {
 
   const deselectAll = () => setSelected(new Set());
 
+  // ---- Bulk live-edit ("Edit all" → inline inputs → Save) ----
+  const startEditAll = () => {
+    const next: Record<Id<"accounts">, AccountDraft> = {};
+    for (const g of visibleSections) {
+      for (const row of g.rows) {
+        next[row._id] = {
+          code: row.code,
+          name: row.name,
+          printNo: row.printNo ?? "",
+          groupId: row.groupId ?? "",
+          kind: row.kind ?? "none",
+          opening: String(row.openingBalance),
+        };
+      }
+    }
+    setDrafts(next);
+    setEditingAll(true);
+  };
+
+  const cancelEditAll = () => {
+    setEditingAll(false);
+    setDrafts({});
+  };
+
+  const patchDraft = (id: Id<"accounts">, patch: Partial<AccountDraft>) =>
+    setDrafts((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id]!, ...patch } } : prev));
+
+  const saveEditAll = async () => {
+    if (!societyId) return;
+    const updates = Object.entries(drafts).map(([id, d]) => ({
+      id: id as Id<"accounts">,
+      code: d.code.trim(),
+      name: d.name.trim(),
+      openingBalance: Number(d.opening) || 0,
+      groupId: d.groupId || undefined,
+      kind: d.kind === "none" ? undefined : (d.kind as "bank_cash" | "receivable"),
+      printNo: d.printNo.trim() || undefined,
+    }));
+    const blank = updates.find((u) => !u.code || !u.name);
+    if (blank) {
+      toast.error("Every row needs both a Code and an Account name.");
+      return;
+    }
+    setBulkEditBusy(true);
+    try {
+      const res = await bulkUpdateAccounts({ societyId, updates });
+      toast.success(
+        res.updated === 0
+          ? "Nothing changed — all rows were already up to date."
+          : `Saved — ${res.updated} ledger${res.updated > 1 ? "s" : ""} updated`,
+      );
+      setEditingAll(false);
+      setDrafts({});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save the chart");
+    } finally {
+      setBulkEditBusy(false);
+    }
+  };
+
   const bulkAssign = async () => {
     if (!societyId || bulkGroupId === "") return;
     const group = groups?.find((g) => g._id === bulkGroupId);
@@ -524,7 +599,7 @@ export default function ChartOfAccounts() {
         }
       />
 
-      <Tabs defaultValue="accounts" onValueChange={() => deselectAll()}>
+      <Tabs defaultValue="accounts" onValueChange={() => { cancelEditAll(); deselectAll(); }}>
         <TabsList className="rounded-lg">
           <TabsTrigger value="accounts" className="rounded-lg">Accounts</TabsTrigger>
           <TabsTrigger value="groups" className="rounded-lg">
@@ -546,6 +621,7 @@ export default function ChartOfAccounts() {
                 type="button"
                 onClick={() => {
                   setSection(active ? null : s.type);
+                  cancelEditAll();
                   deselectAll();
                 }}
                 aria-pressed={active}
@@ -569,6 +645,7 @@ export default function ChartOfAccounts() {
               className="h-7 rounded-full text-xs text-muted-foreground"
               onClick={() => {
                 setSection(null);
+                cancelEditAll();
                 deselectAll();
               }}
             >
@@ -618,6 +695,38 @@ export default function ChartOfAccounts() {
                     >
                       Assign group…
                     </Button>
+                    {editingAll ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-lg"
+                          onClick={cancelEditAll}
+                          disabled={bulkEditBusy}
+                        >
+                          <X className="size-4" /> Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="rounded-lg"
+                          onClick={() => void saveEditAll()}
+                          disabled={bulkEditBusy}
+                        >
+                          <Save className="size-4" /> {bulkEditBusy ? "Saving…" : "Save all"}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-lg"
+                        disabled={!canEdit || visibleSections.every((g) => g.rows.length === 0)}
+                        onClick={startEditAll}
+                        title="Edit code, account, print no., group, role and opening balance for every visible row inline"
+                      >
+                        <Pencil className="size-4" /> Edit all
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}
@@ -642,56 +751,131 @@ export default function ChartOfAccounts() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {g.rows.map((a) => (
-                            <TableRow key={a._id}>
+                          {g.rows.map((a) => {
+                            const d = editingAll ? drafts[a._id] : undefined;
+                            const groupOptions = (groups ?? []).filter((grp) => grp.type === a.type);
+                            return (
+                            <TableRow key={a._id} className={d ? "bg-muted/30" : undefined}>
                               <TableCell>
                                 <Checkbox
                                   checked={selected.has(a._id)}
                                   onCheckedChange={(v) => toggleRow(a._id, v === true)}
                                   aria-label={`Select ${a.name}`}
+                                  disabled={!!d}
                                 />
                               </TableCell>
-                              <TableCell className="font-mono text-xs">{a.code}</TableCell>
-                              <TableCell className="font-medium">{a.name}</TableCell>
-                              <TableCell className="font-mono text-xs">{a.printNo || "—"}</TableCell>
-                              <TableCell className="text-muted-foreground">{groupName(a.groupId)}</TableCell>
-                              <TableCell className="text-xs text-muted-foreground">
-                                {a.kind === "bank_cash" ? "Bank / Cash" : a.kind === "receivable" ? "Receivable control" : "—"}
-                              </TableCell>
-                              <TableCell className="text-right"><RightMoney value={a.openingBalance} /></TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex justify-end gap-1">
-                                  {canEdit && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-8"
-                                    onClick={() => {
-                                      setForm({
-                                        id: a._id,
-                                        code: a.code,
-                                        name: a.name,
-                                        type: a.type,
-                                        kind: a.kind ?? "none",
-                                        openingBalance: String(a.openingBalance),
-                                        groupId: a.groupId ?? "",
-                                        printNo: a.printNo ?? "",
-                                      });
-                                      setOpen(true);
-                                    }}
-                                  >
-                                    <Pencil className="size-3.5" />
-                                  </Button>
-                                  )}
-                                  {canEdit && (
-                                  <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(a)}>
-                                    <Trash2 className="size-3.5" />
-                                  </Button>
-                                  )}
-                                </div>
-                              </TableCell>
+                              {d ? (
+                                <>
+                                  <TableCell>
+                                    <Input
+                                      className="h-8 font-mono text-xs"
+                                      value={d.code}
+                                      aria-label={`Code for ${a.name}`}
+                                      onChange={(e) => patchDraft(a._id, { code: e.target.value })}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Input
+                                      className="h-8 text-sm"
+                                      value={d.name}
+                                      aria-label={`Account name for ${a.name}`}
+                                      onChange={(e) => patchDraft(a._id, { name: e.target.value })}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Input
+                                      className="h-8 font-mono text-xs"
+                                      value={d.printNo}
+                                      aria-label={`Print No. for ${a.name}`}
+                                      title="Printing serial no. — order on printed statements"
+                                      onChange={(e) => patchDraft(a._id, { printNo: e.target.value })}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Select
+                                      value={d.groupId || "none"}
+                                      onValueChange={(v) => patchDraft(a._id, { groupId: v === "none" ? "" : (v as Id<"accountGroups">) })}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="No group" /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="none">No group</SelectItem>
+                                        {groupOptions.map((grp) => (
+                                          <SelectItem key={grp._id} value={grp._id}>{grp.name}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Select
+                                      value={d.kind}
+                                      onValueChange={(v) => patchDraft(a._id, { kind: v })}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="none">General</SelectItem>
+                                        <SelectItem value="bank_cash">Bank / Cash</SelectItem>
+                                        <SelectItem value="receivable">Members Receivable</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Input
+                                      className="h-8 text-right text-sm tabular-nums"
+                                      type="number"
+                                      step="0.01"
+                                      value={d.opening}
+                                      aria-label={`Opening balance for ${a.name}`}
+                                      onChange={(e) => patchDraft(a._id, { opening: e.target.value })}
+                                    />
+                                  </TableCell>
+                                  <TableCell />
+                                </>
+                              ) : (
+                                <>
+                                  <TableCell className="font-mono text-xs">{a.code}</TableCell>
+                                  <TableCell className="font-medium">{a.name}</TableCell>
+                                  <TableCell className="font-mono text-xs">{a.printNo || "—"}</TableCell>
+                                  <TableCell className="text-muted-foreground">{groupName(a.groupId)}</TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">
+                                    {a.kind === "bank_cash" ? "Bank / Cash" : a.kind === "receivable" ? "Receivable control" : "—"}
+                                  </TableCell>
+                                  <TableCell className="text-right"><RightMoney value={a.openingBalance} /></TableCell>
+                                  <TableCell className="text-right">
+                                    <div className="flex justify-end gap-1">
+                                      {canEdit && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-8"
+                                        onClick={() => {
+                                          setForm({
+                                            id: a._id,
+                                            code: a.code,
+                                            name: a.name,
+                                            type: a.type,
+                                            kind: a.kind ?? "none",
+                                            openingBalance: String(a.openingBalance),
+                                            groupId: a.groupId ?? "",
+                                            printNo: a.printNo ?? "",
+                                          });
+                                          setOpen(true);
+                                        }}
+                                      >
+                                        <Pencil className="size-3.5" />
+                                      </Button>
+                                      )}
+                                      {canEdit && (
+                                      <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => del(a)}>
+                                        <Trash2 className="size-3.5" />
+                                      </Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </>
+                              )}
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </div>

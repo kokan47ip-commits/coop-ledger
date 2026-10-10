@@ -286,7 +286,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                   <CardHeader className="text-center">
                     <BrandMark onClick={() => navigate("/")} />
                     <CardTitle className="text-xl tracking-tight">
-                      Imamm Accounting Solutions
+                      Imamm Chsl Accounting Solutions
                     </CardTitle>
                     <CardDescription>
                       {pwStep === "signUp"
@@ -636,7 +636,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                 <CardHeader className="text-center">
                   <BrandMark onClick={() => navigate("/")} />
                   <CardTitle className="text-xl tracking-tight">
-                    Imamm Accounting Solutions
+                    Imamm Chsl Accounting Solutions
                   </CardTitle>
                   <CardDescription>
                     Sign in with your email — we'll send a one-time code. Or use
@@ -733,7 +733,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
               </>
             )}
             <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
-              Private workspace · Imamm Accounting Solutions
+              Private workspace · Imamm Chsl Accounting Solutions
             </div>
           </Card>
         </div>
@@ -748,7 +748,7 @@ function BrandMark({ onClick }: { onClick: () => void }) {
       <span
         className="brand-gradient mb-4 mt-4 flex size-14 cursor-pointer items-center justify-center rounded-xl text-xs font-semibold tracking-widest text-white shadow-lg shadow-primary/40"
         onClick={onClick}
-        title="Imamm Accounting Solutions"
+        title="Imamm Chsl Accounting Solutions"
       >
         IAS
       </span>

@@ -147,7 +147,7 @@ export const sendTest = action({
           : {}),
         to: [to.trim()],
         subject: `Test email — ${society.name}`,
-        html: `<p>This is a test email from <strong>${society.name}</strong> (Imamm Accounting Solutions).</p><p>If you received this, email delivery is configured correctly and bills/receipts will arrive from this address.</p>`,
+        html: `<p>This is a test email from <strong>${society.name}</strong> (Imamm Chsl Accounting Solutions).</p><p>If you received this, email delivery is configured correctly and bills/receipts will arrive from this address.</p>`,
       }),
     });
     if (!res.ok) {

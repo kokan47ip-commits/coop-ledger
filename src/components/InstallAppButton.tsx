@@ -84,7 +84,7 @@ export default function InstallAppButton() {
         <Smartphone />
       </IconTile>
       <div className="min-w-0 flex-1">
-        <p className="font-medium">Install Imamm on your phone or tablet</p>
+        <p className="font-medium">Install Imamm Chsl on your phone or tablet</p>
         <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
           Add it to your home screen — the app gets its own icon and opens
           full-screen, just like a native app.
@@ -92,7 +92,7 @@ export default function InstallAppButton() {
         {showSteps && (
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {isIos
-              ? "In Safari: tap the Share icon (square with an arrow) → “Add to Home Screen” → Add. An Imamm icon appears on your home screen."
+              ? "In Safari: tap the Share icon (square with an arrow) → “Add to Home Screen” → Add. An Imamm Chsl icon appears on your home screen."
               : "Open the browser menu (⋮) and choose “Install app” or “Add to Home screen”."}
           </p>
         )}
