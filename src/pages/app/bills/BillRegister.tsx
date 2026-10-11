@@ -211,7 +211,7 @@ export default function BillRegister() {
 
   // Rows for the selected period: one per member's bill, sorted by unit no.
   // Support two extra "view" modes that can be combined with the unit filters:
-  //  • Flat-wise — pin to one flat/unit no. (prefix match on flatNo or code)
+  //  • Flat-wise — pin to one flat/unit no. (substring match on flatNo or code)
   //  • Date-wise — bills ISSUED between two dates, across billing periods
   //    (the period dropdown is neutralised until the range is cleared).
   const rows = useMemo(() => {
@@ -279,9 +279,12 @@ export default function BillRegister() {
     (b.lines ?? []).filter((l) => isArrearsLine(l.name)).reduce((s, l) => s + l.amount, 0);
   /** Principal arrears for the register: earlier unpaid bills PLUS the
    *  opening balance carried on this bill, so it is visible instead of
-   *  silently inflating the Bill column. */
+   *  silently inflating the Bill column. Arrears anchor to the DISPLAYED
+   *  bill's own period — not the filter dropdown — so the date-wise view
+   *  (which shows several periods at once) never counts a displayed bill's
+   *  own balance as its own arrears (no double-counting in Total Due). */
   const principalArrFor = (b: Bill) =>
-    arrearsBefore(b.memberId, periodFilter) + billCarried(b);
+    arrearsBefore(b.memberId, b.period) + billCarried(b);
 
   /** Row-level total due: edited/current tariff lines + custom lines + arrears. */
   const rowTotal = (b: Bill, principal: number) => {
