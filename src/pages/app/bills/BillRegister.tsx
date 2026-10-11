@@ -120,8 +120,15 @@ export default function BillRegister() {
   const [floor, setFloor] = useState("");
   const [buildupArea, setBuildupArea] = useState("");
   const [carpetArea, setCarpetArea] = useState("");
+  // Flat-wise view: pin the grid to one unit (flat no. / member code).
+  // Date-wise view: restrict the list to bills ISSUED in a from–to range
+  // (spans several billing periods in one grid).
+  const [flatNo, setFlatNo] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [applied, setApplied] = useState({
     building: "", wing: "", unitType: "", floor: "", buildupArea: "", carpetArea: "",
+    flatNo: "", dateFrom: "", dateTo: "",
   });
 
   // ---- Editable grid state: { [billId]: { [tariffId]: raw string } } ----
@@ -203,10 +210,30 @@ export default function BillRegister() {
     b.lines.find((l) => l.tariffId === tariffId)?.amount ?? 0;
 
   // Rows for the selected period: one per member's bill, sorted by unit no.
+  // Support two extra "view" modes that can be combined with the unit filters:
+  //  • Flat-wise — pin to one flat/unit no. (prefix match on flatNo or code)
+  //  • Date-wise — bills ISSUED between two dates, across billing periods
+  //    (the period dropdown is neutralised until the range is cleared).
   const rows = useMemo(() => {
     if (!bills) return [];
-    const inPeriod = bills.filter((b) => b.period === periodFilter);
     const f = applied;
+    const dateWise = !!(f.dateFrom || f.dateTo);
+    let inView = dateWise
+      ? bills.filter((b) =>
+          (!f.dateFrom || b.issueDate >= f.dateFrom) &&
+          (!f.dateTo || b.issueDate <= f.dateTo),
+        )
+      : bills.filter((b) => b.period === periodFilter);
+    if (f.flatNo.trim() !== "") {
+      const q = f.flatNo.trim().toLowerCase();
+      inView = inView.filter((b) => {
+        const m = memberOf(b.memberId);
+        return (
+          (m?.flatNo ?? "").toLowerCase().includes(q) ||
+          (m?.code ?? "").toLowerCase().includes(q)
+        );
+      });
+    }
     const numEq = (val: number | undefined, filter: string) =>
       filter !== "" && (val ?? 0) !== Number(filter);
     const match = (m?: Member) => {
@@ -219,11 +246,24 @@ export default function BillRegister() {
       if (numEq(m.carpetArea, f.carpetArea)) return false;
       return true;
     };
-    return inPeriod
+    if (dateWise) {
+      // Date-wise spans periods: order by issue date, then unit no.
+      return inView
+        .filter((b) => match(memberOf(b.memberId)))
+        .sort(
+          (a, b) =>
+            a.issueDate.localeCompare(b.issueDate) ||
+            unitNo(memberOf(a.memberId)).localeCompare(unitNo(memberOf(b.memberId))),
+        );
+    }
+    return inView
       .filter((b) => match(memberOf(b.memberId)))
       .sort((a, b) => unitNo(memberOf(a.memberId)).localeCompare(unitNo(memberOf(b.memberId))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bills, members, periodFilter, applied, tariffColumns]);
+
+  /** Date-wise view active? Drives the header labels and arrears cutoffs. */
+  const dateWiseActive = !!(applied.dateFrom || applied.dateTo);
 
   /** Charge lines only — the opening balance carried on the bill ("Arrears
    *  — …") is reported in the arrears columns, not hidden in the Bill amount. */
@@ -460,7 +500,13 @@ export default function BillRegister() {
         .join(", "),
       registrationNo: society.registrationNo,
       title: "Regular Bills Register",
-      subtitle: `For the month ${periodLong(periodFilter)}`,
+      subtitle: dateWiseActive
+        ? `Issued ${applied.dateFrom || "…"} to ${applied.dateTo || "…"}${
+            applied.flatNo.trim() ? ` · Flat ${applied.flatNo.trim()}` : ""
+          }`
+        : `For the month ${periodLong(periodFilter)}${
+            applied.flatNo.trim() ? ` · Flat ${applied.flatNo.trim()}` : ""
+          }`,
       signatures,
     };
   };
@@ -818,10 +864,47 @@ export default function BillRegister() {
       {/* View Bills filter bar */}
       <div className="panel mb-8 p-5">
         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-8">
+          {/* Flat-wise: unit no. / member code. Date-wise: issue-date range —
+              when either date is set the list spans periods and the billing
+              period dropdown is bypassed. */}
+          <div className="space-y-2">
+            <Label htmlFor="vb-flat">Flat no. (flat-wise view)</Label>
+            <Input
+              id="vb-flat"
+              value={flatNo}
+              onChange={(e) => setFlatNo(e.target.value)}
+              placeholder="e.g. A-101 or 101"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-datefrom">Issued from</Label>
+            <Input
+              id="vb-datefrom"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="vb-dateto">Issued to</Label>
+            <Input
+              id="vb-dateto"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
+            {dateFrom || dateTo ? (
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Date-wise view — spans all periods issued in this range.
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3 lg:grid-cols-8">
           <div className="space-y-2">
             <Label htmlFor="vb-period">Billing period</Label>
-            <Select value={periodFilter} onValueChange={setPeriodFilter}>
-              <SelectTrigger id="vb-period"><SelectValue /></SelectTrigger>
+            <Select value={periodFilter} onValueChange={setPeriodFilter} disabled={dateFrom !== "" || dateTo !== ""}>
+              <SelectTrigger id="vb-period" className={dateFrom !== "" || dateTo !== "" ? "opacity-60" : undefined}><SelectValue /></SelectTrigger>
               <SelectContent>
                 {periodOptions.map((p) => (
                   <SelectItem key={p} value={p}>{formatPeriod(p)}</SelectItem>
@@ -853,13 +936,38 @@ export default function BillRegister() {
             <Label htmlFor="vb-carpet">Carpet area</Label>
             <Input id="vb-carpet" type="number" value={carpetArea} onChange={(e) => setCarpetArea(e.target.value)} />
           </div>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2 lg:col-span-2">
             <Button
               variant="outline"
-              className="w-full rounded-lg"
-              onClick={() => setApplied({ building, wing, unitType, floor, buildupArea, carpetArea })}
+              className="flex-1 rounded-lg"
+              onClick={() =>
+                setApplied({
+                  building, wing, unitType, floor, buildupArea, carpetArea,
+                  flatNo, dateFrom, dateTo,
+                })
+              }
             >
               <RefreshCw className="size-4" /> Refresh
+            </Button>
+            <Button
+              variant="ghost"
+              className="rounded-lg"
+              title="Clear all filters"
+              disabled={
+                !(building || wing || unitType || floor || buildupArea || carpetArea || flatNo || dateFrom || dateTo)
+              }
+              onClick={() => {
+                setBuilding(""); setWing(""); setUnitType(""); setFloor("");
+                setBuildupArea(""); setCarpetArea("");
+                setFlatNo(""); setDateFrom(""); setDateTo("");
+                setApplied({
+                  building: "", wing: "", unitType: "", floor: "",
+                  buildupArea: "", carpetArea: "",
+                  flatNo: "", dateFrom: "", dateTo: "",
+                });
+              }}
+            >
+              <X className="size-4" /> Clear
             </Button>
           </div>
         </div>
@@ -975,7 +1083,16 @@ export default function BillRegister() {
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
-          {rows.length} bill{rows.length === 1 ? "" : "s"} for {formatPeriod(periodFilter)}
+          {dateWiseActive ? (
+            <>
+              {rows.length} bill{rows.length === 1 ? "" : "s"} issued {applied.dateFrom || "…"} – {applied.dateTo || "…"}
+            </>
+          ) : (
+            <>
+              {rows.length} bill{rows.length === 1 ? "" : "s"} for {formatPeriod(periodFilter)}
+              {applied.flatNo.trim() && <span> · flat {applied.flatNo.trim()}</span>}
+            </>
+          )}
           {hasEdits && <span className="ml-2 font-medium text-foreground">· {Object.keys(edits).length} row(s) edited — Save to apply</span>}
         </p>
         <div className="flex items-center gap-2">
@@ -984,7 +1101,8 @@ export default function BillRegister() {
               variant="outline"
               size="sm"
               className="text-destructive hover:text-destructive"
-              disabled={deletingMonth || rows.length === 0}
+              disabled={deletingMonth || rows.length === 0 || dateWiseActive}
+              title={dateWiseActive ? "Date-wise view is read-summary only — clear it to delete a month" : undefined}
               onClick={doDeleteMonth}
             >
               <Trash2 className="size-4" /> {deletingMonth ? "Deleting…" : "Delete month"}
@@ -1057,7 +1175,7 @@ export default function BillRegister() {
 
       {!bills ? null : rows.length === 0 ? (
         <EmptyHint>
-          No bills for {formatPeriod(periodFilter)}. Generate them above, then use Refresh.
+          No bills in this view. Generate them above, then use Refresh — or clear the flat / date filters.
         </EmptyHint>
       ) : (
         <div className="panel overflow-x-auto">
@@ -1073,6 +1191,7 @@ export default function BillRegister() {
                 </TableHead>
                 <TableHead className="sticky left-0 bg-background">Unit No</TableHead>
                 <TableHead>Bill No</TableHead>
+                {dateWiseActive && <TableHead>Period / Issued</TableHead>}
                 <TableHead>Name</TableHead>
                 <TableHead className="text-right">Bill Total</TableHead>
                 <TableHead className="text-right">Principal Arr.</TableHead>
@@ -1114,6 +1233,11 @@ export default function BillRegister() {
                         </Badge>
                       )}
                     </TableCell>
+                    {dateWiseActive && (
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatPeriod(b.period)} · {b.issueDate}
+                      </TableCell>
+                    )}
                     <TableCell className="max-w-44 truncate" title={m?.name}>{m?.name ?? "—"}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(billCharges(b))}</TableCell>
                     <TableCell className={rightAlign}>{formatMoney(principal)}</TableCell>
@@ -1183,7 +1307,7 @@ export default function BillRegister() {
               <tr className="border-t-2 border-foreground/60 font-semibold">
                 <td />
                 <td className="sticky left-0 bg-background px-2 py-3 text-right">Total {totals.count}</td>
-                <td colSpan={2} />
+                <td colSpan={dateWiseActive ? 3 : 2} />
                 <td className={rightAlign}>{formatMoney(totals.billTotal)}</td>
                 <td className={rightAlign}>{formatMoney(totals.principalArr)}</td>
                 <td className={rightAlign}>{formatMoney(totals.interestArr)}</td>

@@ -32,11 +32,21 @@ function makeDb() {
   };
   const db = {
     async get(a: string, b?: string) {
+      // Real Convex hands out immutable snapshots; hand out clones so a later
+      // patch (which mutates in place) cannot rewind a doc an earlier get()
+      // already returned — that made before/after comparisons inside handlers
+      // see the SAME object and read as "unchanged".
+      const snap = (r: Doc | null): Doc | null => {
+        if (!r) return null;
+        const copy = { ...r };
+        if (Array.isArray(copy.lines)) copy.lines = copy.lines.map((l) => ({ ...l }));
+        return copy;
+      };
       if (b === undefined) {
         const t = byId.get(a);
-        return t ? (ensure(t).get(a) ?? null) : null;
+        return t ? snap(ensure(t).get(a) ?? null) : null;
       }
-      return ensure(a).get(b) ?? null;
+      return snap((ensure(a).get(b) ?? null) as Doc | null);
     },
     async insert(t: string, doc: Record<string, unknown>) {
       const id = `id${++seq}`;
