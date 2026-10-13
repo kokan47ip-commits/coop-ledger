@@ -50,6 +50,20 @@ export default function PortalBills() {
     api.memberPortal.debugMyBinding,
     societyId && (bills === null || (bills ?? []).length === 0) ? { societyId } : "skip",
   );
+  // Side-ledger source ("Bill + Member Ledger" format): the member's own
+  // running ledger for the current financial year — the authoritative source
+  // the portal ledger page uses.
+  const today = new Date().toISOString().slice(0, 10);
+  const ledger = useQuery(
+    api.memberPortal.myLedger,
+    societyId
+      ? {
+          societyId,
+          fromDate: society?.fyStartDate ?? `${today.slice(0, 4)}-01-01`,
+          toDate: today,
+        }
+      : "skip",
+  );
   const debugText = debug
     ? [
         debug.email ? `Signed in as ${debug.email}.` : "Not signed in with an email.",
@@ -120,6 +134,16 @@ export default function PortalBills() {
       // Society-wide printing format + editable QR-side payment notes.
       format: society?.billDocFormat,
       qrNote: society?.billQrNote,
+      // Side-ledger column: the portal's own running ledger rows, mapped
+      // straight into the document's ledger shape.
+      ledgerRows: (ledger ?? []).map((r) => ({
+        date: r.date,
+        ref: r.voucherNo,
+        detail: r.particulars,
+        debit: r.debit,
+        credit: r.credit,
+        balance: r.balance,
+      })),
       // Bill QR: pays this bill's exact due amount into the society's UPI ID.
       upi:
         society?.upiVpa && memberBinding

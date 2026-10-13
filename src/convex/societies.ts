@@ -336,6 +336,7 @@ export const update = mutation({
         v.literal("classic"),
         v.literal("slip"),
         v.literal("ledger"),
+        v.literal("ledgercol"),
       ),
     ),
     /** Custom payment notes printed next to the UPI QR code on bills. */

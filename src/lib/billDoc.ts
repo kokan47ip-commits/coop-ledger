@@ -15,7 +15,7 @@ export type SocietyHeader = {
  * Society Profile → Accounting. "classic" is the original bordered legacy
  * document and stays the default.
  */
-export type BillDocFormat = "modern" | "classic" | "slip" | "ledger";
+export type BillDocFormat = "modern" | "classic" | "slip" | "ledger" | "ledgercol";
 
 /** Selector entries for the Society Profile format picker. */
 export const BILL_DOC_FORMATS: {
@@ -47,7 +47,84 @@ export const BILL_DOC_FORMATS: {
     description:
       "Serif, register-style document ruled like an old society counterfoil book.",
   },
+  {
+    key: "ledgercol",
+    label: "Bill + Member Ledger",
+    description:
+      "Bill with the UPI QR beside the society name and the member's running ledger as a right-side column.",
+  },
 ];
+
+/** One row of the member's running ledger drawn beside "ledgercol" bills. */
+export type BillLedgerRow = {
+  /** ISO date of the entry. */
+  date: string;
+  /** Entry reference, e.g. "BILL-0142" / "MR-0031" / "OPENING". */
+  ref: string;
+  /** Short wording, e.g. "Bill for April,2026" / "Payment received". */
+  detail: string;
+  /** Amount billed (debit) for the period. */
+  debit: number;
+  /** Amount collected (credit). */
+  credit: number;
+  /** Running outstanding after this entry (debit − credit cumulative). */
+  balance: number;
+};
+
+/** A single bill/receipt event fed to the side-ledger builder. */
+export type BillLedgerItem = {
+  kind: "bill" | "receipt";
+  date: string;
+  ref: string;
+  amount: number;
+  /** Optional short wording; bills default to "Bill", receipts to "Payment". */
+  detail?: string;
+};
+
+/**
+ * Build the running member ledger printed in the side column of "ledgercol"
+ * bills: bills debit, receipts credit, balance accumulates. Rows are sorted
+ * by date, an OPENING row leads when the member carries an opening balance,
+ * and bills dated on/after `upTo` are included so the current bill closes
+ * the ledger at Total Due.
+ */
+export function buildMemberLedgerRows(
+  items: BillLedgerItem[],
+  openingBalance = 0,
+  upTo?: string,
+): BillLedgerRow[] {
+  const sorted = items
+    .filter((it) => Number.isFinite(it.amount) && it.amount !== 0)
+    .filter((it) => !upTo || it.date <= upTo)
+    .sort(
+      (a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind),
+    );
+  const rows: BillLedgerRow[] = [];
+  let balance = Math.abs(openingBalance);
+  if (balance !== 0) {
+    rows.push({
+      date: "",
+      ref: "OPENING",
+      detail: "Opening balance",
+      debit: balance,
+      credit: 0,
+      balance,
+    });
+  }
+  for (const it of sorted) {
+    const isBill = it.kind === "bill";
+    balance = isBill ? balance + it.amount : balance - it.amount;
+    rows.push({
+      date: it.date,
+      ref: it.ref,
+      detail: it.detail ?? (isBill ? "Bill" : "Payment received"),
+      debit: isBill ? it.amount : 0,
+      credit: isBill ? 0 : it.amount,
+      balance,
+    });
+  }
+  return rows;
+}
 
 export type LegacyBillData = {
   society: SocietyHeader;
@@ -90,6 +167,12 @@ export type LegacyBillData = {
    * When set these replace the standard fixed footer notes.
    */
   qrNote?: string;
+  /**
+   * The member's running ledger for the "ledgercol" right-side column —
+   * built with buildMemberLedgerRows by the callers that hold the member's
+   * bills/receipts. When absent the column prints its empty-state.
+   */
+  ledgerRows?: BillLedgerRow[];
 };
 
 export type LegacyReceiptData = {
@@ -528,6 +611,8 @@ function drawBillBoxFor(
       return drawBillBoxSlip(doc, data, x, top, w, h);
     case "ledger":
       return drawBillBoxLedger(doc, data, x, top, w, h);
+    case "ledgercol":
+      return drawBillBoxLedgerCol(doc, data, x, top, w, h);
     default:
       return drawBillBox(doc, data, x, top, w, h, scale);
   }
@@ -937,6 +1022,299 @@ function drawBillBoxLedger(
   ink(doc, INK);
 
   drawBillFooterVariant(doc, data, x, w, footerTop, boxBottom);
+  return { top: boxTop, bottom: boxBottom };
+}
+
+/** Whole-rupee ledger cell: 5000 → "5000.00", avoids paise clutter at 7pt. */
+function ledgerMoney(n: number): string {
+  return money(n);
+}
+
+/** Short day/month stamp for the narrow ledger date column. */
+function shortDate(iso: string): string {
+  if (!iso || iso.length < 10) return "\u2014";
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+}
+
+/**
+ * LEDGER-COLUMN variant ("Bill + Member Ledger"): society header with the
+ * UPI QR drawn on top beside the society name, bill fields + particulars on
+ * the left, the member's running ledger (Date | Ref | Dr | Cr | Balance) as
+ * a right-side column, and the payment notes + signature footer. Ledger rows
+ * come from data.ledgerRows; when the caller has none the column prints its
+ * empty-state rather than a false "no dues".
+ */
+function drawBillBoxLedgerCol(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): BillBoxGeometry {
+  const boxTop = top;
+  const boxBottom = top + h;
+  const footerH = 58;
+  const footerTop = boxBottom - footerH;
+  const ledgerW = 172;
+  const mainW = w - ledgerW;
+  const ledgerX = x + mainW;
+
+  stroke(doc, ACCENT);
+  doc.setLineWidth(1);
+  doc.rect(x, boxTop, w, h);
+
+  /* ---- header: name left, QR right beside it ---- */
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  ink(doc, ACCENT);
+  doc.text(data.society.name.toUpperCase(), x + 14, boxTop + 24, {
+    maxWidth: mainW - 70,
+  });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.4);
+  ink(doc, MUTED);
+  let hy = boxTop + 37;
+  for (const line of [data.society.registrationNo, data.society.address].filter(
+    Boolean,
+  ) as string[]) {
+    doc.text(line, x + 14, hy, { maxWidth: mainW - 70 });
+    hy += 9.5;
+  }
+  const upi = data.upi;
+  let headerBottom = Math.max(hy, boxTop + 52);
+  if (upi) {
+    const qrSize = 52;
+    const qrX = x + w - qrSize - 10;
+    const qrY = boxTop + 8;
+    drawQrMatrix(doc, amountUpiUri(upi.uri, upi.amount), qrX, qrY, qrSize);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(5.6);
+    ink(doc, ACCENT);
+    doc.text(
+      `SCAN TO PAY RS ${money(upi.amount)}`,
+      qrX + qrSize / 2,
+      qrY + qrSize + 7.5,
+      { align: "center" },
+    );
+    ink(doc, MUTED);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.4);
+    headerBottom = Math.max(headerBottom, qrY + qrSize + 13);
+  }
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  const headerRule = headerBottom + 4;
+  doc.line(x, headerRule, x + w, headerRule);
+  const panelTop = headerRule + 12;
+
+  /* ---- left column: title band + bill fields ---- */
+  let cy = panelTop;
+  fill(doc, TINT);
+  doc.rect(x, cy, mainW, 20, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  ink(doc, ACCENT);
+  doc.text(
+    data.supplementary
+      ? `SUPPLEMENTARY BILL${data.supplementary.category ? ` — ${data.supplementary.category.toUpperCase()}` : ""}`
+      : `BILL FOR THE MONTH OF ${data.periodLabel.toUpperCase()}`,
+    x + 12,
+    cy + 14,
+    { maxWidth: mainW - 24 },
+  );
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  cy += 30;
+
+  const aRow = (label: string, value: string, ry: number, lx: number, bold = false): void => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    ink(doc, MUTED);
+    doc.text(label, lx, ry);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    ink(doc, INK);
+    doc.text(value, lx + 44, ry, { maxWidth: mainW * 0.62 - 4 });
+  };
+  const midX = x + mainW * 0.42;
+  aRow("Bill No:", String(data.billNo), cy, x + 12, true);
+  aRow("Bill Date:", formatDate(data.billDate), cy, midX);
+  if (data.memberName2) {
+    aRow("Name:", `${data.memberName.toUpperCase()} / ${data.memberName2.toUpperCase()}`, cy + 14, x + 12, true);
+    aRow("Due Date:", formatDate(data.dueDate), cy + 14, midX);
+  } else {
+    aRow("Name:", data.memberName.toUpperCase(), cy + 14, x + 12, true);
+    aRow("Due Date:", formatDate(data.dueDate), cy + 14, midX);
+  }
+  aRow("Flat:", data.flatNo ?? "\u2014", cy + 28, x + 12);
+  aRow("Area:", data.area ?? "\u2014", cy + 28, midX);
+  cy += 42;
+
+  // Vertical divider separating the bill from the ledger column
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.6);
+  doc.line(ledgerX, panelTop, ledgerX, footerTop);
+
+  /* ---- left column: particulars ---- */
+  fill(doc, ACCENT);
+  doc.rect(x, cy, mainW, 18, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, WHITE);
+  doc.text("PARTICULARS", x + 12, cy + 12.5);
+  doc.text("AMOUNT (RS)", x + mainW - 12, cy + 12.5, { align: "right" });
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  cy += 18;
+  const tableTop = cy;
+  const totalsTop = footerTop - 84;
+  const amountX = x + mainW - 12;
+  const dataCount = Math.max(data.lines.length, 1);
+  const rowH = Math.max(12, Math.min(16, Math.floor((totalsTop - cy) / dataCount)));
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  data.lines.forEach((l, i) => {
+    if (i % 2 === 1) {
+      fill(doc, TINT_ALT);
+      doc.rect(x, cy, mainW, rowH, "F");
+    }
+    ink(doc, INK);
+    doc.text(`${l.serial ?? i + 1}. ${l.name.toUpperCase()}`, x + 12, cy + rowH - 4, {
+      maxWidth: amountX - x - 24,
+    });
+    doc.text(money(l.amount), amountX, cy + rowH - 4, { align: "right" });
+    cy += rowH;
+  });
+  stroke(doc, TINT);
+  doc.setLineWidth(0.6);
+  doc.line(amountX - 64, tableTop, amountX - 64, Math.max(cy, tableTop + rowH));
+  stroke(doc, HAIRLINE);
+  doc.line(x, Math.max(cy, tableTop + rowH), x + mainW, Math.max(cy, tableTop + rowH));
+  cy = Math.max(cy, tableTop + rowH) + 14;
+
+  /* ---- left column: words + totals ---- */
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8.4);
+  ink(doc, MUTED);
+  doc.text(`Rupees ${rupeesInWords(data.totalDue)} only`, x + 12, cy, {
+    maxWidth: x + mainW * 0.52 - x - 20,
+  });
+  const lblX = x + mainW * 0.55;
+  const valX = amountX;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.text("Total:", lblX, cy, { align: "right" });
+  ink(doc, INK);
+  doc.text(money(data.total), valX, cy, { align: "right" });
+  ink(doc, MUTED);
+  doc.text(arrearsLabel(data.arrears), lblX, cy + 14, { align: "right" });
+  ink(doc, INK);
+  doc.text(money(Math.abs(data.arrears)), valX, cy + 14, { align: "right" });
+  fill(doc, ACCENT);
+  doc.rect(lblX - 14, cy + 22, valX - lblX + 26, 22, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  ink(doc, WHITE);
+  doc.text("Total Due:", lblX, cy + 36.5, { align: "right" });
+  doc.text(money(data.totalDue), valX, cy + 36.5, { align: "right" });
+
+  /* ---- right column: MEMBER LEDGER ---- */
+  const rowsIn = data.ledgerRows ?? [];
+  fill(doc, ACCENT);
+  doc.rect(ledgerX, panelTop, ledgerW, 20, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, WHITE);
+  doc.text("MEMBER LEDGER", ledgerX + ledgerW / 2, panelTop + 14, { align: "center" });
+  ink(doc, INK);
+  let ly = panelTop + 20;
+  fill(doc, TINT);
+  doc.rect(ledgerX, ly, ledgerW, 13, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.6);
+  ink(doc, ACCENT);
+  doc.text("DATE", ledgerX + 5, ly + 9.5);
+  doc.text("REF", ledgerX + 36, ly + 9.5);
+  doc.text("DR", x + w - 66, ly + 9.5, { align: "right" });
+  doc.text("CR", x + w - 40, ly + 9.5, { align: "right" });
+  doc.text("BAL", x + w - 6, ly + 9.5, { align: "right" });
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  ly += 13;
+  const ledgerBottom = footerTop - 8;
+  const maxRows = Math.max(1, Math.floor((ledgerBottom - ly) / 13) - 1);
+  doc.setFontSize(7.4);
+  if (rowsIn.length === 0) {
+    ink(doc, MUTED);
+    doc.text("No ledger entries", ledgerX + 5, ly + 16.5);
+    doc.text(`for ${data.memberName} yet.`, ledgerX + 5, ly + 27, {
+      maxWidth: ledgerW - 10,
+    });
+    ink(doc, INK);
+  } else {
+    // Recent entries matter most — keep the tail so the closing balance and
+    // the current bill stay visible, with an "earlier entries" notice above.
+    const shown = rowsIn.slice(Math.max(0, rowsIn.length - maxRows));
+    if (rowsIn.length > maxRows) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(6.6);
+      ink(doc, MUTED);
+      doc.text(`+ ${rowsIn.length - maxRows} earlier entries`, ledgerX + 5, ly + 9.5);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.4);
+      ink(doc, INK);
+      ly += 13;
+    }
+    shown.forEach((r, i) => {
+      const isLast = i === shown.length - 1 && rowsIn.length <= maxRows;
+      if (isLast) {
+        fill(doc, TINT);
+        doc.rect(ledgerX, ly, ledgerW, 13, "F");
+      }
+      doc.setFont("helvetica", isLast || i === 0 ? "bold" : "normal");
+      ink(doc, i === 0 ? MUTED : INK);
+      doc.text(shortDate(r.date), ledgerX + 5, ly + 9.5);
+      doc.text(r.ref, ledgerX + 36, ly + 9.5, { maxWidth: ledgerW - 130 });
+      if (r.debit !== 0) doc.text(ledgerMoney(r.debit), x + w - 66, ly + 9.5, { align: "right" });
+      if (r.credit !== 0) doc.text(ledgerMoney(r.credit), x + w - 40, ly + 9.5, { align: "right" });
+      ink(doc, INK);
+      doc.text(ledgerMoney(r.balance), x + w - 6, ly + 9.5, { align: "right" });
+      doc.setFont("helvetica", "normal");
+      stroke(doc, TINT);
+      doc.setLineWidth(0.5);
+      doc.line(ledgerX, ly + 13, ledgerX + ledgerW, ly + 13);
+      ink(doc, INK);
+      ly += 13;
+    });
+  }
+
+  /* ---- footer: notes left, signature right (QR lives at the top) ---- */
+  fill(doc, TINT_ALT);
+  doc.rect(x, footerTop, w, footerH, "F");
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.6);
+  doc.line(x, footerTop, x + w, footerTop);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.6);
+  ink(doc, MUTED);
+  let ny = footerTop + 17;
+  for (const note of footerNotesFor(data)) {
+    doc.text(note, x + 12, ny, { maxWidth: ledgerX - x - 20 });
+    ny += 12;
+  }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, ACCENT);
+  doc.text(`For ${data.society.name}`, valX, footerTop + 17, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + w * 0.62, footerTop + 38, valX, footerTop + 38);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  ink(doc, MUTED);
+  doc.text("SECRETARY", valX, footerTop + 49, { align: "right" });
+
   return { top: boxTop, bottom: boxBottom };
 }
 

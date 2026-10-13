@@ -117,6 +117,7 @@ const schema = defineSchema(
           v.literal("classic"),
           v.literal("slip"),
           v.literal("ledger"),
+          v.literal("ledgercol"),
         ),
       ),
       /**

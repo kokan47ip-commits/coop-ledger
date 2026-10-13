@@ -234,7 +234,7 @@ export default function SocietyProfile() {
           billingFrequency: (Number(form.billingFrequency) || 1) as 1 | 2 | 3 | 6 | 12,
           billDocFormat:
             BILL_DOC_FORMATS.some((f) => f.key === form.billDocFormat)
-              ? (form.billDocFormat as "modern" | "classic" | "slip" | "ledger")
+              ? (form.billDocFormat as "modern" | "classic" | "slip" | "ledger" | "ledgercol")
               : undefined,
           billQrNote: form.billQrNote.trim() || undefined,
         });
@@ -717,7 +717,7 @@ export default function SocietyProfile() {
                 <div className="space-y-4">
                   <div className="max-w-xl space-y-2">
                     <Label htmlFor="bill-doc-format">Format used by member bills & receipts</Label>
-                    <div className="grid gap-2 lg:grid-cols-4">
+                    <div className="grid gap-2 lg:grid-cols-5">
                       {BILL_DOC_FORMATS.map((f) => (
                         <label
                           key={f.key}

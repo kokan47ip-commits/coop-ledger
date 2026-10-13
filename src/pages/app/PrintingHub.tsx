@@ -35,6 +35,7 @@ import {
   billsWordBatch,
   periodLabelLong,
   receiptsPdfBatch,
+  buildMemberLedgerRows,
   receiptsPrintBatch,
   receiptsWordBatch,
   voucherTitleFor,
@@ -322,6 +323,35 @@ export default function PrintingHub() {
       // Society-wide printing format + editable QR-side payment notes.
       format: society?.billDocFormat,
       qrNote: society?.billQrNote,
+      // Side-ledger column ("Bill + Member Ledger"): the member's running
+      // ledger, built from the same bill/voucher pools the ledger report
+      // uses — bills debit their charge heads only, receipts credit.
+      ledgerRows: buildMemberLedgerRows(
+        [
+          ...(bills ?? []).flatMap((x) =>
+            x.memberId === b.memberId
+              ? [{
+                  kind: "bill" as const,
+                  date: x.issueDate,
+                  ref: x.billNo,
+                  amount: (x.lines ?? [])
+                    .filter((l) => !isArrearsLine(l.name))
+                    .reduce((s, l) => s + l.amount, 0),
+                }]
+              : [],
+          ),
+          ...memberReceipts
+            .filter((v) => v.memberId === b.memberId)
+            .map((v) => ({
+              kind: "receipt" as const,
+              date: v.date,
+              ref: v.voucherNo,
+              amount: v.total,
+            })),
+        ],
+        memberOf(b.memberId)?.openingBalance ?? 0,
+        b.issueDate,
+      ),
       upi: uri
         ? {
             uri,

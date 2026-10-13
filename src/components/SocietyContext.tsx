@@ -29,7 +29,7 @@ type Society = {
   /** Billing frequency: months one regular bill covers (1/2/3/6/12). */
   billingFrequency?: 1 | 2 | 3 | 6 | 12;
   /** Member bill & receipt printing format (default "classic"). */
-  billDocFormat?: "modern" | "classic" | "slip" | "ledger";
+  billDocFormat?: "modern" | "classic" | "slip" | "ledger" | "ledgercol";
   /** Custom payment notes printed next to the UPI QR on bills. */
   billQrNote?: string;
   registrationNo?: string;

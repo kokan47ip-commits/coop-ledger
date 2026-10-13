@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
-import { billPdf, billPrint, billWord, periodLabelLong, type LegacyBillData } from "@/lib/billDoc";
+import { billPdf, billPrint, billWord, buildMemberLedgerRows, periodLabelLong, type LegacyBillData } from "@/lib/billDoc";
 import { amountUpiUri, memberUpiUri, preloadQrImage } from "@/lib/upiQr";
 import { amountInWords } from "@/lib/amountWords";
 import { formatDate } from "@/lib/format";
@@ -17,6 +17,7 @@ export default function BillView() {
   const bills = useQuery(api.bills.list, societyId ? { societyId } : "skip");
   const members = useQuery(api.members.list, societyId ? { societyId } : "skip");
   const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip");
+  const vouchers = useQuery(api.vouchers.list, societyId ? { societyId } : "skip");
 
   const bill = bills?.find((b) => b._id === billId);
   const m = members?.find((x) => x._id === bill?.memberId);
@@ -80,6 +81,34 @@ export default function BillView() {
     // Society-wide printing format + editable QR-side payment notes.
     format: society.billDocFormat,
     qrNote: society.billQrNote,
+    // Side-ledger column ("Bill + Member Ledger"): this member's running
+    // ledger built from the register's bills + receipt vouchers.
+    ledgerRows: buildMemberLedgerRows(
+      [
+        ...(bills ?? []).flatMap((x) =>
+          x.memberId === bill.memberId
+            ? [{
+                kind: "bill" as const,
+                date: x.issueDate,
+                ref: x.billNo,
+                amount: (x.lines ?? [])
+                  .filter((l) => !isArrearsLine(l.name))
+                  .reduce((s, l) => s + l.amount, 0),
+              }]
+            : [],
+        ),
+        ...(vouchers ?? [])
+          .filter((v) => v.type === "member_receipt" && v.memberId === bill.memberId)
+          .map((v) => ({
+            kind: "receipt" as const,
+            date: v.date,
+            ref: v.voucherNo,
+            amount: v.total,
+          })),
+      ],
+      m?.openingBalance ?? 0,
+      bill.issueDate,
+    ),
     // Supplementary bills print with a "SUPPLEMENTARY BILL" title band
     // instead of the monthly period band.
     supplementary:

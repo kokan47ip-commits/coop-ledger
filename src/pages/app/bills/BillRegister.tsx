@@ -31,7 +31,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { exportExcel, exportPDF, exportWord, printTables, type ExportMeta, type TableSpec } from "@/lib/export";
-import { billPdf, billPdfBytes, billWord, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, periodLabelRange, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
+import { billPdf, billPdfBytes, billWord, buildMemberLedgerRows, bytesToBase64, receiptPdf, receiptPrint, receiptWord, periodLabelLong, periodLabelRange, type LegacyBillData, type LegacyReceiptData } from "@/lib/billDoc";
 import { memberUpiUri } from "@/lib/upiQr";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { currentPeriod, effectiveFyPeriod, formatMoney, formatPeriod, todayISO } from "@/lib/format";
@@ -424,6 +424,35 @@ export default function BillRegister() {
       // Society-wide printing format + editable QR-side payment notes.
       format: society.billDocFormat,
       qrNote: society.billQrNote,
+      // Side-ledger column ("Bill + Member Ledger"): the member's running
+      // ledger from the register's own bill/voucher pools — bills debit
+      // their charge heads only, receipts credit.
+      ledgerRows: buildMemberLedgerRows(
+        [
+          ...(bills ?? []).flatMap((x) =>
+            x.memberId === b.memberId
+              ? [{
+                  kind: "bill" as const,
+                  date: x.issueDate,
+                  ref: x.billNo,
+                  amount: (x.lines ?? [])
+                    .filter((l) => !isArrearsLine(l.name))
+                    .reduce((s, l) => s + l.amount, 0),
+                }]
+              : [],
+          ),
+          ...(vouchersData ?? [])
+            .filter((v) => v.type === "member_receipt" && v.memberId === b.memberId)
+            .map((v) => ({
+              kind: "receipt" as const,
+              date: v.date,
+              ref: v.voucherNo,
+              amount: v.total,
+            })),
+        ],
+        memberOf(b.memberId)?.openingBalance ?? 0,
+        b.issueDate,
+      ),
       // Bill QR: pays this bill's exact due amount into the society's UPI ID,
       // tagged with the flat so the office can match the payment. Every export
       // of this register (single PDF/Word, emailed and WhatsApp bill PDFs)
