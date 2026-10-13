@@ -272,6 +272,15 @@ export default function PrintingHub() {
   }, [allVouchersSorted, scope, activeMonth, from, to, selected]);
 
   /** Legacy-format bill document data (mirrors the Bill Register export). */
+  /** This member's latest member_receipt voucher issued on/before a date. */
+  const lastReceiptFor = (memberId: Id<"members">, issueDate: string) => {
+    const rcpt = memberReceipts
+      .filter((v) => v.memberId === memberId && v.date <= issueDate)
+      .sort((x, y) => y.date.localeCompare(x.date))[0];
+    return rcpt
+      ? { no: rcpt.voucherNo, date: rcpt.date, amount: rcpt.total, mode: rcpt.mode }
+      : undefined;
+  };
   const buildBillData = (b: Bill): LegacyBillData => {
     const m = memberOf(b.memberId);
     // Carried lines are signed: a negative figure is the member's advance /
@@ -297,6 +306,10 @@ export default function PrintingHub() {
         registrationNo: society?.registrationNo,
       },
       billNo: b.billNo.replace(/^BILL-/, ""),
+      period: b.period,
+      fyStartMonth: society?.fyStartMonth,
+      unitType: m?.unitType,
+      lastReceipt: lastReceiptFor(b.memberId, b.issueDate),
       billDate: b.issueDate,
       dueDate: b.dueDate,
       periodLabel: periodLabelLong(b.period),

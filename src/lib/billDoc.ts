@@ -181,7 +181,10 @@ export function buildAnnualSummary(
   // within the first FY month; it is also the carry seed above.
   const buckets = new Map<string, { billed: number; received: number }>();
   for (const r of rows) {
-    const ym = r.ref === "OPENING" ? fyStartYm : r.date.slice(0, 7);
+    // The OPENING row is the carry itself — it must not also be bucketed as
+    // movement, or the first FY month would count it twice.
+    if (r.ref === "OPENING") continue;
+    const ym = r.date.slice(0, 7);
     if (ym.length !== 7) continue;
     const cell = buckets.get(ym) ?? { billed: 0, received: 0 };
     cell.billed += r.debit;
@@ -1138,12 +1141,15 @@ function shortDate(iso: string): string {
 }
 
 /**
- * LEDGER-COLUMN variant ("Bill + Member Ledger"): society header with the
- * UPI QR drawn on top beside the society name, bill fields + particulars on
- * the left, the member's running ledger (Date | Ref | Dr | Cr | Balance) as
- * a right-side column, and the payment notes + signature footer. Ledger rows
- * come from data.ledgerRows; when the caller has none the column prints its
- * empty-state rather than a false "no dues".
+ * LEDGER-COLUMN variant ("Bill + Member Ledger"), styled after the society's
+ * supplied Maintenance Bill specimen: society letterhead with the UPI QR on
+ * top next to the name, unit/bill detail grid, a Snapshot-of-your-bill table
+ * (previous bill / received / balance / current / total due), amount in
+ * words, then the left "Summary of Current Charges" beside the right
+ * "Annual Summary" 12-month column, an optional receipt strip, and the
+ * payment-notes footer. The earlier running-ledger rows still feed the
+ * annual column via buildAnnualSummary; the old DATE/REF/DR/CR/BAL side
+ * column was replaced by it.
  */
 function drawBillBoxLedgerCol(
   doc: jsPDF,
@@ -1155,42 +1161,38 @@ function drawBillBoxLedgerCol(
 ): BillBoxGeometry {
   const boxTop = top;
   const boxBottom = top + h;
-  const footerH = 58;
+  const footerH = 90;
   const footerTop = boxBottom - footerH;
-  const ledgerW = 172;
-  const mainW = w - ledgerW;
-  const ledgerX = x + mainW;
-
-  stroke(doc, ACCENT);
+  stroke(doc, INK);
   doc.setLineWidth(1);
   doc.rect(x, boxTop, w, h);
 
-  /* ---- header: name left, QR right beside it ---- */
+  /* ---- Letterhead: name + registration/address centred, QR at top-right ---- */
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  ink(doc, ACCENT);
-  doc.text(data.society.name.toUpperCase(), x + 14, boxTop + 24, {
-    maxWidth: mainW - 70,
+  doc.setFontSize(14.5);
+  ink(doc, INK);
+  doc.text(data.society.name.toUpperCase(), x + w / 2, boxTop + 26, {
+    align: "center",
+    maxWidth: w - 130,
   });
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.4);
-  ink(doc, MUTED);
-  let hy = boxTop + 37;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.6);
+  let hy = boxTop + 42;
   for (const line of [data.society.registrationNo, data.society.address].filter(
     Boolean,
   ) as string[]) {
-    doc.text(line, x + 14, hy, { maxWidth: mainW - 70 });
-    hy += 9.5;
+    doc.text(line, x + w / 2, hy, { align: "center", maxWidth: w - 110 });
+    hy += 11;
   }
   const upi = data.upi;
-  let headerBottom = Math.max(hy, boxTop + 52);
+  let headerBottom = Math.max(hy, boxTop + 58);
   if (upi) {
-    const qrSize = 52;
+    const qrSize = 46;
     const qrX = x + w - qrSize - 10;
     const qrY = boxTop + 8;
     drawQrMatrix(doc, amountUpiUri(upi.uri, upi.amount), qrX, qrY, qrSize);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(5.6);
+    doc.setFontSize(5.4);
     ink(doc, ACCENT);
     doc.text(
       `SCAN TO PAY RS ${money(upi.amount)}`,
@@ -1198,223 +1200,289 @@ function drawBillBoxLedgerCol(
       qrY + qrSize + 7.5,
       { align: "center" },
     );
-    ink(doc, MUTED);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.4);
-    headerBottom = Math.max(headerBottom, qrY + qrSize + 13);
+    ink(doc, INK);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.6);
+    headerBottom = Math.max(headerBottom, qrY + qrSize + 14);
   }
-  stroke(doc, HAIRLINE);
-  doc.setLineWidth(0.8);
-  const headerRule = headerBottom + 4;
-  doc.line(x, headerRule, x + w, headerRule);
-  const panelTop = headerRule + 12;
 
-  /* ---- left column: title band + bill fields ---- */
-  let cy = panelTop;
-  fill(doc, TINT);
-  doc.rect(x, cy, mainW, 20, "F");
+  /* ---- Title band: Maintenance Bill (or SUPPLEMENTARY BILL) ---- */
+  const titleY = headerBottom + 16;
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9.5);
-  ink(doc, ACCENT);
+  doc.setFontSize(13);
+  ink(doc, INK);
   doc.text(
     data.supplementary
-      ? `SUPPLEMENTARY BILL${data.supplementary.category ? ` — ${data.supplementary.category.toUpperCase()}` : ""}`
-      : `BILL FOR THE MONTH OF ${data.periodLabel.toUpperCase()}`,
-    x + 12,
-    cy + 14,
-    { maxWidth: mainW - 24 },
+      ? "Supplementary Bill"
+      : "Maintenance Bill",
+    x + w / 2,
+    titleY,
+    { align: "center", maxWidth: w - 130 },
   );
-  ink(doc, INK);
-  doc.setFont("helvetica", "normal");
-  cy += 30;
 
-  const aRow = (label: string, value: string, ry: number, lx: number, bold = false): void => {
+  /* ---- Unit / bill detail grid (three columns of label : value) ---- */
+  let cy = titleY + 8;
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy, x + w, cy);
+  cy += 16;
+  const cell = (label: string, value: string, lx: number, vx: number, ry: number, bold = false): void => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
     ink(doc, MUTED);
     doc.text(label, lx, ry);
     doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setFontSize(9.8);
     ink(doc, INK);
-    doc.text(value, lx + 44, ry, { maxWidth: mainW * 0.62 - 4 });
+    doc.text(value, vx, ry, { maxWidth: x + w - vx - 6 });
   };
-  const midX = x + mainW * 0.42;
-  aRow("Bill No:", String(data.billNo), cy, x + 12, true);
-  aRow("Bill Date:", formatDate(data.billDate), cy, midX);
-  if (data.memberName2) {
-    aRow("Name:", `${data.memberName.toUpperCase()} / ${data.memberName2.toUpperCase()}`, cy + 14, x + 12, true);
-    aRow("Due Date:", formatDate(data.dueDate), cy + 14, midX);
-  } else {
-    aRow("Name:", data.memberName.toUpperCase(), cy + 14, x + 12, true);
-    aRow("Due Date:", formatDate(data.dueDate), cy + 14, midX);
-  }
-  aRow("Flat:", data.flatNo ?? "\u2014", cy + 28, x + 12);
-  aRow("Area:", data.area ?? "\u2014", cy + 28, midX);
-  cy += 42;
-
-  // Vertical divider separating the bill from the ledger column
+  const c1 = x + 12;
+  const c2 = x + w * 0.36;
+  const c3 = x + w * 0.66;
+  cell("Unit No. :", data.flatNo ?? "\u2014", c1, c1 + 46, cy, true);
+  cell("Unit Area :", data.area ? `${data.area} SqFt` : "\u2014", c2, c2 + 58, cy);
+  cell("Bill No. :", String(data.billNo), c3, c3 + 42, cy, true);
+  cy += 14;
+  cell("Name :", data.memberName.toUpperCase() + (data.memberName2 ? ` / ${data.memberName2.toUpperCase()}` : ""), c1, c1 + 42, cy, true);
+  cell("Bill Date :", formatDate(data.billDate), c3, c3 + 46, cy);
+  cy += 14;
+  cell("Bill For :", data.periodLabel, c1, c1 + 42, cy, true);
+  cell("Unit Type :", data.unitType ?? "\u2014", c2, c2 + 56, cy, true);
+  cell("Due Date :", formatDate(data.dueDate), c3, c3 + 42, cy);
+  cy += 10;
   stroke(doc, HAIRLINE);
-  doc.setLineWidth(0.6);
-  doc.line(ledgerX, panelTop, ledgerX, footerTop);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy, x + w, cy);
 
-  /* ---- left column: particulars ---- */
-  fill(doc, ACCENT);
-  doc.rect(x, cy, mainW, 18, "F");
+  /* ---- Snapshot of your bill ---- */
+  cy += 16;
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  ink(doc, WHITE);
-  doc.text("PARTICULARS", x + 12, cy + 12.5);
-  doc.text("AMOUNT (RS)", x + mainW - 12, cy + 12.5, { align: "right" });
+  doc.setFontSize(10);
   ink(doc, INK);
-  doc.setFont("helvetica", "normal");
-  cy += 18;
-  const tableTop = cy;
-  const totalsTop = footerTop - 84;
-  const amountX = x + mainW - 12;
-  const dataCount = Math.max(data.lines.length, 1);
-  const rowH = Math.max(12, Math.min(16, Math.floor((totalsTop - cy) / dataCount)));
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  data.lines.forEach((l, i) => {
-    if (i % 2 === 1) {
-      fill(doc, TINT_ALT);
-      doc.rect(x, cy, mainW, rowH, "F");
-    }
-    ink(doc, INK);
-    doc.text(`${l.serial ?? i + 1}. ${l.name.toUpperCase()}`, x + 12, cy + rowH - 4, {
-      maxWidth: amountX - x - 24,
-    });
-    doc.text(money(l.amount), amountX, cy + rowH - 4, { align: "right" });
-    cy += rowH;
-  });
-  stroke(doc, TINT);
-  doc.setLineWidth(0.6);
-  doc.line(amountX - 64, tableTop, amountX - 64, Math.max(cy, tableTop + rowH));
-  stroke(doc, HAIRLINE);
-  doc.line(x, Math.max(cy, tableTop + rowH), x + mainW, Math.max(cy, tableTop + rowH));
-  cy = Math.max(cy, tableTop + rowH) + 14;
+  doc.text("Snapshot of your bill:", x + 12, cy);
+  cy += 7;
 
-  /* ---- left column: words + totals ---- */
-  doc.setFont("helvetica", "italic");
+  // Snapshot maths from the bill's own data: column [3] carries the previous
+  // outstanding (arrears), [2] the last receipt recorded against it, [1] is
+  // [2]+[3], [4] the current charges and [5]=[3]+[4]=Total Due. Interest is
+  // a fixed 0 row kept for the specimen layout.
+  const snapBalance = Math.max(data.arrears, 0);
+  const snapReceived = data.lastReceipt?.amount ?? 0;
+  const snapPrev = snapBalance + snapReceived;
+  const snapRows: { label: string; a: number; b: number; c: number; d: number; e: number; bold?: boolean }[] = [
+    { label: "Principal", a: snapPrev, b: snapReceived, c: snapBalance, d: data.total, e: data.totalDue },
+    { label: "Interest.", a: 0, b: 0, c: 0, d: 0, e: 0 },
+    { label: "Total Amount", a: snapPrev, b: snapReceived, c: snapBalance, d: data.total, e: data.totalDue, bold: true },
+  ];
+  const colXs = [
+    x + 16,
+    x + w * 0.235,
+    x + w * 0.395,
+    x + w * 0.56,
+    x + w * 0.72,
+    x + w * 0.86,
+  ];
+  const colW = (i: number) => (i < 5 ? colXs[i + 1] - colXs[i] : x + w - 10 - colXs[5]);
+  // two-line column captions
+  const captions: string[][] = [
+    ["[1]", "Previous Bill", "Amount (Rs.)"],
+    ["[2]", "Received.", "Amount (Rs.)"],
+    ["[3]=[1]-[2]", "Balance", "Amount (Rs.)"],
+    ["[4]", "Current Bill", "Amount (Rs.)"],
+    ["[5]=[3]+[4]", "[5]=[3]+[4]", "Total Due", "Amount (Rs.)"],
+  ];
+  doc.setFontSize(8.6);
+  doc.setFont("helvetica", "bold");
+  ink(doc, INK);
+  doc.text(captions[0][0], colXs[1] + colW(0) / 2, cy, { align: "center" });
+  doc.text(captions[1][0], colXs[2] + colW(1) / 2, cy, { align: "center" });
+  doc.text(captions[2][0], colXs[3] + colW(2) / 2, cy, { align: "center" });
+  doc.text(captions[3][0], colXs[4] + colW(3) / 2, cy, { align: "center" });
+  doc.text("[5]=[3]+[4]", colXs[5] + (x + w - 10 - colXs[5]) / 2, cy, { align: "center" });
+  cy += 10;
   doc.setFontSize(8.4);
-  ink(doc, MUTED);
-  doc.text(`Rupees ${rupeesInWords(data.totalDue)} only`, x + 12, cy, {
-    maxWidth: x + mainW * 0.52 - x - 20,
-  });
-  const lblX = x + mainW * 0.55;
-  const valX = amountX;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.text("Total:", lblX, cy, { align: "right" });
-  ink(doc, INK);
-  doc.text(money(data.total), valX, cy, { align: "right" });
-  ink(doc, MUTED);
-  doc.text(arrearsLabel(data.arrears), lblX, cy + 14, { align: "right" });
-  ink(doc, INK);
-  doc.text(money(Math.abs(data.arrears)), valX, cy + 14, { align: "right" });
-  fill(doc, ACCENT);
-  doc.rect(lblX - 14, cy + 22, valX - lblX + 26, 22, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10.5);
-  ink(doc, WHITE);
-  doc.text("Total Due:", lblX, cy + 36.5, { align: "right" });
-  doc.text(money(data.totalDue), valX, cy + 36.5, { align: "right" });
-
-  /* ---- right column: MEMBER LEDGER ---- */
-  const rowsIn = data.ledgerRows ?? [];
-  fill(doc, ACCENT);
-  doc.rect(ledgerX, panelTop, ledgerW, 20, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  ink(doc, WHITE);
-  doc.text("MEMBER LEDGER", ledgerX + ledgerW / 2, panelTop + 14, { align: "center" });
-  ink(doc, INK);
-  let ly = panelTop + 20;
-  fill(doc, TINT);
-  doc.rect(ledgerX, ly, ledgerW, 13, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.6);
-  ink(doc, ACCENT);
-  doc.text("DATE", ledgerX + 5, ly + 9.5);
-  doc.text("REF", ledgerX + 36, ly + 9.5);
-  doc.text("DR", x + w - 66, ly + 9.5, { align: "right" });
-  doc.text("CR", x + w - 40, ly + 9.5, { align: "right" });
-  doc.text("BAL", x + w - 6, ly + 9.5, { align: "right" });
-  ink(doc, INK);
-  doc.setFont("helvetica", "normal");
-  ly += 13;
-  const ledgerBottom = footerTop - 8;
-  const maxRows = Math.max(1, Math.floor((ledgerBottom - ly) / 13) - 1);
-  doc.setFontSize(7.4);
-  if (rowsIn.length === 0) {
-    ink(doc, MUTED);
-    doc.text("No ledger entries", ledgerX + 5, ly + 16.5);
-    doc.text(`for ${data.memberName} yet.`, ledgerX + 5, ly + 27, {
-      maxWidth: ledgerW - 10,
-    });
-    ink(doc, INK);
-  } else {
-    // Recent entries matter most — keep the tail so the closing balance and
-    // the current bill stay visible, with an "earlier entries" notice above.
-    const shown = rowsIn.slice(Math.max(0, rowsIn.length - maxRows));
-    if (rowsIn.length > maxRows) {
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(6.6);
-      ink(doc, MUTED);
-      doc.text(`+ ${rowsIn.length - maxRows} earlier entries`, ledgerX + 5, ly + 9.5);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.4);
-      ink(doc, INK);
-      ly += 13;
-    }
-    shown.forEach((r, i) => {
-      const isLast = i === shown.length - 1 && rowsIn.length <= maxRows;
-      if (isLast) {
-        fill(doc, TINT);
-        doc.rect(ledgerX, ly, ledgerW, 13, "F");
-      }
-      doc.setFont("helvetica", isLast || i === 0 ? "bold" : "normal");
-      ink(doc, i === 0 ? MUTED : INK);
-      doc.text(shortDate(r.date), ledgerX + 5, ly + 9.5);
-      doc.text(r.ref, ledgerX + 36, ly + 9.5, { maxWidth: ledgerW - 130 });
-      if (r.debit !== 0) doc.text(ledgerMoney(r.debit), x + w - 66, ly + 9.5, { align: "right" });
-      if (r.credit !== 0) doc.text(ledgerMoney(r.credit), x + w - 40, ly + 9.5, { align: "right" });
-      ink(doc, INK);
-      doc.text(ledgerMoney(r.balance), x + w - 6, ly + 9.5, { align: "right" });
-      doc.setFont("helvetica", "normal");
-      stroke(doc, TINT);
-      doc.setLineWidth(0.5);
-      doc.line(ledgerX, ly + 13, ledgerX + ledgerW, ly + 13);
-      ink(doc, INK);
-      ly += 13;
-    });
-  }
-
-  /* ---- footer: notes left, signature right (QR lives at the top) ---- */
-  fill(doc, TINT_ALT);
-  doc.rect(x, footerTop, w, footerH, "F");
+  doc.text("Previous Bill", colXs[1] + colW(0) / 2, cy, { align: "center" });
+  doc.text("Received.", colXs[2] + colW(1) / 2, cy, { align: "center" });
+  doc.text("Balance", colXs[3] + colW(2) / 2, cy, { align: "center" });
+  doc.text("Current Bill", colXs[4] + colW(3) / 2, cy, { align: "center" });
+  doc.text("Total Due", colXs[5] + (x + w - 10 - colXs[5]) / 2, cy, { align: "center" });
+  cy += 9;
+  doc.text("Amount (Rs.)", colXs[1] + colW(0) / 2, cy, { align: "center" });
+  doc.text("Amount (Rs.)", colXs[2] + colW(1) / 2, cy, { align: "center" });
+  doc.text("Amount (Rs.)", colXs[3] + colW(2) / 2, cy, { align: "center" });
+  doc.text("Amount (Rs.)", colXs[4] + colW(3) / 2, cy, { align: "center" });
+  doc.text("Amount (Rs.)", colXs[5] + (x + w - 10 - colXs[5]) / 2, cy, { align: "center" });
+  // vertical separators + rules
   stroke(doc, HAIRLINE);
   doc.setLineWidth(0.6);
-  doc.line(x, footerTop, x + w, footerTop);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.6);
-  ink(doc, MUTED);
-  let ny = footerTop + 17;
-  for (const note of footerNotesFor(data)) {
-    doc.text(note, x + 12, ny, { maxWidth: ledgerX - x - 20 });
-    ny += 12;
+  for (let i = 1; i <= 5; i++) {
+    doc.line(colXs[i], cy - 26, colXs[i], cy + 2);
   }
+  doc.line(x, cy + 2, x + w, cy + 2);
+  cy += 12;
+  doc.setFontSize(9.4);
+  for (const r of snapRows) {
+    doc.setFont("helvetica", "normal");
+    ink(doc, INK);
+    doc.text(r.label, x + 12, cy);
+    doc.text(money(r.a), colXs[1] + colW(0) / 2, cy, { align: "center" });
+    doc.text(money(r.b), colXs[2] + colW(1) / 2, cy, { align: "center" });
+    doc.text(money(r.c), colXs[3] + colW(2) / 2, cy, { align: "center" });
+    doc.text(money(r.d), colXs[4] + colW(3) / 2, cy, { align: "center" });
+    doc.setFont("helvetica", r.bold ? "bold" : "normal");
+    doc.text(money(r.e), colXs[5] + (x + w - 10 - colXs[5]) / 2, cy, { align: "center" });
+    if (r.bold) doc.text(`${money(r.e)} Dr`, colXs[5] + 4, cy + 11);
+    stroke(doc, HAIRLINE);
+    doc.setLineWidth(0.5);
+    doc.line(x, cy + 5, x + w, cy + 5);
+    cy += 14;
+    if (r.bold) cy += 11;
+  }
+
+  /* ---- Amount in words ---- */
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  ink(doc, ACCENT);
-  doc.text(`For ${data.society.name}`, valX, footerTop + 17, { align: "right" });
-  stroke(doc, HAIRLINE);
+  doc.setFontSize(9.4);
+  ink(doc, INK);
   doc.setLineDashPattern([2, 2], 0);
-  doc.line(x + w * 0.62, footerTop + 38, valX, footerTop + 38);
+  doc.text(`Rupees ${rupeesInWords(data.totalDue)} Only`, x + 12, cy + 4, {
+    maxWidth: w - 24,
+  });
   doc.setLineDashPattern([], 0);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  ink(doc, MUTED);
-  doc.text("SECRETARY", valX, footerTop + 49, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy + 12, x + w, cy + 12);
+  cy += 22;
+
+  /* ---- Summary of Current Charges (left) beside Annual Summary (right) ---- */
+  const midX2 = x + w * 0.47;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.8);
+  ink(doc, INK);
+  doc.text("Summary of Current Charges:", x + 12, cy);
+  doc.text("Annual Summary", midX2 + (x + w - midX2) / 2, cy, { align: "center" });
+  cy += 6;
+  doc.setFontSize(8.6);
+  doc.text("Sr.  Particulars", x + 12, cy);
+  doc.text("Amount", midX2 - 10, cy, { align: "right" });
+  const annXs = [midX2 + 6, midX2 + w * 0.155, midX2 + w * 0.29, midX2 + w * 0.40];
+  doc.text("Period", annXs[0], cy);
+  doc.text("Bill", annXs[1] + (annXs[2] - annXs[1]) / 2, cy, { align: "center" });
+  doc.text("Received", annXs[2] + (annXs[3] - annXs[2]) / 2, cy, { align: "center" });
+  doc.text("Balance", x + w - 10, cy, { align: "right" });
+  cy += 9;
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.7);
+  doc.line(x, cy - 3, x + w, cy - 3);
+
+  const chargesTop = cy;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  let chY = cy;
+  const chRowH = Math.max(13, Math.min(16, Math.floor((footerTop - cy - 40) / Math.max(data.lines.length, 1))));
+  data.lines.forEach((l, i) => {
+    ink(doc, INK);
+    doc.text(`${l.serial ?? i + 1}  ${l.name}`, x + 12, chY + 9, {
+      maxWidth: midX2 - x - 34,
+    });
+    doc.text(money(l.amount), midX2 - 10, chY + 9, { align: "right" });
+    stroke(doc, TINT);
+    doc.setLineWidth(0.5);
+    doc.line(x, chY + chRowH - 4, midX2 - 6, chY + chRowH - 4);
+    chY += chRowH;
+  });
+  // subtotal + interest + total pinned under the charges block
+  const chTotY = Math.max(chY + 6, footerTop - 46);
+  doc.setFont("helvetica", "bold");
+  doc.text(money(data.total), midX2 - 10, chTotY, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  doc.text("Add: Interest", x + 12, chTotY + 12);
+  doc.text("0.00", midX2 - 10, chTotY + 12, { align: "right" });
+  doc.setFont("helvetica", "bold");
+  doc.text("Total Current Charges Rs.", x + 12, chTotY + 24);
+  doc.text(money(data.total), midX2 - 10, chTotY + 24, { align: "right" });
+
+  /* Annual rows — 12 FY months from the member's running ledger */
+  const periodYm = data.period ?? "";
+  const annual = buildAnnualSummary(data.ledgerRows ?? [], periodYm, data.fyStartMonth ?? 4);
+  const annTop = cy;
+  const annRowH = Math.max(12, Math.min(14.5, Math.floor((footerTop - annTop - 22) / 13)));
+  let ay = annTop;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.8);
+  for (const r of annual) {
+    ink(doc, INK);
+    doc.text(r.period, annXs[0], ay + 9);
+    doc.text(money(r.billed), annXs[1] + (annXs[2] - annXs[1]) / 2, ay + 9, { align: "center" });
+    doc.text(money(r.received), annXs[2] + (annXs[3] - annXs[2]) / 2, ay + 9, { align: "center" });
+    doc.text(money(r.balance), x + w - 10, ay + 9, { align: "right" });
+    stroke(doc, TINT);
+    doc.setLineWidth(0.5);
+    doc.line(midX2, ay + annRowH - 3, x + w, ay + annRowH - 3);
+    ay += annRowH;
+  }
+  // TOTAL row
+  const totBilled = annual.reduce((s, r) => s + r.billed, 0);
+  const totRecd = annual.reduce((s, r) => s + r.received, 0);
+  doc.setFont("helvetica", "bold");
+  ink(doc, INK);
+  doc.text("Total", annXs[0] + 8, ay + 9);
+  doc.text(money(totBilled), annXs[1] + (annXs[2] - annXs[1]) / 2, ay + 9, { align: "center" });
+  doc.text(money(totRecd), annXs[2] + (annXs[3] - annXs[2]) / 2, ay + 9, { align: "center" });
+  doc.text(money(annual[annual.length - 1]?.balance ?? 0), x + w - 10, ay + 9, { align: "right" });
+
+  /* ---- Receipt strip ---- */
+  let ry = ay + 18;
+  ry = Math.max(chTotY + 34, ry);
+  if (ry + 56 < footerTop) {
+    stroke(doc, INK);
+    doc.setLineWidth(0.9);
+    doc.rect(x + 6, ry, w - 12, 52, "D");
+    fill(doc, TINT);
+    doc.rect(x + 6, ry, w - 12, 14, "F");
+    stroke(doc, INK);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.6);
+    ink(doc, INK);
+    doc.text("Receipt No.", x + 18, ry + 10);
+    doc.text("Amount", x + w * 0.2, ry + 10);
+    doc.text("Cheque No.", x + w * 0.33, ry + 10);
+    doc.text("Cheque Date", x + w * 0.53, ry + 10);
+    doc.text("Bank Name", x + w * 0.72, ry + 10);
+    doc.setFont("helvetica", "normal");
+    const lr = data.lastReceipt;
+    if (lr) {
+      doc.text(lr.no || "\u2014", x + 20, ry + 26);
+      doc.text(money(lr.amount), x + w * 0.2, ry + 26, { align: "right" });
+      doc.text(lr.mode ?? "\u2014", x + w * 0.33, ry + 26, { maxWidth: x + w * 0.5 - (x + w * 0.33) });
+      doc.text(lr.date ? formatDate(lr.date) : "", x + w * 0.53, ry + 26);
+    } else {
+      doc.text("No receipts recorded against this bill.", x + 20, ry + 26);
+    }
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8.6);
+    doc.text("Subject to Cheque Realisation", x + w - 18, ry + 44, { align: "right" });
+    doc.setFont("helvetica", "normal");
+
+    /* ---- Footer: E.&O.E. / Authorised Sign. / notes ---- */
+    stroke(doc, HAIRLINE);
+    doc.setLineWidth(0.8);
+    doc.line(x, footerTop, x + w, footerTop);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.4);
+    ink(doc, INK);
+    doc.text("E. & O. E.", x + 12, footerTop + 15);
+    doc.text("Note:", x + 12, footerTop + 27);
+    doc.text("Authorised Sign.", x + w - 12, footerTop + 15, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.2);
+    ink(doc, MUTED);
+    let sy = footerTop + 38;
+    for (const note of footerNotesFor(data)) {
+      doc.text(note, x + 12, sy, { maxWidth: w - 24 });
+      sy += 10;
+    }
+  }
 
   return { top: boxTop, bottom: boxBottom };
 }

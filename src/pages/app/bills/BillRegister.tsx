@@ -380,6 +380,16 @@ export default function BillRegister() {
     const currentCharges = (b.lines ?? [])
       .filter((l) => !isArrearsLine(l.name))
       .reduce((s, l) => s + l.amount, 0);
+    // Last receipt before this bill's issue — fills the snapshot's "Received"
+    // column and the printed receipt strip.
+    const lastRcpt = (vouchersData ?? [])
+      .filter(
+        (v) =>
+          v.type === "member_receipt" &&
+          v.memberId === b.memberId &&
+          v.date <= b.issueDate,
+      )
+      .sort((x, y) => y.date.localeCompare(x.date))[0];
     return {
       society: {
         name: society.name,
@@ -389,6 +399,12 @@ export default function BillRegister() {
         registrationNo: society.registrationNo,
       },
       billNo: b.billNo.replace(/^BILL-/, ""),
+      period: b.period,
+      fyStartMonth: society.fyStartMonth,
+      unitType: m?.unitType,
+      lastReceipt: lastRcpt
+        ? { no: lastRcpt.voucherNo, date: lastRcpt.date, amount: lastRcpt.total, mode: lastRcpt.mode }
+        : undefined,
       billDate: b.issueDate,
       dueDate: b.dueDate,
       // Multi-month bills print the span their amount covers (e.g. "April,2026

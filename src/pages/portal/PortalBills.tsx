@@ -117,6 +117,14 @@ export default function PortalBills() {
         registrationNo: society?.registrationNo,
       },
       billNo: bill.billNo.replace(/^BILL-/, ""),
+      period: bill.period,
+      fyStartMonth: society?.fyStartMonth,
+      // The portal binding row carries only name/flat fields; unit type
+      // comes from the members table, which the portal doesn't subscribe to.
+      unitType: undefined,
+      // Snapshot "Received" / receipt strip feed from the same myLedger rows
+      // the side column already displays: the member's latest credit entry
+      // dated on/before this bill's issue (within the current FY window).
       billDate: bill.issueDate,
       dueDate: bill.dueDate,
       periodLabel: periodLabelLong(bill.period),
@@ -144,6 +152,19 @@ export default function PortalBills() {
         credit: r.credit,
         balance: r.balance,
       })),
+      lastReceipt: (ledger ?? [])
+        .filter(
+          (r) =>
+            r.credit > 0 &&
+            r.voucherNo !== "OPENING" &&
+            (!bill.issueDate || r.date <= bill.issueDate),
+        )
+        .slice(-1)
+        .map((r) => ({
+          no: r.voucherNo,
+          date: r.date,
+          amount: r.credit,
+        }))[0],
       // Bill QR: pays this bill's exact due amount into the society's UPI ID.
       upi:
         society?.upiVpa && memberBinding

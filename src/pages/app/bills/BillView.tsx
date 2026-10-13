@@ -49,6 +49,22 @@ export default function BillView() {
     .filter((l) => !isArrearsLine(l.name))
     .reduce((s, l) => s + l.amount, 0);
 
+  // This member's most recent receipt issued on/before the bill's own date —
+  // fills the snapshot's "Received" column and the printed receipt strip.
+  const lastReceiptFor = (memberId: string, issueDate: string) => {
+    const rcpt = (vouchers ?? [])
+      .filter(
+        (v) =>
+          v.type === "member_receipt" &&
+          v.memberId === memberId &&
+          v.date <= issueDate,
+      )
+      .sort((x, y) => y.date.localeCompare(x.date))[0];
+    return rcpt
+      ? { no: rcpt.voucherNo, date: rcpt.date, amount: rcpt.total, mode: rcpt.mode }
+      : undefined;
+  };
+
   const data: LegacyBillData = {
     society: {
       name: society.name,
@@ -58,6 +74,10 @@ export default function BillView() {
       registrationNo: society.registrationNo,
     },
     billNo: bill.billNo.replace(/^BILL-/, ""),
+    period: bill.period,
+    fyStartMonth: society.fyStartMonth,
+    unitType: m?.unitType,
+    lastReceipt: lastReceiptFor(bill.memberId, bill.issueDate),
     billDate: bill.issueDate,
     dueDate: bill.dueDate,
     periodLabel: periodLabelLong(bill.period),
