@@ -319,6 +319,8 @@ export default function MemberReceipt() {
       purpose: `Maintenance for the Month${firstBill ? ` ${periodLabelLong(firstBill.period)}` : ""}`,
       mode: v.mode,
       reference: v.reference,
+      // Society-wide printing format (receipts share the bill's layout key).
+      format: s.billDocFormat,
     };
     if (kind === "pdf") receiptPdf(data, `receipt-${v.voucherNo}.pdf`);
     else if (kind === "word") receiptWord(data, `receipt-${v.voucherNo}.doc`);

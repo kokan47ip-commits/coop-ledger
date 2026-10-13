@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { BILL_DOC_FORMATS } from "@/lib/billDoc";
+import { Textarea } from "@/components/ui/textarea";
 import { saveClaimCode, useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
 import { effectiveFyPeriod, fyYearLabel, todayISO } from "@/lib/format";
@@ -82,6 +84,8 @@ export default function SocietyProfile() {
     upiVpa: "",
     lateFeePercent: "",
     billingFrequency: "1" as string,
+    billDocFormat: "classic" as string,
+    billQrNote: "",
     chairmanMemberId: "",
     secretaryMemberId: "",
     treasurerMemberId: "",
@@ -122,6 +126,8 @@ export default function SocietyProfile() {
       lateFeePercent:
         society.lateFeePercent !== undefined ? String(society.lateFeePercent) : "",
       billingFrequency: String(society.billingFrequency ?? 1),
+      billDocFormat: society.billDocFormat ?? "classic",
+      billQrNote: society.billQrNote ?? "",
       chairmanMemberId: society.chairmanMemberId ?? "",
       secretaryMemberId: society.secretaryMemberId ?? "",
       treasurerMemberId: society.treasurerMemberId ?? "",
@@ -226,6 +232,11 @@ export default function SocietyProfile() {
               ? Number(form.lateFeePercent)
               : undefined,
           billingFrequency: (Number(form.billingFrequency) || 1) as 1 | 2 | 3 | 6 | 12,
+          billDocFormat:
+            BILL_DOC_FORMATS.some((f) => f.key === form.billDocFormat)
+              ? (form.billDocFormat as "modern" | "classic" | "slip" | "ledger")
+              : undefined,
+          billQrNote: form.billQrNote.trim() || undefined,
         });
         toast.success("Society profile updated");
       }
@@ -697,6 +708,60 @@ export default function SocietyProfile() {
                     FIRST month of the cycle (April, July, October, January for quarters).
                     Change only before the cycle starts: existing bills stay untouched.
                   </p>
+                </div>
+              </section>
+              <section className="space-y-4">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Bill & receipt printing format
+                </h3>
+                <div className="space-y-4">
+                  <div className="max-w-xl space-y-2">
+                    <Label htmlFor="bill-doc-format">Format used by member bills & receipts</Label>
+                    <div className="grid gap-2 lg:grid-cols-4">
+                      {BILL_DOC_FORMATS.map((f) => (
+                        <label
+                          key={f.key}
+                          className={`flex cursor-pointer flex-col gap-1 rounded-lg border p-3 transition-colors ${
+                            form.billDocFormat === f.key
+                              ? "border-primary bg-primary/5"
+                              : "hover:bg-muted/40"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="bill-doc-format"
+                            className="sr-only"
+                            value={f.key}
+                            checked={form.billDocFormat === f.key}
+                            onChange={() => setForm({ ...form, billDocFormat: f.key })}
+                          />
+                          <span className="text-sm font-medium">{f.label}</span>
+                          <span className="text-xs leading-5 text-muted-foreground">
+                            {f.description}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Applies to every member bill and receipt printed as PDF, Word or from the
+                      Printing Hub. The classic bordered layout is used until you change this.
+                    </p>
+                  </div>
+                  <div className="max-w-xl space-y-2">
+                    <Label htmlFor="bill-qr-note">Payment notes printed next to the bill QR code</Label>
+                    <Textarea
+                      id="bill-qr-note"
+                      value={form.billQrNote}
+                      onChange={(e) => setForm({ ...form, billQrNote: e.target.value })}
+                      rows={3}
+                      placeholder={"One instruction per line, e.g.:\nPLEASE PAY BY UPI OR CROSSED CHEQUE.\nCHEQUES IN FAVOUR OF SILVERWOOD CHS LTD."}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Each line prints as one bullet beside the UPI QR on every bill. Leave blank
+                      to keep the standard wording (cheque payment, due-by date and the late-fee
+                      line driven by the rate saved above).
+                    </p>
+                  </div>
                 </div>
               </section>
               <section className="space-y-4">

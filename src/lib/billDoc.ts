@@ -10,6 +10,45 @@ export type SocietyHeader = {
   registrationNo?: string;
 };
 
+/**
+ * Printing layouts for member bills & receipts, selectable per society in
+ * Society Profile → Accounting. "classic" is the original bordered legacy
+ * document and stays the default.
+ */
+export type BillDocFormat = "modern" | "classic" | "slip" | "ledger";
+
+/** Selector entries for the Society Profile format picker. */
+export const BILL_DOC_FORMATS: {
+  key: BillDocFormat;
+  label: string;
+  description: string;
+}[] = [
+  {
+    key: "classic",
+    label: "Classic (bordered)",
+    description:
+      "Traditional bordered bill: letterhead band, ruled particulars, arrears panel and tear line.",
+  },
+  {
+    key: "modern",
+    label: "Modern",
+    description:
+      "Contemporary full-page layout: left-ruled header, clean meta grid and a gold Total Due chip.",
+  },
+  {
+    key: "slip",
+    label: "Compact slip",
+    description:
+      "Short payment slip with a one-line member band — two fit on an A4 sheet.",
+  },
+  {
+    key: "ledger",
+    label: "Ledger (traditional)",
+    description:
+      "Serif, register-style document ruled like an old society counterfoil book.",
+  },
+];
+
 export type LegacyBillData = {
   society: SocietyHeader;
   billNo: string;
@@ -44,6 +83,13 @@ export type LegacyBillData = {
    * clear "SUPPLEMENTARY BILL" label and shows the charge category.
    */
   supplementary?: { category?: string };
+  /** Printing layout chosen by the society (default "classic"). */
+  format?: BillDocFormat;
+  /**
+   * Custom payment notes for the footer next to the UPI QR (\n-separated).
+   * When set these replace the standard fixed footer notes.
+   */
+  qrNote?: string;
 };
 
 export type LegacyReceiptData = {
@@ -61,6 +107,8 @@ export type LegacyReceiptData = {
   reference?: string;
   /** Optional copy tag rendered top-right, e.g. "Original" / "Duplicate". */
   copyLabel?: string;
+  /** Printing layout chosen by the society (default "classic"). */
+  format?: BillDocFormat;
 };
 
 /**
@@ -97,6 +145,19 @@ export function footerNotes(lateFeePercent?: number): string[] {
     ];
   }
   return [...base, "LATEFEES @18% WILL BE CHARGED ON OVERDUE MONTH"];
+}
+
+/**
+ * Footer payment notes printed beside the UPI QR. The society's custom note
+ * (editable in Society Profile) wins over the standard fixed wording.
+ */
+export function footerNotesFor(data: { qrNote?: string; lateFeePercent?: number }): string[] {
+  const custom = (data.qrNote ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (custom.length) return custom;
+  return footerNotes(data.lateFeePercent);
 }
 
 function money(n: number): string {
@@ -417,7 +478,7 @@ function drawBillBox(
     doc.setFontSize(7.6);
   }
   let ny = footerTop + 19;
-  for (const note of footerNotes(data.lateFeePercent)) {
+  for (const note of footerNotesFor(data)) {
     doc.text(note, x + (upi ? 70 : 12), ny);
     ny += 12;
   }
@@ -442,6 +503,436 @@ function drawBillBox(
   return { top: boxTop, bottom: boxBottom };
 }
 
+/* ------------------------------------------------------------------ */
+/* Printing formats - modern / slip / ledger variants                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Draw a bill box in the society's selected printing format. Every variant
+ * keeps the classic box's geometry contract (returns top/bottom y) so batching
+ * and stacking code is layout-independent.
+ */
+function drawBillBoxFor(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+  scale: number,
+): BillBoxGeometry {
+  switch (data.format ?? "classic") {
+    case "modern":
+      return drawBillBoxModern(doc, data, x, top, w, h);
+    case "slip":
+      return drawBillBoxSlip(doc, data, x, top, w, h);
+    case "ledger":
+      return drawBillBoxLedger(doc, data, x, top, w, h);
+    default:
+      return drawBillBox(doc, data, x, top, w, h, scale);
+  }
+}
+
+/** Footer block shared by the modern + ledger variants: QR left, custom or
+ *  standard payment notes beside it, signature on the right. */
+function drawBillFooterVariant(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  w: number,
+  footerTop: number,
+  boxBottom: number,
+): void {
+  fill(doc, TINT_ALT);
+  doc.rect(x, footerTop, w, boxBottom - footerTop, "F");
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.6);
+  doc.line(x, footerTop, x + w, footerTop);
+  const upi = data.upi;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.6);
+  ink(doc, MUTED);
+  const noteX = upi ? x + 70 : x + 12;
+  if (upi) {
+    const qrSize = 46;
+    drawQrMatrix(doc, amountUpiUri(upi.uri, upi.amount), x + 10, footerTop + 8, qrSize);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(5.4);
+    ink(doc, ACCENT);
+    doc.text(`SCAN TO PAY RS ${money(upi.amount)}`, x + 10 + qrSize / 2, footerTop + 8 + qrSize + 7.5, {
+      align: "center",
+    });
+    ink(doc, MUTED);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.6);
+  }
+  let ny = footerTop + 19;
+  for (const note of footerNotesFor(data)) {
+    doc.text(note, noteX, ny);
+    ny += 12;
+  }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, ACCENT);
+  doc.text(`For ${data.society.name}`, x + w - 12, footerTop + 19, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + w * 0.62, footerTop + 42, x + w - 12, footerTop + 42);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  ink(doc, MUTED);
+  doc.text("SECRETARY", x + w - 12, footerTop + 54, { align: "right" });
+}
+
+/**
+ * MODERN variant: airy white document — indigo left rule beside the society
+ * name, clean meta grid, no filler stripes, a gold Total Due chip and the
+ * shared variant footer (UPI QR + editable notes).
+ */
+function drawBillBoxModern(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): BillBoxGeometry {
+  const boxTop = top;
+  const boxBottom = top + h;
+  const footerH = 68;
+  const totalsTop = boxBottom - footerH;
+
+  // Header: white field with a heavy indigo left rule
+  fill(doc, WHITE);
+  doc.rect(x, boxTop, w, 62, "F");
+  fill(doc, ACCENT);
+  doc.rect(x, boxTop, 5, 62, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  ink(doc, ACCENT);
+  doc.text(data.society.name.toUpperCase(), x + 18, boxTop + 27, { maxWidth: w - 150 });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.6);
+  ink(doc, MUTED);
+  let hy = boxTop + 40;
+  for (const line of [data.society.registrationNo, data.society.address].filter(Boolean) as string[]) {
+    doc.text(line, x + 18, hy, { maxWidth: w - 150 });
+    hy += 10;
+  }
+  // Right-hand "MEMBER BILL" tag
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  ink(doc, GOLD);
+  doc.text(data.supplementary ? "SUPPLEMENTARY BILL" : "MEMBER BILL", x + w - 12, boxTop + 17, {
+    align: "right",
+  });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  ink(doc, INK);
+  doc.text(data.periodLabel.toUpperCase(), x + w - 12, boxTop + 32, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(1);
+  doc.line(x, boxTop + 62, x + w, boxTop + 62);
+
+  // Meta grid
+  let cy = boxTop + 62 + 14;
+  const metaH = 54;
+  fill(doc, TINT_ALT);
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.5);
+  doc.rect(x, cy, w, metaH, "FD");
+  const mrow = (label: string, value: string, lx: number, vx: number, ry: number, bold = false): void => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    ink(doc, MUTED);
+    doc.text(label, lx, ry);
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    ink(doc, INK);
+    doc.text(value, vx, ry, { maxWidth: x + w - vx - 12 });
+  };
+  mrow("Bill No:", String(data.billNo), x + 12, x + 62, cy + 17, true);
+  mrow("Bill Date:", formatDate(data.billDate), x + w * 0.4, x + w * 0.4 + 60, cy + 17);
+  mrow("Due Date:", formatDate(data.dueDate), x + w * 0.72, x + w * 0.72 + 54, cy + 17);
+  mrow("Name:", data.memberName.toUpperCase(), x + 12, x + 62, cy + 33, true);
+  mrow("Flat:", data.flatNo ?? "-", x + w * 0.4, x + w * 0.4 + 60, cy + 33);
+  mrow("Area:", data.area ?? "-", x + w * 0.72, x + w * 0.72 + 54, cy + 33);
+  mrow("Payable by:", "On or before the last day of the month", x + 12, x + 62, cy + 49);
+  cy += metaH + 12;
+
+  // Charges table: slim header, zebra-free rows, right rule only
+  fill(doc, ACCENT);
+  doc.rect(x, cy, w, 20, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  ink(doc, WHITE);
+  doc.text("PARTICULARS", x + 12, cy + 14);
+  doc.text("AMOUNT (RS)", x + w - 12, cy + 14, { align: "right" });
+  ink(doc, INK);
+  cy += 20;
+  const amountX = x + w - 122;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  for (const [i, l] of data.lines.entries()) {
+    doc.text(`${l.serial ?? i + 1}.  ${l.name.toUpperCase()}`, x + 12, cy + 13, {
+      maxWidth: amountX - x - 24,
+    });
+    doc.text(money(l.amount), x + w - 12, cy + 13, { align: "right" });
+    cy += 16;
+  }
+  stroke(doc, TINT);
+  doc.setLineWidth(0.6);
+  doc.line(amountX, cy - data.lines.length * 16 - 4, amountX, cy - 4);
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy, x + w, cy);
+  cy += 16;
+
+  // Amount in words (left) + totals stack (right)
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8.6);
+  ink(doc, MUTED);
+  doc.text(`Rupees ${rupeesInWords(data.totalDue)} only`, x + 12, cy, { maxWidth: x + w * 0.5 - x - 20 });
+  const lblX = x + w * 0.55;
+  const valX = x + w - 12;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text("Total:", lblX, cy, { align: "right" });
+  ink(doc, INK);
+  doc.text(money(data.total), valX, cy, { align: "right" });
+  ink(doc, MUTED);
+  doc.text(arrearsLabel(data.arrears), lblX, cy + 15, { align: "right" });
+  ink(doc, INK);
+  doc.text(money(Math.abs(data.arrears)), valX, cy + 15, { align: "right" });
+  // Gold Total Due chip
+  const chipY = cy + 26;
+  fill(doc, GOLD);
+  doc.rect(lblX - 16, chipY, valX - lblX + 28, 24, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  ink(doc, WHITE);
+  doc.text("Total Due:", lblX, chipY + 16, { align: "right" });
+  doc.text(money(data.totalDue), valX, chipY + 16, { align: "right" });
+
+  drawBillFooterVariant(doc, data, x, w, totalsTop + 44, boxBottom);
+  doc.setFont("helvetica", "normal");
+  // Thin outer rule spacing the document from the sheet
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.rect(x, boxTop, w, boxBottom - boxTop);
+  return { top: boxTop, bottom: boxBottom };
+}
+
+/**
+ * SLIP variant: a short payment slip — single-line member band, lean charge
+ * list, one total line and the QR + notes row.Keeps the same box geometry so
+ * batching can still stack two slips per sheet.
+ */
+function drawBillBoxSlip(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): BillBoxGeometry {
+  const boxTop = top;
+  const boxBottom = top + h;
+  const footerH = 52;
+  const footerTop = boxBottom - footerH;
+  let cy = drawLetterhead(doc, data.society, x, w, boxTop) + 10;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  ink(doc, ACCENT);
+  doc.text(
+    `${data.supplementary ? "SUPPLEMENTARY" : data.periodLabel.toUpperCase()}  |  ${String(data.billNo)}  |  ${formatDate(data.billDate)}`,
+    x + 12,
+    cy,
+  );
+  ink(doc, INK);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(
+    `${data.memberName.toUpperCase()}  |  Flat ${data.flatNo ?? "-"}`,
+    x + w - 12,
+    cy,
+    { align: "right" },
+  );
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy + 6, x + w, cy + 6);
+  cy += 16;
+
+  const valX = x + w - 12;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const rowH = Math.max(14, Math.min(20, Math.floor((footerTop - cy - 64) / Math.max(data.lines.length, 1))));
+  for (const [i, l] of data.lines.entries()) {
+    doc.text(`${l.serial ?? i + 1}. ${l.name.toUpperCase()}`, x + 12, cy + rowH - 5, {
+      maxWidth: x + w * 0.6 - x - 20,
+    });
+    doc.text(money(l.amount), valX, cy + rowH - 5, { align: "right" });
+    cy += rowH;
+  }
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.line(x, cy, x + w, cy);
+
+  const ty = Math.min(cy + 18, footerTop - 50);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11.5);
+  ink(doc, ACCENT);
+  doc.text(`TOTAL DUE   ${money(data.totalDue)}`, valX, ty, { align: "right" });
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8.6);
+  ink(doc, MUTED);
+  doc.text(rupeesInWords(data.totalDue), x + 12, ty, { maxWidth: x + w * 0.5 - x - 20 });
+  if (data.arrears !== 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.text(
+      `${arrearsLabel(data.arrears)} ${money(Math.abs(data.arrears))}`,
+      x + 12,
+      ty + 15,
+    );
+  }
+
+  // Footer: QR + notes + a small signature, no tinted band
+  const upi = data.upi;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.6);
+  ink(doc, MUTED);
+  if (upi) {
+    drawQrMatrix(doc, amountUpiUri(upi.uri, upi.amount), x + 10, footerTop + 6, 40);
+  }
+  let ny = footerTop + 13;
+  for (const note of footerNotesFor(data)) {
+    doc.text(note, x + (upi ? 64 : 12), ny);
+    ny += 11;
+  }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, ACCENT);
+  doc.text(`For ${data.society.name}`, valX, footerTop + 13, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  ink(doc, MUTED);
+  doc.text("SECRETARY", valX, footerTop + 34, { align: "right" });
+
+  stroke(doc, ACCENT);
+  doc.setLineWidth(1);
+  doc.rect(x, boxTop, w, boxBottom - boxTop);
+  return { top: boxTop, bottom: boxBottom };
+}
+
+/**
+ * LEDGER variant: serif, counterfoil-book styling — double outer rule,
+ * uppercase small type, a ruled Sr/Particulars/Amount table with the arrears
+ * shown INSIDE the table as "Previous Balance", and a grand-total double rule.
+ */
+function drawBillBoxLedger(
+  doc: jsPDF,
+  data: LegacyBillData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): BillBoxGeometry {
+  const boxTop = top;
+  const boxBottom = top + h;
+  const footerH = 68;
+  const footerTop = boxBottom - footerH;
+  const valX = x + w - 12;
+
+  // Double outer rule + serif letterhead
+  stroke(doc, INK);
+  doc.setLineWidth(1.4);
+  doc.rect(x, boxTop, w, boxBottom - boxTop);
+  doc.setLineWidth(0.5);
+  doc.rect(x + 4, boxTop + 4, w - 8, boxBottom - boxTop - 8);
+  doc.setFont("times", "bold");
+  doc.setFontSize(16);
+  ink(doc, INK);
+  doc.text(data.society.name.toUpperCase(), x + w / 2, boxTop + 34, { align: "center", maxWidth: w - 40 });
+  doc.setFont("times", "normal");
+  doc.setFontSize(9.5);
+  let cy = boxTop + 48;
+  for (const line of [data.society.registrationNo, data.society.address].filter(Boolean) as string[]) {
+    doc.text(line, x + w / 2, cy, { align: "center", maxWidth: w - 48 });
+    cy += 12;
+  }
+  stroke(doc, INK);
+  doc.setLineWidth(0.8);
+  doc.line(x + 4, cy + 4, x + w - 4, cy + 4);
+  cy += 20;
+
+  doc.setFont("times", "bold");
+  doc.setFontSize(11);
+  doc.text(
+    data.supplementary ? "SUPPLEMENTARY BILL" : `MONTHLY MAINTENANCE BILL - ${data.periodLabel.toUpperCase()}`,
+    x + w / 2,
+    cy,
+    { align: "center" },
+  );
+  cy += 8;
+  doc.setFont("times", "normal");
+  doc.setFontSize(10);
+  doc.text(`Bill No: ${String(data.billNo)}`, x + 14, cy + 10);
+  doc.text(`Date: ${formatDate(data.billDate)}`, x + w / 2, cy + 10, { align: "center" });
+  doc.text(`Due: ${formatDate(data.dueDate)}`, valX - 2, cy + 10, { align: "right" });
+  cy += 24;
+  doc.text(`Member: ${data.memberName.toUpperCase()}${data.memberName2 ? ` / ${data.memberName2.toUpperCase()}` : ""}`, x + 14, cy, { maxWidth: x + w - 130 - x - 14 });
+  doc.setFont("times", "bold");
+  doc.text(`Flat: ${data.flatNo ?? "-"}`, valX - 2, cy, { align: "right" });
+  cy += 10;
+  stroke(doc, INK);
+  doc.setLineWidth(0.8);
+  doc.line(x + 4, cy, x + w - 4, cy);
+  cy += 14;
+
+  // Rule the ledger table: Sr | Particulars | Amount
+  const tableTop = cy;
+  const rows: { text: string; value: number; bold?: boolean }[] = data.lines.map((l, i) => ({
+    text: `${i + 1}.  ${l.name.toUpperCase()}`,
+    value: l.amount,
+  }));
+  if (data.arrears > 0) {
+    rows.unshift({ text: "Previous Balance brought forward", value: data.arrears });
+  }
+  const rowH = 18;
+  doc.setFont("times", "normal");
+  doc.setFontSize(10.5);
+  const amountX = x + w - 110;
+  for (const r of rows) {
+    if (r.bold) doc.setFont("times", "bold");
+    ink(doc, INK);
+    doc.text(r.text, x + 14, cy + rowH - 5, { maxWidth: amountX - x - 28 });
+    doc.text(money(r.value), valX - 2, cy + rowH - 5, { align: "right" });
+    if (r.bold) doc.setFont("times", "normal");
+    doc.line(x + 4, cy + rowH, x + w - 4, cy + rowH);
+    cy += rowH;
+  }
+  // Grand total with double rule
+  cy += 6;
+  doc.setFont("times", "bold");
+  doc.text("TOTAL DUE", x + 14, cy + 4);
+  doc.text(money(data.totalDue), valX - 2, cy + 4, { align: "right" });
+  doc.setLineWidth(1);
+  doc.line(amountX - 60, cy + 8, valX - 2, cy + 8);
+  doc.setLineWidth(0.5);
+  doc.line(amountX - 60, cy + 10.5, valX - 2, cy + 10.5);
+  cy += 22;
+  doc.setFont("times", "italic");
+  doc.setFontSize(9);
+  ink(doc, MUTED);
+  doc.text(`Rupees ${rupeesInWords(data.totalDue)} only`, x + 14, cy, { maxWidth: x + w - 150 - x - 14 });
+  doc.setFont("times", "normal");
+  ink(doc, INK);
+
+  drawBillFooterVariant(doc, data, x, w, footerTop, boxBottom);
+  return { top: boxTop, bottom: boxBottom };
+}
+
 /** `billPdf` without the download — the caller mails or stores the bytes. */
 export function billPdfBytes(data: LegacyBillData): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -449,7 +940,7 @@ export function billPdfBytes(data: LegacyBillData): Uint8Array {
   const H = doc.internal.pageSize.getHeight();
   const x = 38;
   const w = W - x * 2;
-  drawBillBox(doc, data, x, 30, w, H - 168, 1);
+  drawBillBoxFor(doc, data, x, 30, w, H - 168, 1);
   // Tear line below the bill box (single-bill layout only).
   stroke(doc, HAIRLINE);
   doc.setLineWidth(0.8);
@@ -850,7 +1341,7 @@ export function billsPdfBatchBytes(
       doc.setLineDashPattern([], 0);
     }
     if (twoUp) drawBillBoxCompact(doc, item.data, x, yFor(slot), w, boxH);
-    else drawBillBox(doc, item.data, x, yFor(slot), w, boxH, 1);
+    else drawBillBoxFor(doc, item.data, x, yFor(slot), w, boxH, 1);
     slot++;
   }
   return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
@@ -1073,12 +1564,264 @@ function drawReceiptBox(doc: jsPDF, data: LegacyReceiptData, x: number, y: numbe
 }
 
 /** Bordered legacy receipt byte producer for emailing — no download. */
+function drawReceiptBoxFor(
+  doc: jsPDF,
+  data: LegacyReceiptData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): number {
+  switch (data.format ?? "classic") {
+    case "modern":
+      return drawReceiptBoxModern(doc, data, x, top, w, h);
+    case "slip":
+      drawReceiptBoxCompact(doc, data, x, top, w, h);
+      return top + h;
+    case "ledger":
+      return drawReceiptBoxLedger(doc, data, x, top, w, h);
+    default:
+      return drawReceiptBox(doc, data, x, top, w);
+  }
+}
+
+/**
+ * MODERN receipt: white document with a heavy indigo left rule, "RECEIVED"
+ * tag top-right, clean narrative lines and a large right-aligned amount chip.
+ */
+function drawReceiptBoxModern(
+  doc: jsPDF,
+  data: LegacyReceiptData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): number {
+  const boxTop = top;
+  const boxBottom = top + h;
+  fill(doc, WHITE);
+  doc.rect(x, boxTop, w, 56, "F");
+  fill(doc, ACCENT);
+  doc.rect(x, boxTop, 5, 56, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  ink(doc, ACCENT);
+  doc.text(data.society.name.toUpperCase(), x + 18, boxTop + 25, { maxWidth: w - 150 });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.6);
+  ink(doc, MUTED);
+  doc.text(data.society.address ?? "", x + 18, boxTop + 38, { maxWidth: w - 150 });
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  ink(doc, ACCENT);
+  doc.text("MONEY RECEIPT", x + w - 12, boxTop + 20, { align: "right" });
+  if (data.copyLabel) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    ink(doc, MUTED);
+    doc.text(data.copyLabel.toUpperCase(), x + w - 12, boxTop + 34, { align: "right" });
+  }
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(1);
+  doc.line(x, boxTop + 56, x + w, boxTop + 56);
+
+  let cy = boxTop + 56 + 18;
+  fill(doc, TINT_ALT);
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.5);
+  doc.rect(x, cy, w, 24, "FD");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  ink(doc, MUTED);
+  doc.text("Receipt No.:", x + 12, cy + 16);
+  doc.setFont("helvetica", "bold");
+  ink(doc, INK);
+  doc.text(String(data.receiptNo), x + 78, cy + 16);
+  doc.setFont("helvetica", "normal");
+  ink(doc, MUTED);
+  doc.text("Receipt Date:", x + w - 168, cy + 16);
+  ink(doc, INK);
+  doc.text(formatDate(data.receiptDate), x + w - 12, cy + 16, { align: "right" });
+  cy += 24 + 22;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  ink(doc, MUTED);
+  doc.text("Received with thanks from", x + 16, cy);
+  doc.setFont("helvetica", "bold");
+  ink(doc, INK);
+  doc.text(data.memberName.toUpperCase(), x + 148, cy, { maxWidth: x + w - 24 - (x + 148) });
+  cy += 20;
+  doc.setFont("helvetica", "normal");
+  ink(doc, MUTED);
+  doc.text("being payment of", x + 16, cy);
+  doc.setFont("helvetica", "bold");
+  ink(doc, ACCENT);
+  doc.text(`Rs. ${money(data.amount)} /-  (${data.paymentKind === "part" ? "Part" : "Full"})`, x + 118, cy);
+  cy += 22;
+  fill(doc, TINT);
+  doc.rect(x + 16, cy - 4, w - 32, 22, "F");
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(9.2);
+  ink(doc, ACCENT);
+  doc.text(rupeesInWords(data.amount), x + 24, cy + 10, { maxWidth: w - 48 });
+  cy += 34;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  ink(doc, MUTED);
+  doc.text("towards", x + 16, cy);
+  ink(doc, INK);
+  doc.text(data.purpose, x + 62, cy, { maxWidth: x + w - 24 - (x + 62) });
+  cy += 18;
+  ink(doc, MUTED);
+  doc.text("for Flat", x + 16, cy);
+  ink(doc, INK);
+  const modeTxt = [data.reference, data.mode].filter(Boolean).join(" \u00b7 ");
+  doc.text(
+    `${data.flatNo ?? "-"}${modeTxt ? `   Mode: ${modeTxt}` : ""}`,
+    x + 62,
+    cy,
+    { maxWidth: x + w - 24 - (x + 62) },
+  );
+  cy += 30;
+
+  // Amount chip bottom-left, signature right
+  fill(doc, ACCENT);
+  doc.rect(x + 16, cy - 8, 168, 32, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11.5);
+  ink(doc, WHITE);
+  const amt = `Rs. ${money(data.amount)} /-`;
+  doc.text(amt, x + 16 + (168 - doc.getTextWidth(amt)) / 2, cy + 11);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  ink(doc, ACCENT);
+  doc.text(`For ${data.society.name}`, x + w - 16, cy, { align: "right" });
+  stroke(doc, HAIRLINE);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + w - 128, cy + 24, x + w - 16, cy + 24);
+  doc.setLineDashPattern([], 0);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  ink(doc, MUTED);
+  doc.text("AUTHORIZED SIGNATORY", x + w - 16, cy + 36, { align: "right" });
+
+  stroke(doc, HAIRLINE);
+  doc.setLineWidth(0.8);
+  doc.rect(x, boxTop, w, boxBottom - boxTop);
+  return boxBottom;
+}
+
+/**
+ * LEDGER receipt: serif counterfoil styling — double rule, "RECEIVED WITH
+ * THANKS" wording centred, ruled narrative and a gold-stamped amount box.
+ */
+function drawReceiptBoxLedger(
+  doc: jsPDF,
+  data: LegacyReceiptData,
+  x: number,
+  top: number,
+  w: number,
+  h: number,
+): number {
+  const boxTop = top;
+  const boxBottom = top + h;
+  stroke(doc, INK);
+  doc.setLineWidth(1.4);
+  doc.rect(x, boxTop, w, boxBottom - boxTop);
+  doc.setLineWidth(0.5);
+  doc.rect(x + 4, boxTop + 4, w - 8, boxBottom - boxTop - 8);
+  doc.setFont("times", "bold");
+  doc.setFontSize(16);
+  ink(doc, INK);
+  doc.text(data.society.name.toUpperCase(), x + w / 2, boxTop + 34, { align: "center", maxWidth: w - 40 });
+  doc.setFont("times", "normal");
+  doc.setFontSize(9.5);
+  let cy = boxTop + 48;
+  for (const line of [data.society.registrationNo, data.society.address].filter(Boolean) as string[]) {
+    doc.text(line, x + w / 2, cy, { align: "center", maxWidth: w - 48 });
+    cy += 12;
+  }
+  stroke(doc, INK);
+  doc.setLineWidth(0.8);
+  doc.line(x + 4, cy + 4, x + w - 4, cy + 4);
+  cy += 24;
+  doc.setFont("times", "bold");
+  doc.setFontSize(12);
+  doc.text("R E C E I P T", x + w / 2, cy, { align: "center" });
+  cy += 18;
+  doc.setFont("times", "normal");
+  doc.setFontSize(10.5);
+  doc.text(`No. ${String(data.receiptNo)}`, x + 14, cy);
+  doc.text(`Date: ${formatDate(data.receiptDate)}`, x + w - 14, cy, { align: "right" });
+  if (data.copyLabel) {
+    doc.text(data.copyLabel.toUpperCase(), x + w / 2, cy, { align: "center" });
+  }
+  cy += 22;
+  stroke(doc, INK);
+  doc.line(x + 4, cy - 10, x + w - 4, cy - 10);
+
+  doc.text("Received with thanks from", x + 14, cy);
+  doc.setFont("times", "bold");
+  doc.text(`${data.memberName.toUpperCase()}${data.flatNo ? `, Flat ${data.flatNo}` : ""}`, x + 152, cy, {
+    maxWidth: x + w - 24 - (x + 152),
+  });
+  cy += 20;
+  doc.setFont("times", "normal");
+  doc.text("the sum of", x + 14, cy);
+  doc.setFont("times", "bold");
+  ink(doc, ACCENT);
+  doc.text(`Rupees ${rupeesInWords(data.amount)} only`, x + 78, cy, { maxWidth: x + w - 24 - (x + 78) });
+  ink(doc, INK);
+  cy += 22;
+  doc.setFont("times", "normal");
+  doc.text(`Rs. ${money(data.amount)} /-`, x + w - 14, cy, { align: "right" });
+  cy += 14;
+  stroke(doc, INK);
+  doc.setLineWidth(1);
+  doc.line(x + 14, cy, x + w - 14, cy);
+  doc.setLineWidth(0.5);
+  doc.line(x + 14, cy + 2.5, x + w - 14, cy + 2.5);
+  cy += 24;
+  doc.setFont("times", "normal");
+  doc.setFontSize(10.5);
+  doc.text(`by ${data.mode ?? "cash"}${data.reference ? `, ref. ${data.reference}` : ""}, being the charges for`, x + 14, cy);
+  cy += 18;
+  doc.setFont("times", "bold");
+  doc.text(data.purpose, x + 14, cy, { maxWidth: x + w - 28 });
+  cy += 34;
+
+  // Gold-stamped amount box + signature
+  fill(doc, GOLD);
+  doc.rect(x + 16, cy - 8, 176, 34, "F");
+  doc.setFont("times", "bold");
+  doc.setFontSize(12);
+  ink(doc, WHITE);
+  const amtL = `Rs. ${money(data.amount)} /-`;
+  doc.text(amtL, x + 16 + (176 - doc.getTextWidth(amtL)) / 2, cy + 12);
+  ink(doc, INK);
+  doc.setFont("times", "normal");
+  doc.setFontSize(9.5);
+  doc.text(`For ${data.society.name}`, x + w - 14, cy, { align: "right" });
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(x + w - 140, cy + 26, x + w - 14, cy + 26);
+  doc.setLineDashPattern([], 0);
+  doc.setFontSize(9);
+  doc.text("SECRETARY", x + w - 14, cy + 38, { align: "right" });
+
+  return boxBottom;
+}
+
 export function receiptPdfBytes(data: LegacyReceiptData): Uint8Array {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
   const x = 38;
   const w = W - x * 2;
-  const bottom = drawReceiptBox(doc, data, x, 56, w);
+  const classic = (data.format ?? "classic") === "classic";
+  const bottom = classic
+    ? drawReceiptBox(doc, data, x, 56, w)
+    : drawReceiptBoxFor(doc, data, x, 56, w, H - 260);
 
   stroke(doc, HAIRLINE);
   doc.setLineWidth(0.8);
@@ -1146,7 +1889,7 @@ export function receiptsPdfBatchBytes(
     }
     const d = { ...item.data, copyLabel: item.copyLabel ?? item.data.copyLabel };
     if (twoUp) drawReceiptBoxCompact(doc, d, x, yFor(slot), w, boxH);
-    else drawReceiptBox(doc, d, x, yFor(slot), w);
+    else drawReceiptBoxFor(doc, d, x, yFor(slot), w, boxH);
     slot++;
   }
   return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
@@ -1327,7 +2070,7 @@ export function billHtml(data: LegacyBillData, compact = false): string {
   <table class="foot">
     <tr>
       ${upiImg && upi ? `<td style="width:66px;vertical-align:middle;text-align:center"><img src="${upiImg}" style="width:60px;height:60px" alt="UPI QR"><br><span style="font-size:6.5pt;font-weight:bold;color:#312e81">SCAN TO PAY RS ${money(upi.amount)}</span></td>` : ""}
-      <td style="width:50%">${footerNotes(data.lateFeePercent).map(esc).join("<br>")}</td>
+      <td style="width:50%">${footerNotesFor(data).map(esc).join("<br>")}</td>
     <td class="sig">For ${esc(data.society.name)}<br><br><br><span class="sigspan">SECRETARY</span></td></tr>
   </table>
 </div><div class="tear"></div></body></html>`;

@@ -217,6 +217,8 @@ export function VoucherList({
         : v.narration || "Maintenance dues",
       mode: v.mode,
       reference: v.reference,
+      // Society-wide printing format (receipts share the bill's layout key).
+      format: society.billDocFormat,
     };
   };
 

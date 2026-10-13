@@ -319,6 +319,9 @@ export default function PrintingHub() {
         (b as { billKind?: string }).billKind === "supplementary"
           ? { category: (b as { category?: string }).category }
           : undefined,
+      // Society-wide printing format + editable QR-side payment notes.
+      format: society?.billDocFormat,
+      qrNote: society?.billQrNote,
       upi: uri
         ? {
             uri,
@@ -358,6 +361,8 @@ export default function PrintingHub() {
         : "Maintenance dues — on account",
       mode: v.mode,
       reference: v.reference,
+      // Society-wide printing format (receipts share the bill's layout key).
+      format: society?.billDocFormat,
     };
   };
 

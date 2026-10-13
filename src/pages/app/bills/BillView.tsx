@@ -77,6 +77,9 @@ export default function BillView() {
     paidAmount: bill.paidAmount,
     // Printed late-fee note follows the society's stable rate setting.
     lateFeePercent: society.lateFeePercent,
+    // Society-wide printing format + editable QR-side payment notes.
+    format: society.billDocFormat,
+    qrNote: society.billQrNote,
     // Supplementary bills print with a "SUPPLEMENTARY BILL" title band
     // instead of the monthly period band.
     supplementary:

@@ -106,6 +106,24 @@ const schema = defineSchema(
           v.literal(12),
         ),
       ),
+      /**
+       * Member bill & receipt printing format — one of the BillDocFormat keys
+       * in src/lib/billDoc.ts ("modern" | "classic" | "slip" | "ledger").
+       * Default "classic" when unset.
+       */
+      billDocFormat: v.optional(
+        v.union(
+          v.literal("modern"),
+          v.literal("classic"),
+          v.literal("slip"),
+          v.literal("ledger"),
+        ),
+      ),
+      /**
+       * Custom payment notes printed next to the UPI QR code on bills
+       * (line-separated). Empty = the standard fixed footer notes.
+       */
+      billQrNote: v.optional(v.string()),
     })
       .index("by_creator", ["createdBy"])
       .index("by_claim_code", ["claimCode"])

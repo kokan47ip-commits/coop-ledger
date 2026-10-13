@@ -356,6 +356,8 @@ export default function BillRegister() {
       purpose: `Maintenance for the Month ${periodLabelLong(b.period)}`,
       mode: receipt.mode,
       reference: receipt.reference,
+      // Society-wide printing format (receipts share the bill's layout key).
+      format: society.billDocFormat,
     };
     if (kind === "pdf") receiptPdf(receiptData, `receipt-${receipt.voucherNo}.pdf`);
     else if (kind === "word") receiptWord(receiptData, `receipt-${receipt.voucherNo}.doc`);
@@ -419,6 +421,9 @@ export default function BillRegister() {
         (b as { billKind?: string }).billKind === "supplementary"
           ? { category: b.category }
           : undefined,
+      // Society-wide printing format + editable QR-side payment notes.
+      format: society.billDocFormat,
+      qrNote: society.billQrNote,
       // Bill QR: pays this bill's exact due amount into the society's UPI ID,
       // tagged with the flat so the office can match the payment. Every export
       // of this register (single PDF/Word, emailed and WhatsApp bill PDFs)

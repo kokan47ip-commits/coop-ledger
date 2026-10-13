@@ -329,6 +329,17 @@ export const update = mutation({
         v.literal(12),
       ),
     ),
+    /** Member bill & receipt printing format (BillDocFormat). */
+    billDocFormat: v.optional(
+      v.union(
+        v.literal("modern"),
+        v.literal("classic"),
+        v.literal("slip"),
+        v.literal("ledger"),
+      ),
+    ),
+    /** Custom payment notes printed next to the UPI QR code on bills. */
+    billQrNote: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...patch }) => {
     const userId = await requireUserId(ctx);
