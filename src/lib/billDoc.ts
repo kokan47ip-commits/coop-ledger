@@ -100,14 +100,25 @@ export function buildMemberLedgerRows(
       (a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind),
     );
   const rows: BillLedgerRow[] = [];
-  let balance = Math.abs(openingBalance);
-  if (balance !== 0) {
+  let balance = openingBalance;
+  if (balance > 0) {
     rows.push({
       date: "",
       ref: "OPENING",
       detail: "Opening balance",
       debit: balance,
       credit: 0,
+      balance,
+    });
+  } else if (balance < 0) {
+    // Member in advance / credit — a signed opening balance is honoured so
+    // the running total starts below zero instead of flipping sign.
+    rows.push({
+      date: "",
+      ref: "OPENING",
+      detail: "Opening balance (advance)",
+      debit: 0,
+      credit: -balance,
       balance,
     });
   }
@@ -125,6 +136,76 @@ export function buildMemberLedgerRows(
   }
   return rows;
 }
+
+/** ISO "YYYY-MM" of the period floor for FY ordering (month arithmetic). */
+function fyPeriodStart(period: string, fyStartMonth: number): string {
+  const [y, m] = period.split("-").map(Number);
+  if (!y || !m) return `${y ?? 2000}-${String(m || 1).padStart(2, "0")}`;
+  return m >= fyStartMonth ? `${y}-${String(fyStartMonth).padStart(2, "0")}` : `${y - 1}-${String(fyStartMonth).padStart(2, "0")}`;
+}
+
+/** Month-order label used by the Annual Summary (calendar month index → name). */
+function fyMonthLabel(month: number): string {
+  return periodLabelLong(`2000-${String(month).padStart(2, "0")}`).split(",")[0] ?? "";
+}
+
+/** One Annual Summary line of the Sayba-style bill (calendar-month label). */
+export type AnnualSummaryRow = {
+  period: string;
+  billed: number;
+  received: number;
+  balance: number;
+};
+
+/**
+ * Build the 12-month Annual Summary of the Sayba-style bill from the
+ * member's running ledger rows (as already assembled for the side-ledger
+ * column). One row per FY month in FY order (Apr–Mar when fyStartMonth=4);
+ * the balance carried into the year folds into the FIRST month's "Bill"
+ * figure (as in the reference specimen), future months stay at the running
+ * balance with zero movement, and every row shows the running outstanding.
+ */
+export function buildAnnualSummary(
+  rows: BillLedgerRow[],
+  currentYm: string,
+  fyStartMonth = 4,
+): AnnualSummaryRow[] {
+  const fyStartYm = fyPeriodStart(currentYm, fyStartMonth);
+  // Carry into the year: the last running balance dated before the FY start
+  // (or the OPENING row when the member's history begins this year).
+  let carry = 0;
+  for (const r of rows) {
+    if (r.ref === "OPENING" || (r.date && r.date < fyStartYm)) carry = r.balance;
+  }
+  // Fold movement into (year, month) buckets. The undated OPENING row acts
+  // within the first FY month; it is also the carry seed above.
+  const buckets = new Map<string, { billed: number; received: number }>();
+  for (const r of rows) {
+    const ym = r.ref === "OPENING" ? fyStartYm : r.date.slice(0, 7);
+    if (ym.length !== 7) continue;
+    const cell = buckets.get(ym) ?? { billed: 0, received: 0 };
+    cell.billed += r.debit;
+    cell.received += r.credit;
+    buckets.set(ym, cell);
+  }
+  const [sy, sm] = fyStartYm.split("-").map(Number);
+  const out: AnnualSummaryRow[] = [];
+  let bal = carry;
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(sy, sm - 1 + i, 1));
+    const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    const cell = buckets.get(ym) ?? { billed: 0, received: 0 };
+    bal += cell.billed - cell.received;
+    out.push({
+      period: fyMonthLabel(d.getUTCMonth() + 1),
+      billed: cell.billed + (i === 0 ? carry : 0),
+      received: cell.received,
+      balance: Math.abs(bal),
+    });
+  }
+  return out;
+}
+
 
 export type LegacyBillData = {
   society: SocietyHeader;
@@ -173,6 +254,26 @@ export type LegacyBillData = {
    * bills/receipts. When absent the column prints its empty-state.
    */
   ledgerRows?: BillLedgerRow[];
+  /**
+   * Unit type (e.g. "2 BHK") shown in the Sayba-style unit grid.
+   */
+  unitType?: string;
+  /**
+   * The bill's period as a bare "YYYY-MM" — the Annual Summary anchors the
+   * 12-month table to this month's financial year.
+   */
+  period?: string;
+  /**
+   * Society's financial-year start month (1–12, 4 = April) — the Annual
+   * Summary column of the Sayba-style bill always runs FY month order,
+   * April → March, regardless of when this bill was issued.
+   */
+  fyStartMonth?: number;
+  /**
+   * The member's last receipt (if any) before/with this bill — fills the
+   * snapshot's "Received" column and the printed receipt strip.
+   */
+  lastReceipt?: { no: string; date: string; amount: number; mode?: string };
 };
 
 export type LegacyReceiptData = {
