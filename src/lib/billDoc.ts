@@ -714,7 +714,9 @@ function drawBillBoxModern(
   doc.text("Total Due:", lblX, chipY + 16, { align: "right" });
   doc.text(money(data.totalDue), valX, chipY + 16, { align: "right" });
 
-  drawBillFooterVariant(doc, data, x, w, totalsTop + 44, boxBottom);
+  // Footer band is the full 68pt strip at the page bottom — passing a
+  // squeezed band clips the 46pt UPI QR and the signature below the frame.
+  drawBillFooterVariant(doc, data, x, w, totalsTop, boxBottom);
   doc.setFont("helvetica", "normal");
   // Thin outer rule spacing the document from the sheet
   stroke(doc, HAIRLINE);
@@ -898,6 +900,11 @@ function drawBillBoxLedger(
   }));
   if (data.arrears > 0) {
     rows.unshift({ text: "Previous Balance brought forward", value: data.arrears });
+  } else if (data.arrears < 0) {
+    // Member is in advance / credit — show the negative adjustment inside
+    // the table so the rows still sum to TOTAL DUE (matches the classic
+    // format's "Advance:" label).
+    rows.push({ text: "Less: Advance / credit balance adjusted", value: data.arrears });
   }
   const rowH = 18;
   doc.setFont("times", "normal");
