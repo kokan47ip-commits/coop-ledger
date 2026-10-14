@@ -22,7 +22,7 @@ import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
-import { effectiveFyPeriod, formatDate, formatMoney, fyStartISO } from "@/lib/format";
+import { formatDate, formatMoney, fyStartISO } from "@/lib/format";
 import { CalendarRange, CheckCircle2, Lock, LockOpen, RefreshCw, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -68,8 +68,6 @@ export default function YearEnd() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
-  const [reopenTarget, setReopenTarget] = useState<YearRow | null>(null);
-
   const [label, setLabel] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -221,7 +219,6 @@ export default function YearEnd() {
                         try {
                           await reopenYear({ societyId, label: y.label });
                           toast.success(`${y.label} re-opened (status: open)`);
-                          setReopenTarget(null);
                         } catch (err) {
                           toast.error(err instanceof Error ? err.message : "Could not re-open the year.");
                         }

@@ -76,16 +76,6 @@ export async function yearEndRights(
   };
 }
 
-type QueryDb = {
-  get: (id: Id<"users"> | Id<"societies">) => Promise<unknown>;
-  query: (t: string) => {
-    withIndex: (
-      n: string,
-      cb: (q: unknown) => unknown,
-    ) => { collect: () => Promise<unknown[]> };
-  };
-};
-
 /** Granted menus of the caller's membersAccess row (null = everything). */
 async function grantedMenusFor(
   ctx: QueryCtx,

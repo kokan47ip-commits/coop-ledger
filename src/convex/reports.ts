@@ -638,13 +638,21 @@ export function computeAccountLedger(
   if (!account) return [];
   const debitNature = account.type === "asset" || account.type === "expense";
   let balance = debitNature ? account.openingBalance : -account.openingBalance;
+  // ONE traversal + sort for both the brought-forward fold and the in-range
+  // rows — calling unifiedEntries twice (once per use) doubled the cost of
+  // every ledger call and made the per-account carry computations quadratic
+  // in practice.
+  const entries = unifiedEntries(data).sort((a, b) =>
+    a.date === b.date
+      ? a.voucherNo.localeCompare(b.voucherNo)
+      : a.date.localeCompare(b.date),
+  );
   // Brought-forward: pre-period postings fold into the opening balance so
   // any period (past or spanning multiple years) opens at its true balance.
-  for (const e of unifiedEntries(data)) {
-    if (e.date < fromDate) {
-      for (const l of e.lines) {
-        if (l.accountId === accountId) balance += l.debit - l.credit;
-      }
+  for (const e of entries) {
+    if (e.date >= fromDate) break; // sorted → everything after is in/out of range
+    for (const l of e.lines) {
+      if (l.accountId === accountId) balance += l.debit - l.credit;
     }
   }
   const bfOpening = balance;
@@ -667,14 +675,8 @@ export function computeAccountLedger(
       note: `Brought forward (from entries before ${fromDate})`,
     });
   }
-  const inRange = unifiedEntries(data)
-    .filter((e) => e.date >= fromDate && e.date <= toDate)
-    .sort((a, b) =>
-      a.date === b.date
-        ? a.voucherNo.localeCompare(b.voucherNo)
-        : a.date.localeCompare(b.date),
-    );
-  for (const e of inRange) {
+  for (const e of entries) {
+    if (e.date < fromDate || e.date > toDate) continue;
     for (const l of e.lines) {
       if (l.accountId !== accountId) continue;
       const contra = accounts.find(
@@ -740,23 +742,30 @@ export function computeMemberLedger(
   const member = members.find((m) => m._id === memberId);
   if (!member) return [];
   const receivableId = receivableIdOf(data);
-  let balance = member.openingBalance;
-  // Brought-forward: pre-period bills (charge lines only — carried
-  // opening-balance lines restate the recorded opening) and receipts fold
-  // into the opening balance, so any period opens at its true position.
+  // One bucketed pass over the bills (and one over the receipts): pre-period
+  // charges/receipts fold into the brought-forward opening, in-range rows
+  // are collected for printing. Previously two full sweeps for the fold plus
+  // two more filters for the rows.
+  const relevantBills: Doc<"bills">[] = [];
+  const inReceipts: Doc<"vouchers">[] = [];
+  let preCharge = 0;
+  let preReceipt = 0;
   for (const b of bills) {
-    if (b.memberId === memberId && b.issueDate < fromDate) {
-      balance += billChargeAmount(b, receivableId);
-    }
+    if (b.memberId !== memberId) continue;
+    if (b.issueDate < fromDate) preCharge += billChargeAmount(b, receivableId);
+    else if (b.issueDate <= toDate) relevantBills.push(b);
   }
   for (const v of vouchers) {
-    if (v.type === "member_receipt" && v.memberId === memberId && v.date < fromDate) {
-      balance -= v.total;
-    }
+    if (v.type !== "member_receipt" || v.memberId !== memberId) continue;
+    if (v.date < fromDate) preReceipt += v.total;
+    else if (v.date <= toDate) inReceipts.push(v);
   }
+  let balance = member.openingBalance + preCharge - preReceipt;
   // Brought-forward opening as at `fromDate` — what any period of the books
   // opens at, not just the raw recorded opening.
   const bfOpening = balance;
+  const carriedEarly =
+    bfOpening !== member.openingBalance || preCharge !== 0 || preReceipt !== 0;
   const rows: LedgerRow[] = [];
   const addRow = (r: Omit<LedgerRow, "balance">) => {
     balance += r.debit - r.credit;
@@ -765,7 +774,7 @@ export function computeMemberLedger(
 
   if (bfOpening !== 0) {
     const openingDate = member.openingDate ?? fromDate;
-    const carriedForward = bfOpening !== member.openingBalance;
+    const carriedForward = carriedEarly;
     addRow({
       date: !carriedForward && openingDate < fromDate ? fromDate : fromDate,
       voucherNo: "OPENING",
@@ -780,14 +789,7 @@ export function computeMemberLedger(
     });
   }
 
-  const relevantBills = bills
-    .filter(
-      (b) =>
-        b.memberId === memberId &&
-        b.issueDate >= fromDate &&
-        b.issueDate <= toDate,
-    )
-    .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
+  relevantBills.sort((a, b) => a.issueDate.localeCompare(b.issueDate));
   for (const b of relevantBills) {
     // A carried opening-balance line on the bill restates the member's opening
     // receivable — the OPENING row above already accounts for it, so it must
@@ -818,15 +820,7 @@ export function computeMemberLedger(
     });
   }
 
-  const receipts = vouchers
-    .filter(
-      (v) =>
-        v.type === "member_receipt" &&
-        v.memberId === memberId &&
-        v.date >= fromDate &&
-        v.date <= toDate,
-    )
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const receipts = inReceipts.sort((a, b) => a.date.localeCompare(b.date));
   for (const r of receipts) {
     addRow({
       date: r.date,
