@@ -1,7 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalQuery, mutation, query } from "./_generated/server";
-import { assertInFy, clampAllocations, postMemberReceipt, requireSociety, requireSocietyWrite } from "./lib";
+import { clampAllocations, postMemberReceipt, requireSociety, requireSocietyWrite } from "./lib";
+import { gatedEntry } from "./yearEnd";
 import type { Doc, Id } from "./_generated/dataModel";
 
 /**
@@ -151,7 +152,7 @@ export const approve = mutation({
     }
 
     const postDate = date ?? sub.date;
-    assertInFy(society, postDate, "Approved member payment");
+    await gatedEntry(ctx, society, postDate, "Approved member payment");
 
     // Re-clamp allocations against current bill balances; the rest is advance.
     const bills = await ctx.db

@@ -405,6 +405,72 @@ const schema = defineSchema(
       .index("by_society", ["societyId"])
       .index("by_society_member", ["societyId", "memberId"]),
 
+    /**
+     * Registered accounting years per society. The society's current books
+     * period stays on societies.fyStartDate / fyYear; a row here records a
+     * year the office CREATED (so it can be prepared ahead of year-end) and —
+     * after the Transfer Balance step — CLOSED. Closing snapshots the
+     * carried-down balances (per ledger account and per member) so the
+     * handover to the next year is documented, and locks the closed year
+     * against new entries except for privileged logins (society owner,
+     * software admin, or a user the admin granted the "Year-End Process"
+     * menu right).
+     */
+    accountingYears: defineTable({
+      societyId: v.id("societies"),
+      /** Display label, e.g. "2026-27". */
+      label: v.string(),
+      /** "YYYY-MM-DD" inclusive start (01 of the society's FY start month). */
+      start: v.string(),
+      /** "YYYY-MM-DD" inclusive end (day before next year's start). */
+      end: v.string(),
+      /** open → entries allowed; closed → entry locked (privileged override). */
+      status: v.union(v.literal("open"), v.literal("closed")),
+      /** Current books period when the year was closed (audit trail). */
+      closedAt: v.optional(v.number()),
+      closedById: v.optional(v.id("users")),
+      closedByName: v.optional(v.string()),
+      /**
+       * Balances transferred to the next year at close time — one row per
+       * ledger account (signed; debit-positive) and per member's receivable
+       * (signed; dues-positive, negative = advance held). Books keep the
+       * full history; the next year's openings recompute from it — these
+       * rows document the carried-down figures the office signed off.
+       */
+      carriedAccounts: v.optional(
+        v.array(
+          v.object({
+            accountId: v.id("accounts"),
+            /** Signed closing balance, debit-positive (negative = credit). */
+            amount: v.number(),
+          }),
+        ),
+      ),
+      carriedMembers: v.optional(
+        v.array(
+          v.object({
+            memberId: v.id("members"),
+            /** Signed member dues (negative = advance held). */
+            amount: v.number(),
+          }),
+        ),
+      ),
+      /** Non-zero carried-account count / member count + money totals. */
+      carriedTotals: v.optional(
+        v.object({
+          accounts: v.number(),
+          members: v.number(),
+          memberDues: v.number(),
+          memberAdvance: v.number(),
+        }),
+      ),
+      createdById: v.optional(v.id("users")),
+      createdByName: v.optional(v.string()),
+      createdAt: v.optional(v.number()),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_society_start", ["societyId", "start"]),
+
     // Per-society user rights. The society creator is the implicit "owner";
     // rows here grant "editor" (entry rights), "viewer" (read-only) or
     // "member" (flat-bound portal) access to other signed-in users, matched

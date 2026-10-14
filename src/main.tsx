@@ -92,6 +92,7 @@ const ReceiptPayment = lazyPage(() => import("./pages/app/reports/ReceiptPayment
 const Uploads = lazyPage(() => import("./pages/app/Uploads.tsx"));
 const TransactionImport = lazyPage(() => import("./pages/app/TransactionImport.tsx"));
 const UsersRights = lazyPage(() => import("./pages/app/UsersRights.tsx"));
+const YearEnd = lazyPage(() => import("./pages/app/YearEnd.tsx"));
 const MessagingSettings = lazyPage(
   () => import("./pages/app/MessagingSettings.tsx"),
 );
@@ -267,6 +268,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="uploads" element={<Uploads />} />
                 <Route path="transaction-import" element={<TransactionImport />} />
                 <Route path="users" element={<UsersRights />} />
+                <Route path="year-end" element={<YearEnd />} />
                 <Route
                   path="messaging-settings"
                   element={<MessagingSettings />}

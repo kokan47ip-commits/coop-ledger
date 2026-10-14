@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { assertInFy, nextNumber, pad, requireSociety, requireSocietyWrite } from "./lib";
+import { nextNumber, pad, requireSociety, requireSocietyWrite } from "./lib";
+import { gatedEntry } from "./yearEnd";
 
 const CATEGORIES = [
   "Special Repair",
@@ -50,8 +51,8 @@ export const create = mutation({
     if (memberIds.length === 0)
       throw new Error("Select at least one member to bill.");
     // Supplementary bills post income to the books — same FY rule as regular
-    // bills so statements never pick up cross-year postings.
-    assertInFy(society, issueDate, "Supplementary bill");
+    // bills, with the closed-year override for privileged logins.
+    await gatedEntry(ctx, society, issueDate, "Supplementary bill");
 
     const accounts = await ctx.db
       .query("accounts")

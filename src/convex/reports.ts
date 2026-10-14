@@ -618,7 +618,15 @@ export function byPrintOrder(
   );
 }
 
-/** Single-account ledger with running balance from the opening balance. */
+/**
+ * Single-account ledger with a running balance. Opens on the account's
+ * opening balance plus every posting dated BEFORE the period — the
+ * brought-forward way the reference-format books print a ledger for any
+ * chosen period. Cross-year reporting needs this: when the books have
+ * moved into FY 2027-28 and the office prints a ledger for a 2026-27
+ * period, the account's accumulated balance (not just the original
+ * opening) must open the statement.
+ */
 export function computeAccountLedger(
   data: SocietyData,
   accountId: Id<"accounts">,
@@ -630,7 +638,35 @@ export function computeAccountLedger(
   if (!account) return [];
   const debitNature = account.type === "asset" || account.type === "expense";
   let balance = debitNature ? account.openingBalance : -account.openingBalance;
+  // Brought-forward: pre-period postings fold into the opening balance so
+  // any period (past or spanning multiple years) opens at its true balance.
+  for (const e of unifiedEntries(data)) {
+    if (e.date < fromDate) {
+      for (const l of e.lines) {
+        if (l.accountId === accountId) balance += l.debit - l.credit;
+      }
+    }
+  }
+  const bfOpening = balance;
   const rows: LedgerRow[] = [];
+  // When earlier years' postings exist before the chosen period (cross-year
+  // reporting after a year-end close), the brought-forward position is
+  // printed as an explicit OPENING row so the statement opens at its true
+  // balance, like the reference books do. Without pre-period movement the
+  // account's recorded opening is still printed by the statement itself.
+  if (bfOpening !== 0 && Math.abs(bfOpening - (debitNature ? account.openingBalance : -account.openingBalance)) > 0.004) {
+    rows.push({
+      date: fromDate,
+      voucherNo: "OPENING",
+      voucherType: "journal",
+      particulars: "Opening Balance",
+      accountId: accountId,
+      debit: bfOpening > 0 ? bfOpening : 0,
+      credit: bfOpening < 0 ? -bfOpening : 0,
+      balance: bfOpening,
+      note: `Brought forward (from entries before ${fromDate})`,
+    });
+  }
   const inRange = unifiedEntries(data)
     .filter((e) => e.date >= fromDate && e.date <= toDate)
     .sort((a, b) =>
@@ -687,7 +723,13 @@ export function billChargeAmount(
     .reduce((s, l) => s + l.amount, 0);
 }
 
-/** Member receivable ledger: opening + bills + receipts, running balance. */
+/**
+ * Member receivable ledger: brought-forward opening + bills + receipts,
+ * running balance. The opening is the member's recorded opening balance
+ * PLUS every pre-period bill charge and receipt — so a ledger printed for
+ * any chosen period (current, a past closed year, or spanning several)
+ * opens at its true brought-down balance the way the reference books do.
+ */
 export function computeMemberLedger(
   data: SocietyData,
   memberId: Id<"members">,
@@ -697,24 +739,44 @@ export function computeMemberLedger(
   const { members, vouchers, bills } = data;
   const member = members.find((m) => m._id === memberId);
   if (!member) return [];
+  const receivableId = receivableIdOf(data);
   let balance = member.openingBalance;
+  // Brought-forward: pre-period bills (charge lines only — carried
+  // opening-balance lines restate the recorded opening) and receipts fold
+  // into the opening balance, so any period opens at its true position.
+  for (const b of bills) {
+    if (b.memberId === memberId && b.issueDate < fromDate) {
+      balance += billChargeAmount(b, receivableId);
+    }
+  }
+  for (const v of vouchers) {
+    if (v.type === "member_receipt" && v.memberId === memberId && v.date < fromDate) {
+      balance -= v.total;
+    }
+  }
+  // Brought-forward opening as at `fromDate` — what any period of the books
+  // opens at, not just the raw recorded opening.
+  const bfOpening = balance;
   const rows: LedgerRow[] = [];
   const addRow = (r: Omit<LedgerRow, "balance">) => {
     balance += r.debit - r.credit;
     rows.push({ ...r, balance });
   };
 
-  const openingDate = member.openingDate ?? fromDate;
-  if (member.openingBalance !== 0 && openingDate <= toDate) {
+  if (bfOpening !== 0) {
+    const openingDate = member.openingDate ?? fromDate;
+    const carriedForward = bfOpening !== member.openingBalance;
     addRow({
-      date: openingDate < fromDate ? fromDate : openingDate,
+      date: !carriedForward && openingDate < fromDate ? fromDate : fromDate,
       voucherNo: "OPENING",
       voucherType: "journal",
       particulars: "Opening Balance",
       accountId: null,
-      debit: member.openingBalance > 0 ? member.openingBalance : 0,
-      credit: member.openingBalance < 0 ? -member.openingBalance : 0,
-      note: "As on " + openingDate,
+      debit: bfOpening > 0 ? bfOpening : 0,
+      credit: bfOpening < 0 ? -bfOpening : 0,
+      note: carriedForward
+        ? `Brought forward (from entries before ${fromDate})`
+        : "As on " + openingDate,
     });
   }
 
@@ -726,7 +788,6 @@ export function computeMemberLedger(
         b.issueDate <= toDate,
     )
     .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
-  const receivableId = receivableIdOf(data);
   for (const b of relevantBills) {
     // A carried opening-balance line on the bill restates the member's opening
     // receivable — the OPENING row above already accounts for it, so it must
@@ -792,9 +853,9 @@ export function computeMemberLedger(
           : a.date.localeCompare(b.date),
       ),
   ];
-  // The running balance already starts from the member's opening balance, so
-  // the OPENING row itself must not add its amount a second time.
-  let running = member.openingBalance;
+  // The running balance starts from the brought-forward opening, so the
+  // OPENING row itself must not add its amount a second time.
+  let running = bfOpening;
   const reweighted = ordered.map((r) => {
     if (r.voucherNo === "OPENING") return { ...r, balance: running };
     running += r.debit - r.credit;

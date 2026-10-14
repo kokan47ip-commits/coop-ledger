@@ -37,6 +37,7 @@ import {
   FileSpreadsheet,
   FileText,
   FolderOpen,
+  CalendarRange,
   Landmark,
   LayoutDashboard,
   Loader2,
@@ -132,6 +133,7 @@ const NAV: NavGroup[] = [
       { to: "/app/transaction-import", label: "Transaction Import", icon: <FileInput className="size-4" /> },
       { to: "/app/uploads", label: "Excel Uploads", icon: <FileSpreadsheet className="size-4" /> },
       { to: "/app/users", label: "Users & Rights", icon: <ShieldCheck className="size-4" /> },
+      { to: "/app/year-end", label: "Year-End Process", icon: <CalendarRange className="size-4" /> },
     ],
   },
   {
@@ -168,6 +170,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/uploads": "Excel Uploads",
   "/app/transaction-import": "Transaction Import",
   "/app/users": "Users & Rights",
+  "/app/year-end": "Year-End Process",
   "/app/messaging-settings": "Messaging & Payments",
 };
 

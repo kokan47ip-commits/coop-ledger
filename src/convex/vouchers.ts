@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 import { MutationCtx, mutation, query } from "./_generated/server";
+import { gatedEntry } from "./yearEnd";
 import {
   applyAllocationToBill,
-  assertInFy,
   assertVoucherNoFree,
   claimVoucherNo,
   requireSociety,
@@ -219,7 +219,9 @@ export const create = mutation({
     const { societyId, type, lines, allocations } = args;
     const society = await requireSocietyWrite(ctx, societyId);
     // Decline transactions dated outside the current accounting year.
-    assertInFy(society, args.date, "Voucher");
+    // FY gate with the closed-year override: privileged logins may correct
+    // entries in a closed accounting year (bills stay out of reach below).
+    await gatedEntry(ctx, society, args.date, "Voucher");
 
     const activeLines = lines.filter((l) => l.debit !== 0 || l.credit !== 0);
 
@@ -324,7 +326,7 @@ export const update = mutation({
   handler: async (ctx, { societyId, id, date, narration, mode, bankCashAccountId, reference, lines }) => {
     const society = await requireSocietyWrite(ctx, societyId);
     // Decline edits that would move a voucher outside the current year.
-    assertInFy(society, date, "Voucher");
+    await gatedEntry(ctx, society, date, "Voucher");
     const voucher = await ctx.db.get(id);
     if (!voucher || voucher.societyId !== societyId)
       throw new Error("Voucher not found.");

@@ -651,7 +651,15 @@ export default function UsersRights() {
               type="button"
               variant="link"
               className="h-auto p-0 text-muted-foreground"
-              onClick={() => setMenuPicks(MENU_REGISTRY.map((m) => m.key).filter((k) => k !== "users"))}
+              onClick={() =>
+                setMenuPicks(
+                  MENU_REGISTRY.map((m) => m.key).filter(
+                    // Yearend is a privileged right: tick it explicitly, never
+                    // via "Select all" (same reason "users" is excluded).
+                    (k) => k !== "users" && k !== "yearend",
+                  ),
+                )
+              }
             >
               Select all
             </Button>

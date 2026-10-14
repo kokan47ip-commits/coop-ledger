@@ -11,7 +11,8 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { assertInFy, clampAllocations, postMemberReceipt, requireSociety, requireUserId, societyMemberBinding } from "./lib";
+import { clampAllocations, postMemberReceipt, requireSociety, requireUserId, societyMemberBinding } from "./lib";
+import { gatedEntry } from "./yearEnd";
 import { portalBinding, validateMemberAllocations } from "./memberPortal";
 
 /**
@@ -116,7 +117,7 @@ export const createUpiOrder = mutation({
     const userId = await requireUserId(ctx);
 
     // Today must sit inside the current books period, like manual payments.
-    assertInFy(society, new Date().toISOString().slice(0, 10), "Online payment");
+    await gatedEntry(ctx, society, new Date().toISOString().slice(0, 10), "Online payment");
 
     const { total } = await validateMemberAllocations(ctx, bind, allocations);
     let finalTotal = total;
@@ -438,7 +439,7 @@ async function postUpiPayment(
   // Books guard: money is real, so a posting that would fall outside the
   // current books period is parked as "captured" for the office — never lost.
   try {
-    assertInFy(society, date, "UPI payment receipt");
+    await gatedEntry(ctx, society, date, "UPI payment receipt");
   } catch (err) {
     const reason = err instanceof Error ? err.message : "Outside the current books period.";
     await ctx.db.patch(paymentId, {

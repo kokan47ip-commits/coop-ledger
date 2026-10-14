@@ -18,6 +18,7 @@ import {
   ReceiptText,
   Scale,
   ShieldCheck,
+  CalendarRange,
   CreditCard,
   TrendingUp,
   UserCircle,
@@ -58,6 +59,7 @@ export type MenuKey =
   | "transaction-import"
   | "uploads"
   | "users"
+  | "yearend"
   | "messaging-settings"
   | // Member self-service portal (flat-bound logins only)
   "portal-home"
@@ -113,6 +115,13 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "transaction-import", label: "Transaction Import", section: "Data", path: "/app/transaction-import", icon: FileInput },
   { key: "uploads", label: "Excel Uploads", section: "Data", path: "/app/uploads", icon: FileSpreadsheet },
   { key: "users", label: "Users & Rights", section: "Data", path: "/app/users", icon: ShieldCheck },
+  {
+    key: "yearend",
+    label: "Year-End Process",
+    section: "Data",
+    path: "/app/year-end",
+    icon: CalendarRange,
+  },
   { key: "messaging-settings", label: "Messaging & Payments", section: "Settings", path: "/app/messaging-settings", icon: MessageCircle },
 ];
 
@@ -127,9 +136,9 @@ export const PATH_TO_MENU: Record<string, MenuKey> = Object.fromEntries(
   MENU_REGISTRY.map((m) => [m.path, m.key]),
 );
 
-/** Menus a fresh grant gets when the admin doesn't pick any (everything except the rights screen). */
+/** Menus a fresh grant gets when the admin doesn't pick any (everything except the rights screen and the Year-End right — that one must be ticked explicitly). */
 export const DEFAULT_GRANT_MENUS: MenuKey[] = MENU_REGISTRY.filter(
-  (m) => m.key !== "users",
+  (m) => m.key !== "users" && m.key !== "yearend",
 ).map((m) => m.key);
 
 /**

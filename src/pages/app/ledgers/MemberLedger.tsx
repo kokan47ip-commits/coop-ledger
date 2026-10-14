@@ -37,6 +37,8 @@ type LedgerRow = {
 /** One rendered member ledger — shared by the preview and every export. */
 type MemberSection = {
   member: Member;
+  /** Brought-forward opening (recorded opening or the explicit OPENING row). */
+  opening: number;
   title: string;
   items: {
     date: string;
@@ -142,6 +144,12 @@ export default function MemberLedger() {
 
   /** Build the render model for one member's ledger (consolidation + totals). */
   const buildSection = (mem: Member, allRows: LedgerRow[]): MemberSection => {
+    // Cross-year reporting: the ledger data may carry an explicit OPENING
+    // row with the brought-forward balance (recorded opening + all earlier
+    // periods' charges/receipts). It opens the statement; the fallback
+    // stays the recorded opening.
+    const bfRow = allRows.find((r) => r.voucherNo === "OPENING");
+    const opening = bfRow ? (bfRow.debit > 0 ? bfRow.debit : -bfRow.credit) : mem.openingBalance;
     const rows = allRows.filter((r) => r.voucherNo !== "OPENING");
     const items: MemberSection["items"] = [];
     if (detailed) {
@@ -206,10 +214,10 @@ export default function MemberLedger() {
         i = j;
       }
     }
-    // Totals include the opening balance row so Dr/Cr columns foot correctly
-    // with the printed statement format ("To/By Opening balance old").
-    const openingDr = mem.openingBalance < 0 ? -mem.openingBalance : 0;
-    const openingCr = mem.openingBalance > 0 ? mem.openingBalance : 0;
+    // Totals include the brought-forward opening row so Dr/Cr columns foot
+    // correctly with the printed statement format ("To/By Opening balance old").
+    const openingDr = opening < 0 ? -opening : 0;
+    const openingCr = opening > 0 ? opening : 0;
     const totDr = openingDr + items.reduce((s, r) => s + r.debit, 0);
     const totCr = openingCr + items.reduce((s, r) => s + r.credit, 0);
     const headTotals: { name: string; amount: number }[] = [];
@@ -220,8 +228,8 @@ export default function MemberLedger() {
         else headTotals.push({ name: h.name, amount: h.amount });
       }
     }
-    const closing = rows.length > 0 ? rows[rows.length - 1].balance : mem.openingBalance;
-    return { member: mem, title: `${flatOf(mem)}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing, headTotals };
+    const closing = rows.length > 0 ? rows[rows.length - 1].balance : opening;
+    return { member: mem, opening, title: `${flatOf(mem)}  ${mem.name}`.toUpperCase(), items, totDr, totCr, closing, headTotals };
   };
 
   // A ledger with no entries in the period is skipped entirely — it is not
@@ -260,14 +268,14 @@ export default function MemberLedger() {
     const isDetail = mode === "detail" && headNames.length > 0;
     const blank = () => (isDetail ? headNames.map(() => "") : []);
     const body: (string | number)[][] = [];
-    if (s.member.openingBalance !== 0) {
+    if (s.opening !== 0) {
       body.push([
         "",
         "",
         ...blank(),
-        s.member.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
-        s.member.openingBalance > 0 ? s.member.openingBalance : "",
-        s.member.openingBalance < 0 ? -s.member.openingBalance : "",
+        s.opening > 0 ? "By Opening balance old" : "To Opening balance old",
+        s.opening > 0 ? s.opening : "",
+        s.opening < 0 ? -s.opening : "",
         "",
       ]);
     }
@@ -540,18 +548,18 @@ export default function MemberLedger() {
                         </tr>
                       </thead>
                       <tbody>
-                        {s.member.openingBalance !== 0 && (
+                        {s.opening !== 0 && (
                           <tr>
                             <td colSpan={2} />
                             {isDetail && headNames.map((n) => <td key={n} />)}
                             <td className="py-1 pr-2">
-                              {s.member.openingBalance > 0 ? "To Opening balance old" : "By Opening balance old"}
+                              {s.opening > 0 ? "To Opening balance old" : "By Opening balance old"}
                             </td>
                             <td className="py-1 text-right tabular-nums">
-                              {s.member.openingBalance > 0 ? formatMoney(s.member.openingBalance) : ""}
+                              {s.opening > 0 ? formatMoney(s.opening) : ""}
                             </td>
                             <td className="py-1 text-right tabular-nums">
-                              {s.member.openingBalance < 0 ? formatMoney(-s.member.openingBalance) : ""}
+                              {s.opening < 0 ? formatMoney(-s.opening) : ""}
                             </td>
                             <td />
                           </tr>

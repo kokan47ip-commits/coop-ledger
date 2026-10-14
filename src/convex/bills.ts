@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { assertInFy, nextNumber, pad, requireSociety, requireSocietyWrite } from "./lib";
+import { nextNumber, pad, requireSociety, requireSocietyWrite } from "./lib";
+import { gatedEntry } from "./yearEnd";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -81,7 +82,10 @@ export const generate = mutation({
   ) => {
     const society = await requireSocietyWrite(ctx, societyId);
     // Bills post income to the books — decline bills issued outside the year.
-    assertInFy(society, issueDate, "Bill");
+    // Bills post income to the books. The gate keeps the closed-year
+    // override available to privileged logins (corrections only — the
+    // society owner decides), just like ordinary vouchers.
+    await gatedEntry(ctx, society, issueDate, "Bill");
     // Billing frequency (Society Profile): how many months one bill covers.
     // Tariff amounts are per month — each line is charged × the cycle length
     // so a quarterly bill = 3 months of maintenance on one bill, tagged to

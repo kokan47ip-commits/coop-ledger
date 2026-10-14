@@ -46,6 +46,8 @@ type TrialBalanceRow = {
 /** One rendered ledger section — shared by the on-screen preview and every export. */
 type LedgerSection = {
   account: Account;
+  /** Brought-forward opening (recorded opening or the explicit OPENING row). */
+  opening: number;
   title: string;
   items: { date: string; voucherNo: string; narration: string[]; debit: number; credit: number; balance: number }[];
   totDr: number;
@@ -109,6 +111,12 @@ export default function GeneralLedger() {
 
   /** Build the render model for one account's ledger (consolidation + totals). */
   const buildSection = (acc: Account, allRows: LedgerRow[]): LedgerSection => {
+    // Cross-year reporting: the ledger data may carry an explicit OPENING
+    // row when the brought-forward balance (recorded opening + all earlier
+    // years' postings) differs from the recorded opening. It opens the
+    // statement; the fall-back stays the recorded opening.
+    const bfRow = allRows.find((r) => r.voucherNo === "OPENING");
+    const opening = bfRow ? (bfRow.debit > 0 ? bfRow.debit : -bfRow.credit) : acc.openingBalance;
     const rows = allRows.filter((r) => r.voucherNo !== "OPENING");
     // "Show Detailed Entries" off → collapse each voucher into a single row.
     const items: LedgerSection["items"] = [];
@@ -155,11 +163,12 @@ export default function GeneralLedger() {
         });
       }
     }
-    const totDr = items.reduce((s, r) => s + r.debit, 0);
-    const totCr = items.reduce((s, r) => s + r.credit, 0);
-    const closing = rows.length > 0 ? rows[rows.length - 1].balance : acc.openingBalance;
+    const totDr = (opening > 0 ? opening : 0) + items.reduce((s, r) => s + r.debit, 0);
+    const totCr = (opening < 0 ? -opening : 0) + items.reduce((s, r) => s + r.credit, 0);
+    const closing = rows.length > 0 ? rows[rows.length - 1].balance : opening;
     return {
       account: acc,
+      opening,
       title: `${acc.code}  ${acc.name}`.toUpperCase(),
       items,
       totDr,
@@ -196,13 +205,13 @@ export default function GeneralLedger() {
 
   const sectionTable = (s: LedgerSection, first: boolean): TableSpec => {
     const body: (string | number)[][] = [];
-    if (s.account.openingBalance !== 0) {
+    if (s.opening !== 0) {
       body.push([
         "",
         "",
-        s.account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old",
-        s.account.openingBalance > 0 ? s.account.openingBalance : "",
-        s.account.openingBalance < 0 ? -s.account.openingBalance : "",
+        s.opening > 0 ? "By Opening balance old" : "To Opening balance old",
+        s.opening > 0 ? s.opening : "",
+        s.opening < 0 ? -s.opening : "",
         "",
       ]);
     }
@@ -477,16 +486,16 @@ export default function GeneralLedger() {
                           </tr>
                         </thead>
                         <tbody>
-                          {s.account.openingBalance !== 0 && (
+                          {s.opening !== 0 && (
                             <tr>
                               <td colSpan={3} className="py-1 pr-2">
-                                {s.account.openingBalance > 0 ? "By Opening balance old" : "To Opening balance old"}
+                                {s.opening > 0 ? "By Opening balance old" : "To Opening balance old"}
                               </td>
                               <td className="py-1 text-right tabular-nums">
-                                {s.account.openingBalance > 0 ? formatMoney(s.account.openingBalance) : ""}
+                                {s.opening > 0 ? formatMoney(s.opening) : ""}
                               </td>
                               <td className="py-1 text-right tabular-nums">
-                                {s.account.openingBalance < 0 ? formatMoney(-s.account.openingBalance) : ""}
+                                {s.opening < 0 ? formatMoney(-s.opening) : ""}
                               </td>
                               <td />
                             </tr>

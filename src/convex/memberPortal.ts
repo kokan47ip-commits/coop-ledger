@@ -4,13 +4,13 @@ import { internalMutation, mutation, query, type MutationCtx } from "./_generate
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   analyzePortalBinding,
-  assertInFy,
   isCarriedOpeningLine,
   isSoftwareAdmin,
   requireSociety,
   requireUserId,
   societyMemberBinding,
 } from "./lib";
+import { gatedEntry } from "./yearEnd";
 import { verifyPassword, hashPassword } from "./passwordHash";
 
 /**
@@ -519,8 +519,10 @@ async function validateSubmissionInput(
     amount?: number;
   },
 ) {
-  // FY guard: outside-the-year entries are declined, not saved.
-  assertInFy(society, input.date, "Payment");
+  // FY guard: outside-the-year entries are declined, not saved. Portal
+  // logins hold no year-end right, so a member can never post into a closed
+  // year even when the date falls in one.
+  await gatedEntry(ctx, society, input.date, "Payment");
 
   // Validate the bank/cash account belongs to this society.
   const account = await ctx.db.get(input.bankCashAccountId);

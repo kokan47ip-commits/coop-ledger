@@ -3,12 +3,12 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, MutationCtx } from "./_generated/server";
 import {
-  assertInFy,
   nextNumber,
   pad,
   requireSociety,
   requireSocietyWrite,
 } from "./lib";
+import { gatedEntry } from "./yearEnd";
 
 /**
  * Flat Transfer utility: one transaction that archives the outgoing member
@@ -72,7 +72,7 @@ export const perform = mutation({
     },
   ) => {
     const society = await requireSocietyWrite(ctx, societyId);
-    assertInFy(society, transferDate, "Flat transfer");
+    await gatedEntry(ctx, society, transferDate, "Flat transfer");
 
     const outgoing = await ctx.db.get(outgoingMemberId);
     if (!outgoing || outgoing.societyId !== societyId)
