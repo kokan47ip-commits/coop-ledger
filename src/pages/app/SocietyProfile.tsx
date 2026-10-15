@@ -22,8 +22,8 @@ import { BILL_DOC_FORMATS } from "@/lib/billDoc";
 import { Textarea } from "@/components/ui/textarea";
 import { saveClaimCode, useSociety } from "@/components/SocietyContext";
 import { PageHeader } from "@/components/PageParts";
-import { effectiveFyPeriod, fyYearLabel, todayISO } from "@/lib/format";
-import { CheckCircle2, Circle, Copy, Save, TriangleAlert, Users } from "lucide-react";
+import { effectiveFyPeriod, formatDate, fyYearLabel, todayISO } from "@/lib/format";
+import { CalendarRange, CheckCircle2, Circle, Copy, Save, TriangleAlert, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -146,6 +146,42 @@ export default function SocietyProfile() {
     () => effectiveFyPeriod(society ?? null),
     [society],
   );
+
+  // Books-year switcher (Financial Period tab). Lists the REGISTERED
+  // accounting years and repoints the current books period onto one of them
+  // via yearEnd.setCurrentYear — which requires the Year-End Process right
+  // (enforced server-side; mirrored here so viewers/members never see a
+  // control they cannot use). The books are one continuous ledger, so this
+  // only moves the working period — balances always stay correct.
+  const yearOverview = useQuery(
+    api.yearEnd.overview,
+    !isNew && society ? { societyId: society._id } : "skip",
+  );
+  const switchYear = useMutation(api.yearEnd.setCurrentYear);
+  const [pendingYear, setPendingYear] = useState<string | null>(null);
+  const canManageYear = yearOverview?.rights.canManage ?? false;
+
+  const confirmSwitchYear = async () => {
+    if (!society || !pendingYear) return;
+    try {
+      const res = (await switchYear({
+        societyId: society._id,
+        label: pendingYear,
+      })) as { reopened: boolean; label: string; start: string };
+      // Keep the local form readout in step — the render-sync above only
+      // re-runs when the society identity changes, not on a pointer move.
+      setForm((f) => ({ ...f, fyYear: res.label, fyStartDate: res.start }));
+      setPendingYear(null);
+      toast.success(
+        res.reopened
+          ? `Switched to ${res.label} — that year was closed, so it has been re-opened for posting.`
+          : `Books year switched to ${res.label}.`,
+      );
+    } catch (err) {
+      toast.error(convexErrorText(err, "Failed to switch the books year"));
+      setPendingYear(null);
+    }
+  };
 
   // Members Receivable must be a receivable ledger — NEVER a bank/cash one.
   // Receipts credit it while debiting the bank; pointing it at a bank account
@@ -545,6 +581,77 @@ export default function SocietyProfile() {
                 </p>
               </section>
             )}
+
+            {!isNew && society && (
+              <section className="space-y-4">
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Books year
+                </h3>
+                {canManageYear ? (
+                  <div className="panel space-y-4 p-5">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="booksyear">Working year</Label>
+                        <Select
+                          value={society.fyYear ?? period.label}
+                          onValueChange={(v) => {
+                            if (v !== (society.fyYear ?? period.label)) setPendingYear(v);
+                          }}
+                        >
+                          <SelectTrigger id="booksyear"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {(yearOverview?.years ?? []).map((y) => (
+                              <SelectItem key={y.label} value={y.label}>
+                                {y.label} · {formatDate(y.start)} → {formatDate(y.end)}
+                                {y.status === "closed" ? "  (Closed)" : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Registered years from Year-End Process. Pick one to make it the
+                          working year.
+                        </p>
+                      </div>
+                      <div className="flex items-end">
+                        <p className="text-xs text-muted-foreground">
+                          Switches every screen — vouchers, ledgers, reports and the entry gate —
+                          onto the chosen year. The books stay one continuous ledger, so balances
+                          remain correct; only the working period moves.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    You are working in <b>{society.fyYear ?? period.label}</b>. Only the owner, a
+                    software admin, or a user granted the Year-End Process right can switch the
+                    books year.
+                  </p>
+                )}
+              </section>
+            )}
+
+            <Dialog
+              open={pendingYear !== null}
+              onOpenChange={(o) => { if (!o) setPendingYear(null); }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Switch books year to {pendingYear}?</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Every screen will move onto <b>{pendingYear}</b> — new vouchers are gated to its
+                  dates and reports default to it. If {pendingYear} is a closed year it will be
+                  re-opened for posting. To close the year you are leaving and carry its balances
+                  forward, run Transfer Balance on the Year-End Process screen instead.
+                </p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setPendingYear(null)}>Cancel</Button>
+                  <Button onClick={() => void confirmSwitchYear()}>Switch year</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* --- Committee Members tab --- */}

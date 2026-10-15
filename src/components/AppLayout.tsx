@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/hooks/use-auth";
+import { effectiveFyPeriod } from "@/lib/format";
 import { useSociety } from "@/components/SocietyContext";
 import { cn } from "@/lib/utils";
 import {
@@ -253,6 +254,10 @@ export function AppLayout() {
     memberBinding,
   } = useSociety();
   const { user, signOut } = useAuth();
+  // The books year the office is working in — the single period pointer the
+  // entry gates and report defaults read. Shown on EVERY screen so it is
+  // never ambiguous which accounting year a screen is acting on.
+  const fyPeriod = effectiveFyPeriod(society);
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -743,6 +748,15 @@ export function AppLayout() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-3">
+            {society && (
+              <span
+                title={`Current books year — runs ${fyPeriod.from} to ${fyPeriod.to}. Change it in Society Profile → Financial Period → Books year.`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300"
+              >
+                <CalendarRange className="h-3 w-3" />
+                FY {fyPeriod.label}
+              </span>
+            )}
             {society?.registrationNo && (
               <span className="hidden rounded-full border border-primary/20 bg-primary/[0.06] px-2.5 py-1 text-[11px] font-medium text-primary sm:inline">
                 Reg. {society.registrationNo}

@@ -450,6 +450,57 @@ export const reopenYear = mutation({
   },
 });
 
+/**
+ * Switch the society's CURRENT books year (Profile → Financial Period →
+ * Books year). Repoints the single books-period pointer — society.fyYear /
+ * fyStartDate — onto another REGISTERED year: the same two fields Transfer
+ * Balance moves, and the same ones every entry gate, dashboard and report
+ * default read through the period helpers.
+ *
+ * Safe by construction: all balances are computed from the FULL continuous
+ * ledger ("0000-01-01" → asOf), so only the pointer moves — nothing is
+ * re-carried or re-stated, and the books stay one unbroken history.
+ *
+ * Guardrails: requires the Year-End Process right. Because the current books
+ * year is by definition open for posting, switching INTO a closed year
+ * re-opens it (clearing that year's carried snapshot) so a closed year can
+ * never silently become the active posting target — the invariant
+ * assertEntryAllowed relies on.
+ */
+export const setCurrentYear = mutation({
+  args: { societyId: v.id("societies"), label: v.string() },
+  handler: async (ctx, { societyId, label }) => {
+    const society = await requireSocietyWrite(ctx, societyId);
+    await requireYearEndManager(ctx, societyId);
+    const years = await yearsFor(ctx.db, societyId);
+    const year = years.find((y) => y.label === label);
+    if (!year) throw new Error(`Accounting year ${label} is not registered.`);
+    // Already the current year — nothing to do.
+    if (year.label === society.fyYear)
+      return { ok: true as const, reopened: false, label: year.label, start: year.start };
+    // The current books year must always be postable; re-open a closed
+    // target (mirroring reopenYear) rather than pointing at a locked year.
+    let reopened = false;
+    if (year.status === "closed") {
+      await ctx.db.patch(year._id, {
+        status: "open",
+        closedAt: undefined,
+        closedById: undefined,
+        closedByName: undefined,
+        carriedAccounts: undefined,
+        carriedMembers: undefined,
+        carriedTotals: undefined,
+      });
+      reopened = true;
+    }
+    await ctx.db.patch(societyId, {
+      fyStartDate: year.start,
+      fyYear: year.label,
+    });
+    return { ok: true as const, reopened, label: year.label, start: year.start };
+  },
+});
+
 /* ------------------------------------------------------------------ */
 /* Carry-forward computations (pure — shared with the tests)          */
 /* ------------------------------------------------------------------ */

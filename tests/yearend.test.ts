@@ -558,3 +558,123 @@ describe("cross-FY brought-forward ledgers", () => {
     expect(String(rows[0]!.note)).toContain("Brought forward");
   });
 });
+
+/* --------------------------- books-year switcher -------------------------- */
+
+describe("setCurrentYear (Profile → Books year)", () => {
+  test("repoints the books pointer onto a registered year and back", async () => {
+    const w = await seedWorld();
+    // The seed's current year (2026-27) must be a REGISTERED row too — you
+    // can only switch among registered years.
+    await fn(yearEndMod, "createYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2026-27",
+      start: "2026-04-01",
+      end: "2027-03-31",
+    });
+    await fn(yearEndMod, "createYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2027-28",
+      start: "2027-04-01",
+      end: "2028-03-31",
+    });
+    const fwd = (await fn(yearEndMod, "setCurrentYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2027-28",
+    })) as { reopened: boolean; label: string; start: string };
+    expect(fwd.reopened).toBe(false);
+    expect(fwd.label).toBe("2027-28");
+    let soc = (await w.db.get(w.societyId)) as {
+      fyYear?: string;
+      fyStartDate?: string;
+    };
+    expect(soc.fyYear).toBe("2027-28");
+    expect(soc.fyStartDate).toBe("2027-04-01");
+
+    // Switching to the year that is already current is a no-op.
+    const noop = (await fn(yearEndMod, "setCurrentYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2027-28",
+    })) as { reopened: boolean };
+    expect(noop.reopened).toBe(false);
+
+    // …and back onto the original year.
+    await fn(yearEndMod, "setCurrentYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2026-27",
+    });
+    soc = (await w.db.get(w.societyId)) as { fyYear?: string };
+    expect(soc.fyYear).toBe("2026-27");
+  });
+
+  test("switching into a CLOSED year re-opens it so current is always postable", async () => {
+    const w = await seedWorld();
+    // Register both years, then close 2025-26 via the audited transfer.
+    await fn(yearEndMod, "createYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2025-26",
+      start: "2025-04-01",
+      end: "2026-03-31",
+    });
+    await fn(yearEndMod, "createYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2026-27",
+      start: "2026-04-01",
+      end: "2027-03-31",
+    });
+    await fn(yearEndMod, "transferBalance")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2025-26",
+      nextLabel: "2026-27",
+    });
+    const closed = w
+      .dump("accountingYears")
+      .find((y) => y.label === "2025-26") as { status: string };
+    expect(closed.status).toBe("closed");
+
+    // Pointing the books BACK at the closed year re-opens it — the current
+    // books year can never be a locked year, or the entry gate would let
+    // anyone post into a closed period.
+    const res = (await fn(yearEndMod, "setCurrentYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2025-26",
+    })) as { reopened: boolean };
+    expect(res.reopened).toBe(true);
+    const soc = (await w.db.get(w.societyId)) as {
+      fyYear?: string;
+      fyStartDate?: string;
+    };
+    expect(soc.fyYear).toBe("2025-26");
+    expect(soc.fyStartDate).toBe("2025-04-01");
+    const after = w
+      .dump("accountingYears")
+      .find((y) => y.label === "2025-26") as { status: string };
+    expect(after.status).toBe("open");
+  });
+
+  test("a plain editor cannot switch the books year", async () => {
+    const w = await seedWorld();
+    await fn(yearEndMod, "createYear")(w.ownerCtx, {
+      societyId: w.societyId,
+      label: "2027-28",
+      start: "2027-04-01",
+      end: "2028-03-31",
+    });
+    expect(
+      fn(yearEndMod, "setCurrentYear")(w.editorCtx, {
+        societyId: w.societyId,
+        label: "2027-28",
+      }),
+    ).rejects.toThrow(/Only the society owner|Year-End Process rights/);
+  });
+
+  test("refuses a year that is not registered", async () => {
+    const w = await seedWorld();
+    expect(
+      fn(yearEndMod, "setCurrentYear")(w.ownerCtx, {
+        societyId: w.societyId,
+        label: "2099-00",
+      }),
+    ).rejects.toThrow(/not registered/);
+  });
+});
