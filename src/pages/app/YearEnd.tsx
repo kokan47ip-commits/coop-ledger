@@ -53,6 +53,21 @@ function nextFyLabel(soc: { fyStartMonth: number }, afterLabel: string | null): 
   return `${next}-${String((next + 1) % 100).padStart(2, "0")}`;
 }
 
+/** The day after an ISO date (year-boundary safe). */
+function dayAfter(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Last day of the books year that starts on `startISO`. */
+function periodEndOf(startISO: string): string {
+  const d = new Date(`${startISO.slice(0, 10)}T00:00:00Z`);
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 export default function YearEnd() {
   const { societyId, society } = useSociety();
   const overview = useQuery(
@@ -84,11 +99,26 @@ export default function YearEnd() {
   // Only owners/admins (or granted users) may see this page's actions; the
   // route guard already blocks others, so viewers landing here read-only.
   const years = overview?.years ?? [];
+  const sortedYears = useMemo(
+    () => [...years].sort((a, b) => a.start.localeCompare(b.start)),
+    [years],
+  );
   const nextYear = useMemo(() => {
     // The label suggested in dialogs: the successor of the LATEST year label.
-    const sorted = [...years].sort((a, b) => a.start.localeCompare(b.start));
-    return nextFyLabel(society ?? { fyStartMonth: 4 }, sorted[sorted.length - 1]?.label ?? null);
-  }, [years, society]);
+    return nextFyLabel(
+      society ?? { fyStartMonth: 4 },
+      sortedYears[sortedYears.length - 1]?.label ?? null,
+    );
+  }, [sortedYears, society]);
+  // The most recent COMPLETED transfer, so the screen can say plainly that
+  // e.g. 2026-27 → 2027-28 is done and the next Transfer prompt is the NEXT
+  // cycle (2027-28 → 2028-29), not a repeat of it.
+  const lastClosedIdx = sortedYears.reduce(
+    (acc, y, i) => (y.status === "closed" ? i : acc),
+    -1,
+  );
+  const lastClosed = lastClosedIdx >= 0 ? sortedYears[lastClosedIdx] : undefined;
+  const lastClosedTo = lastClosed ? sortedYears[lastClosedIdx + 1]?.label : undefined;
 
   const openCreate = () => {
     const suggested = nextYear;
@@ -104,13 +134,26 @@ export default function YearEnd() {
   const openTransfer = (y: YearRow) => {
     setCloseLabel(y.label);
     setNextLabel(() => {
-      const sorted = [...years].sort((a, b) => a.start.localeCompare(b.start));
-      const idx = sorted.findIndex((x) => x.label === y.label);
-      const successor = idx >= 0 ? sorted[idx + 1]?.label : undefined;
+      const idx = sortedYears.findIndex((x) => x.label === y.label);
+      const successor = idx >= 0 ? sortedYears[idx + 1]?.label : undefined;
       return successor ?? nextYear;
     });
     setTransferOpen(true);
   };
+
+  // Client-side mirror of the server's adjacency/registration checks, so the
+  // dialog explains WHY a transfer cannot run instead of failing after the click.
+  const closeRow = years.find((y) => y.label === closeLabel);
+  const nextRow = years.find((y) => y.label === nextLabel.trim());
+  const nextProblem: string | null = !transferOpen
+    ? null
+    : !nextLabel.trim()
+      ? "Enter the next accounting year label."
+      : !nextRow
+        ? `${nextLabel.trim()} is not registered yet — create it with Create Year first.`
+        : closeRow && nextRow.start !== dayAfter(closeRow.end)
+          ? `${nextRow.label} must start the day after ${closeRow.label} ends (${formatDate(closeRow.end)}).`
+          : null;
 
   if (!societyId || !overview) {
     return (
@@ -127,6 +170,29 @@ export default function YearEnd() {
         title="Year-End Process"
         description="Create the next accounting year, transfer closing balances into it and lock the closed year — entries in a closed year are refused unless you hold the Year-End right."
       />
+
+      {/* WHY the screen now reads "Current year 2027-28": the completed
+          transfer moved the books pointer. State it plainly, together with
+          the last completed transfer, so the next Transfer prompt reads as
+          the NEXT cycle rather than a repeat of the one just finished. */}
+      {overview.current.label && overview.current.start && (
+        <div className="panel flex flex-wrap items-center gap-x-6 gap-y-1 px-4 py-3 text-sm">
+          <span className="font-semibold">Current books period</span>
+          <span className="tabular-nums">
+            {overview.current.label} · {formatDate(overview.current.start)} to{" "}
+            {formatDate(periodEndOf(overview.current.start))}
+          </span>
+          {lastClosed && (
+            <span className="text-muted-foreground">
+              Last transfer: {lastClosed.label} → {lastClosedTo ?? "—"} closed
+              {lastClosed.closedByName ? ` by ${lastClosed.closedByName}` : ""}
+              {lastClosed.closedAt
+                ? ` on ${formatDate(new Date(lastClosed.closedAt).toISOString().slice(0, 10))}`
+                : ""}
+            </span>
+          )}
+        </div>
+      )}
 
       {!canManage && (
         <Alert>
@@ -279,7 +345,9 @@ export default function YearEnd() {
       <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Transfer Balance — Close {closeLabel}</DialogTitle>
+            <DialogTitle>
+              Transfer Balance — Close {closeLabel} → {nextLabel.trim() || "…"}
+            </DialogTitle>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-[140px_1fr] items-center gap-2">
@@ -291,11 +359,25 @@ export default function YearEnd() {
               <Input id="nl" value={nextLabel} onChange={(e) => setNextLabel(e.target.value)} placeholder="2027-28" />
             </div>
             <p className="text-xs text-muted-foreground">
-              The next year must be registered (Create Year) and start the day after {closeLabel}{" "}
-              ends. Transfer snapshots every ledger's and member's closing balance into the closed
-              year (printed on the year-end statement) and moves the society's current books period
-              to {nextLabel || "the next year"}.
+              This runs the transfer <b>{closeLabel} → {nextLabel.trim() || "…"}</b>: every
+              ledger's and member's closing balance as on{" "}
+              {closeRow ? formatDate(closeRow.end) : "the year end"} is snapshotted into{" "}
+              {closeLabel} (which locks), and the current books period moves to{" "}
+              {nextLabel.trim() || "the next year"}. It does not repeat any earlier transfer.
             </p>
+            {lastClosed && lastClosed.label !== closeLabel && lastClosedTo && (
+              <p className="text-xs text-muted-foreground">
+                Already completed: {lastClosed.label} → {lastClosedTo}
+                {lastClosed.closedByName ? ` by ${lastClosed.closedByName}` : ""}
+                {lastClosed.closedAt
+                  ? ` on ${formatDate(new Date(lastClosed.closedAt).toISOString().slice(0, 10))} — `
+                  : " "}
+                that transfer will not run again.
+              </p>
+            )}
+            {nextProblem && (
+              <p className="text-xs font-medium text-destructive">{nextProblem}</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTransferOpen(false)}>
@@ -318,6 +400,7 @@ export default function YearEnd() {
                 }
               }}
               className="gap-2"
+              disabled={Boolean(nextProblem)}
             >
               <RefreshCw className="h-4 w-4" /> Transfer Balance
             </Button>

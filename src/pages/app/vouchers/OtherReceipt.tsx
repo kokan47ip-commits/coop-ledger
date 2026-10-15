@@ -15,8 +15,8 @@ export default function OtherReceipt() {
         title={editId ? "Edit Other Receipt" : "Other Receipt"}
         description={
           editId
-            ? "Editing an existing receipt — every line is now explicit and debits must equal credits."
-            : "Non-member receipts such as interest income, hall rentals or donations — add the credit ledgers below and the debit to cash/bank is posted automatically."
+            ? "Editing an existing receipt — date, cash/bank account, cheque details and narration can change. The amount and its entry lines stay fixed; delete and re-enter to change those."
+            : "Non-member collections such as interest, hall rentals or donations — pick the credit ledger and enter the amount; the debit to cash/bank posts automatically, like Member Receipt."
         }
       />
 

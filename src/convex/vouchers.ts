@@ -361,14 +361,30 @@ export const update = mutation({
       return id;
     }
 
+    // Cash/Bank change on a payment / other receipt: move the voucher's cash
+    // leg onto the newly chosen account, so the header and the posted lines
+    // can never disagree (the member-receipt branch remaps its bank line the
+    // same way above).
+    const newBank = bankCashAccountId ?? voucher.bankCashAccountId;
+    const remapCash =
+      newBank !== undefined &&
+      voucher.bankCashAccountId !== undefined &&
+      newBank !== voucher.bankCashAccountId;
+    const nextLines = remapCash
+      ? activeLines.map((l) =>
+          l.accountId === voucher.bankCashAccountId
+            ? { ...l, accountId: newBank }
+            : l,
+        )
+      : activeLines;
     await ctx.db.patch(id, {
       date,
       narration,
       mode,
-      bankCashAccountId: bankCashAccountId ?? voucher.bankCashAccountId,
+      bankCashAccountId: newBank,
       reference,
       total: debit,
-      lines: activeLines.map((l) => ({
+      lines: nextLines.map((l) => ({
         accountId: l.accountId,
         debit: l.debit,
         credit: l.credit,

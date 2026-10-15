@@ -15,8 +15,8 @@ export default function Payment() {
         title={editId ? "Edit Payment Voucher" : "Payment Voucher"}
         description={
           editId
-            ? "Editing an existing payment — every line is now explicit and debits must equal credits."
-            : "Society expenses and vendor payments — add the debit ledgers below and the credit to cash/bank is posted automatically."
+            ? "Editing an existing payment — date, cash/bank account, cheque details and narration can change. The amount and its entry lines stay fixed; delete and re-enter to change those."
+            : "Society expenses and vendor payments — pick the debit ledger and enter the amount; the credit to cash/bank posts automatically, like Member Receipt. For a payment split across ledgers, use the Journal Voucher."
         }
       />
 
