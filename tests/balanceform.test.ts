@@ -1469,3 +1469,171 @@ describe("Trial Balance — Income over Expenses carries the current result", ()
     expect(sum("closingDr")).toBe(sum("closingCr"));
   });
 });
+
+/**
+ * Year-end rollover (Transfer Balance 2026-27 → 2027-28).
+ *
+ * The books are ONE continuous ledger: the transfer only moves the current
+ * books-period pointer, so the Balance Sheet computed for a date inside
+ * 2027-28 must still be funded by everything the books had earned before it.
+ * The Profit and Loss head therefore carries the ACCUMULATED result (every
+ * income and expense balance the books still hold, plus whatever a closing
+ * journal has already folded into the "Income over Expenses" ledger) — never
+ * the current financial year's result alone, which silently drops the
+ * brought-forward surplus as soon as the year rolls over and leaves the two
+ * sides of the sheet apart by exactly that figure.
+ */
+describe("Year-end rollover — carried result keeps the sheet tied", () => {
+  /** FY 2026-27 books: income 100, expense 30 → surplus 70, no closing journal. */
+  const books = (extraVouchers: Record<string, unknown>[] = []) =>
+    ({
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("sink", "liability", { name: "Sinking Fund", openingBalance: 1000 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+        acct("ioe", "liability", { name: "Income over Expenses" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        // Dr bank 100 / Cr maintenance 100 — earned in 2026-27.
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "maint", debit: 0, credit: 100 },
+          ],
+        },
+        // Dr repair 30 / Cr bank 30 — spent in 2026-27.
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-06-10", voucherNo: "P1",
+          type: "payment", total: 30,
+          lines: [
+            { accountId: "repair", debit: 30, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 30 },
+          ],
+        },
+        ...extraVouchers,
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    }) as unknown as SocietyData;
+
+  test("surplus funds the sheet AFTER the books move to 2027-28, and ties", () => {
+    const data = books();
+    // At the 2026-27 year end the sheet ties: bank 1070 = fund 1000 + 70.
+    const yearEnd = computeBalanceSheet(data, "2027-03-31");
+    expect(yearEnd.totalAssets).toBe(1070);
+    expect(yearEnd.totalLiabilities).toBe(1070);
+    expect(
+      yearEnd.liabilities.find((r) => r.name === "Income over Expenses")?.amount,
+    ).toBe(70);
+
+    // Transfer Balance only repoints the books (no journal is posted), so
+    // the same entries must still fund the 2027-28 sheet. The carried 70 is
+    // an OPENING balance there — it shows as the Previous Year figure — and
+    // the two sides stay equal (the "Difference of …" line never appears).
+    const next = computeBalanceSheet(data, "2027-04-30");
+    expect(next.totalAssets).toBe(1070);
+    expect(next.totalLiabilities).toBe(1070);
+    expect(next.totalAssetsPrev).toBe(next.totalLiabilitiesPrev);
+    const pl = next.liabilities.find((r) => r.name === "Income over Expenses");
+    expect(pl?.amount).toBe(70);
+    expect(pl?.group).toBe("XI. Profit and Loss Account");
+    expect(pl?.prev).toBe(70); // previous-year column = the carried opening
+  });
+
+  test("a closing journal folded into the ledger is counted once, never twice", () => {
+    // The office folded only the INCOME head (expense left open) on the last
+    // day of 2026-27: Dr maintenance 100 / Cr Income over Expenses 100.
+    const data = books([
+      {
+        _id: "v3", _creationTime: 0, societyId: "s1", date: "2027-03-31", voucherNo: "J1",
+        type: "journal", total: 100,
+        lines: [
+          { accountId: "maint", debit: 100, credit: 0 },
+          { accountId: "ioe", debit: 0, credit: 100 },
+        ],
+      },
+    ]);
+    const next = computeBalanceSheet(data, "2027-04-30");
+    // 100 folded into the ledger − 30 expense still open = the same 70.
+    expect(next.totalLiabilities).toBe(1070);
+    expect(next.totalAssets).toBe(1070);
+    expect(
+      next.liabilities.find((r) => r.name === "Income over Expenses")?.amount,
+    ).toBe(70);
+  });
+
+  test("a closing journal posted AFTER the roll-over still lands on 70", () => {
+    // Offices often post the year's closing entry once the new year is open,
+    // dated inside 2027-28: Dr maintenance 100 / Cr Income over Expenses 100.
+    // The result must not be counted through BOTH the ledger and the income
+    // head, and the expense still open must not go missing.
+    const data = books([
+      {
+        _id: "v3", _creationTime: 0, societyId: "s1", date: "2027-04-05", voucherNo: "J1",
+        type: "journal", total: 100,
+        lines: [
+          { accountId: "maint", debit: 100, credit: 0 },
+          { accountId: "ioe", debit: 0, credit: 100 },
+        ],
+      },
+    ]);
+    const next = computeBalanceSheet(data, "2027-04-30");
+    expect(next.totalAssets).toBe(1070);
+    expect(next.totalLiabilities).toBe(1070);
+    expect(
+      next.liabilities.find((r) => r.name === "Income over Expenses")?.amount,
+    ).toBe(70);
+  });
+
+  test("deficit carried across the roll-over lands on the asset side and ties", () => {
+    // Expense 200 against 100 income → deficit 100 at 2026-27 year end:
+    // bank 900 (A) = fund 1000 (L) − 100 (S), so the sheet must show the
+    // loss of 100 as an asset and foot to 1000 on both sides.
+    const data = ({
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1000 }),
+        acct("sink", "liability", { name: "Sinking Fund", openingBalance: 1000 }),
+        acct("maint", "income", { name: "Maintenance Contributions" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+        acct("ioe", "liability", { name: "Income over Expenses" }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        {
+          _id: "v1", _creationTime: 0, societyId: "s1", date: "2026-05-10", voucherNo: "R1",
+          type: "other_receipt", total: 100,
+          lines: [
+            { accountId: "bank", debit: 100, credit: 0 },
+            { accountId: "maint", debit: 0, credit: 100 },
+          ],
+        },
+        {
+          _id: "v2", _creationTime: 0, societyId: "s1", date: "2026-06-10", voucherNo: "P1",
+          type: "payment", total: 200,
+          lines: [
+            { accountId: "repair", debit: 200, credit: 0 },
+            { accountId: "bank", debit: 0, credit: 200 },
+          ],
+        },
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    }) as unknown as SocietyData;
+
+    const next = computeBalanceSheet(data, "2027-04-30");
+    expect(next.totalAssets).toBe(1000); // bank 900 + carried loss 100
+    expect(next.totalLiabilities).toBe(1000); // fund 1000, no P&L head
+    const loss = next.assets.find((r) => r.name === "Expenses over Income");
+    expect(loss?.amount).toBe(100);
+    expect(loss?.group).toBe("X. Profit and Loss Account");
+    expect(loss?.prev).toBe(100);
+  });
+});

@@ -1372,8 +1372,6 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   const dayBefore = new Date(`${fyStart}T00:00:00Z`);
   dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
   const prevToDate = dayBefore.toISOString().slice(0, 10);
-  const prevFyStart = new Date(`${fyStart}T00:00:00Z`);
-  prevFyStart.setUTCFullYear(prevFyStart.getUTCFullYear() - 1);
 
   const assets: Side[] = [];
   const liabilities: Side[] = [];
@@ -1385,11 +1383,10 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
   )?.printNo;
 
   // The Profit and Loss head (Form N heads XI / X): the system "Income over
-  // Expenses" ledger. When the society carries this ledger with a
-  // brought-forward balance (the accumulated result of years already closed
-  // into it), that balance must reach the sheet ON TOP of the current year's
-  // computed result — a sheet that shows only the current year's surplus
-  // silently drops the brought-forward figure the books carry.
+  // Expenses" ledger. Its own balance (years already closed into it) reaches
+  // the sheet ON TOP of the result still open in the income and expense
+  // ledgers — a sheet that shows only one of the two drops what the books
+  // already carry.
   const ioeLedger = data.accounts.find(
     (a) =>
       a.type === "liability" &&
@@ -1406,8 +1403,9 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
     // Presented from the member ledgers, not the GL control ledger.
     if (a.type === "liability" && n === "advance from members") continue;
     // Presented as the Profit and Loss Account head below — its own ledger
-    // balance (brought forward) combines with the current year's result
-    // there, so it must not also print as a generic liability row.
+    // balance (brought forward) combines with the result still open in the
+    // income and expense ledgers there, so it must not also print as a
+    // generic liability row.
     if (ioeLedger && a._id === ioeLedger._id) continue;
     const net = netOf(a, toDate);
     const prev = netOf(a, prevToDate);
@@ -1472,40 +1470,30 @@ export function computeBalanceSheet(data: SocietyData, toDate: string) {
       prev: membersPrev.advance,
     });
   }
-  const ie = computeIncomeExpenditure(
-    data,
-    fyStartDateString(data.society?.fyStartMonth ?? 4, toDate),
-    toDate,
-  );
-  const iePrev = computeIncomeExpenditure(
-    data,
-    prevFyStart.toISOString().slice(0, 10),
-    prevToDate,
-  );
-  // The Profit and Loss Account head: the ledger's brought-forward balance
-  // (credit positive) PLUS the current year's computed result. A closing
-  // journal that already folded the year's result into the ledger (Dr/Cr
-  // every income and expense ledger against "Income over Expenses") is
-  // recognised, so the computed result is not added a second time — the
-  // ledger balance alone is then the true figure.
-  const closingFolded =
-    ioeLedger !== undefined &&
-    unifiedEntries(data).some(
-      (e) =>
-        e.date >= fyStartDateString(data.society?.fyStartMonth ?? 4, toDate) &&
-        e.date <= toDate &&
-        e.type === "journal" &&
-        e.lines.some((l) => l.accountId === ioeLedger._id) &&
-        e.lines.length > 1,
-    );
+  const ie = computeIncomeExpenditure(data, "0000-01-01", toDate);
+  const iePrev = computeIncomeExpenditure(data, "0000-01-01", prevToDate);
+  // The Profit and Loss Account head: the ledger's balance (credit positive)
+  // PLUS the ACCUMULATED result of every income and expense balance the books
+  // still hold — from the very first entry up to the sheet date, not the
+  // current financial year alone.
+  //
+  // Why the whole books and not just this year: Transfer Balance only moves
+  // the current books-period pointer — it posts no closing journal. Taking
+  // the current year's result alone silently dropped every earlier year's
+  // surplus the moment the books rolled over, leaving the sheet short by
+  // exactly the carried figure (the "Difference of …" line).
+  //
+  // Folding is recognised automatically, so no date-window heuristic is
+  // needed: a closing journal (Dr income / Cr Income over Expenses) empties
+  // the income and expense ledgers while raising the ledger balance by the
+  // same amount — the two sides of the sum can never both hold it. A partial
+  // fold therefore reads as "folded heads in the ledger + open heads in the
+  // result", which is the same total.
   const plHead =
-    ioeLedger !== undefined && closingFolded
-      ? netOf(ioeLedger, toDate)
-      : (ioeLedger !== undefined ? netOf(ioeLedger, toDate) : 0) + ie.surplus;
+    (ioeLedger !== undefined ? netOf(ioeLedger, toDate) : 0) + ie.surplus;
   const plHeadPrev =
-    ioeLedger !== undefined
-      ? netOf(ioeLedger, prevToDate) + (closingFolded ? 0 : iePrev.surplus)
-      : iePrev.surplus;
+    (ioeLedger !== undefined ? netOf(ioeLedger, prevToDate) : 0) +
+    iePrev.surplus;
   if (plHead !== 0 || plHeadPrev !== 0) {
     if (plHead >= 0) {
       // Surplus funds the society: a Form N fund on the liabilities side
