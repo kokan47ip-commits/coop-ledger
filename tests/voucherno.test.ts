@@ -283,4 +283,25 @@ describe("duplicate voucher numbers are rejected with \"Duplicate Voucher No.\""
     }
     expect(msg).toContain("Duplicate Voucher No.");
   });
+
+  test("an empty or whitespace voucherNo means automatic numbering — never a blank stored number", async () => {
+    const world = await makeWorld();
+    // The member-receipt branch (lines given → insertMemberReceipt)…
+    await createReceipt(world, { voucherNo: "" });
+    await createReceipt(world, { voucherNo: "   " });
+    // …and the generic branch (journal).
+    await fn(vouchersMod, "create")(world.ctx, {
+      societyId: world.societyId,
+      type: "journal",
+      date: world.today,
+      lines: world.lines,
+      voucherNo: "",
+    });
+    const nos = world.made.dump("vouchers").map((v) => String(v.voucherNo));
+    expect(nos).toHaveLength(3);
+    // Every voucher carries a real auto-issued number…
+    expect(nos.every((n) => /^[A-Z]+-\d{4}$/.test(n))).toBe(true);
+    // …and the automatic series never repeats itself.
+    expect(new Set(nos).size).toBe(3);
+  });
 });

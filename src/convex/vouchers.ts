@@ -142,9 +142,10 @@ async function insertMemberReceipt(
   // A number typed in the form is duplicate-checked and refused with
   // "Duplicate Voucher No."; an empty field self-heals past counter drift —
   // so a duplicate voucher number can never be saved either way.
+  const typedNo = p.voucherNo?.trim();
   const voucherNo =
-    p.voucherNo?.trim() ?? (await claimVoucherNo(ctx, societyId, "member_receipt"));
-  if (p.voucherNo?.trim()) await assertVoucherNoFree(ctx, societyId, voucherNo);
+    typedNo || (await claimVoucherNo(ctx, societyId, "member_receipt"));
+  if (typedNo) await assertVoucherNoFree(ctx, societyId, voucherNo);
   const voucherId = await ctx.db.insert("vouchers", {
     societyId,
     type: "member_receipt" as const,
@@ -273,9 +274,10 @@ export const create = mutation({
 
     // Office-typed voucher numbers are duplicate-checked ("Duplicate
     // Voucher No."); the automatic series self-heals past counter drift.
+    const typedNo = args.voucherNo?.trim();
     const voucherNo =
-      args.voucherNo?.trim() ?? (await claimVoucherNo(ctx, societyId, type));
-    if (args.voucherNo?.trim()) await assertVoucherNoFree(ctx, societyId, voucherNo);
+      typedNo || (await claimVoucherNo(ctx, societyId, type));
+    if (typedNo) await assertVoucherNoFree(ctx, societyId, voucherNo);
     const voucherId = await ctx.db.insert("vouchers", {
       societyId,
       type,
