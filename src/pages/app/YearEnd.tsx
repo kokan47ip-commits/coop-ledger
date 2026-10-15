@@ -351,7 +351,9 @@ export default function YearEnd() {
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-[140px_1fr] items-center gap-2">
-              <Label>Current Year</Label>
+              <Label title="The year this transfer closes — its balances move to the next year">
+                Current Year (to close)
+              </Label>
               <Input value={closeLabel} disabled />
             </div>
             <div className="grid grid-cols-[140px_1fr] items-center gap-2">
