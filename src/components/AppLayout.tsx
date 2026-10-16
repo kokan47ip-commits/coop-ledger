@@ -123,6 +123,7 @@ const NAV: NavGroup[] = [
       { to: "/app/cash-book", label: "Cash Book", icon: <Landmark className="size-4" /> },
       { to: "/app/trial-balance", label: "Trial Balance", icon: <Scale className="size-4" /> },
       { to: "/app/bank-book", label: "Bank Book", icon: <CreditCard className="size-4" /> },
+      { to: "/app/bank-reconciliation", label: "Bank Reconciliation", icon: <Landmark className="size-4" /> },
       { to: "/app/income-expenditure", label: "Income & Expenditure", icon: <TrendingUp className="size-4" /> },
       { to: "/app/balance-sheet", label: "Balance Sheet", icon: <FileText className="size-4" /> },
       { to: "/app/receipt-payment", label: "Receipt & Payment", icon: <Wallet className="size-4" /> },
@@ -165,6 +166,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/app/member-advance": "Member Advance",
   "/app/general-ledger": "General Ledger",
   "/app/cash-book": "Cash Book",
+  "/app/bank-reconciliation": "Bank Reconciliation",
   "/app/income-expenditure": "Income & Expenditure",
   "/app/balance-sheet": "Balance Sheet",
   "/app/receipt-payment": "Receipt & Payment",
@@ -304,6 +306,18 @@ export function AppLayout() {
           : location.pathname === "/portal"
             ? "My Flat"
             : "Accounting");
+
+  // Record the visit for the "continue where you left off" trail. The trail
+  // lives with the account (server-side), so it follows the user to any
+  // device they sign in from. Activity tracking must never break navigation.
+  const recordActivity = useMutation(api.activity.record);
+  useEffect(() => {
+    if (isLoading || !societyId) return;
+    const path = location.pathname;
+    queueMicrotask(() => {
+      void recordActivity({ societyId, path, label: title }).catch(() => {});
+    });
+  }, [isLoading, societyId, location.pathname, recordActivity, title]);
 
   const handleSignOut = async () => {
     await signOut();

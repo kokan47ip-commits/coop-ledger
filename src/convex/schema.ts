@@ -533,6 +533,50 @@ const schema = defineSchema(
       .index("by_society", ["societyId"])
       .index("by_user", ["userId"])
       .index("by_email", ["email"]),
+
+    /**
+     * One saved bank reconciliation for a bank/cash ledger at a statement
+     * date. The office ticks the book entries that appear on the bank
+     * statement (pass book), enters the actual pass-book balance and saves —
+     * the Bank Reconciliation Statement then shows the difference between
+     * books and bank. One row per (account, toDate); re-saving the same
+     * statement date replaces the row, and ticking a LATER statement
+     * automatically carries every earlier statement's ticks forward.
+     */
+    bankReconciliations: defineTable({
+      societyId: v.id("societies"),
+      /** Bank/cash ledger (accounts.kind = "bank_cash"). */
+      accountId: v.id("accounts"),
+      /** "YYYY-MM-DD" statement date (inclusive). */
+      toDate: v.string(),
+      /** Balance as per the books at `toDate` itself (for audit). */
+      bookBalance: v.number(),
+      /** Balance as per the bank pass book as the office stated it. */
+      actualBalance: v.number(),
+      /** Voucher numbers the statement cleared (verified against the pass book). */
+      clearedVoucherNos: v.array(v.string()),
+      note: v.optional(v.string()),
+      savedById: v.id("users"),
+      savedByName: v.string(),
+      savedAt: v.number(),
+    }).index("by_society_account", ["societyId", "accountId"]),
+
+    /**
+     * "Continue where you left off": the screens a signed-in user opened,
+     * newest first and capped, so the Dashboard card can send them straight
+     * back to the entry they were working in — on any device they sign in
+     * from, because the trail lives with the account, not the browser.
+     */
+    userActivity: defineTable({
+      userId: v.id("users"),
+      /** The society the screen acted on (absent on society-less screens). */
+      societyId: v.optional(v.id("societies")),
+      /** Route path, e.g. "/app/member-receipt". */
+      path: v.string(),
+      /** Short label the card shows, e.g. "Member Receipt". */
+      label: v.string(),
+      at: v.number(),
+    }).index("by_user_at", ["userId", "at"]),
   },
   {
     schemaValidation: false,

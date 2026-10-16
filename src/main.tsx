@@ -86,6 +86,9 @@ const GeneralLedger = lazyPage(() => import("./pages/app/ledgers/GeneralLedger.t
 const CashBook = lazyPage(() => import("./pages/app/ledgers/CashBook.tsx"));
 const TrialBalance = lazyPage(() => import("./pages/app/reports/TrialBalance.tsx"));
 const BankBook = lazyPage(() => import("./pages/app/ledgers/BankBook.tsx"));
+const BankReconciliation = lazyPage(
+  () => import("./pages/app/reports/BankReconciliation.tsx"),
+);
 const IncomeExpenditure = lazyPage(() => import("./pages/app/reports/IncomeExpenditure.tsx"));
 const BalanceSheet = lazyPage(() => import("./pages/app/reports/BalanceSheet.tsx"));
 const ReceiptPayment = lazyPage(() => import("./pages/app/reports/ReceiptPayment.tsx"));
@@ -262,6 +265,10 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="cash-book" element={<CashBook />} />
                 <Route path="trial-balance" element={<TrialBalance />} />
                 <Route path="bank-book" element={<BankBook />} />
+                <Route
+                  path="bank-reconciliation"
+                  element={<BankReconciliation />}
+                />
                 <Route path="income-expenditure" element={<IncomeExpenditure />} />
                 <Route path="balance-sheet" element={<BalanceSheet />} />
                 <Route path="receipt-payment" element={<ReceiptPayment />} />

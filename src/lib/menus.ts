@@ -53,6 +53,7 @@ export type MenuKey =
   | "cash-book"
   | "trial-balance"
   | "bank-book"
+  | "bank-reconciliation"
   | "income-expenditure"
   | "balance-sheet"
   | "receipt-payment"
@@ -109,6 +110,7 @@ export const MENU_REGISTRY: MenuItem[] = [
   { key: "cash-book", label: "Cash Book", section: "Reports", path: "/app/cash-book", icon: Landmark },
   { key: "trial-balance", label: "Trial Balance", section: "Reports", path: "/app/trial-balance", icon: Scale },
   { key: "bank-book", label: "Bank Book", section: "Reports", path: "/app/bank-book", icon: CreditCard },
+  { key: "bank-reconciliation", label: "Bank Reconciliation", section: "Reports", path: "/app/bank-reconciliation", icon: Landmark },
   { key: "income-expenditure", label: "Income & Expenditure", section: "Reports", path: "/app/income-expenditure", icon: TrendingUp },
   { key: "balance-sheet", label: "Balance Sheet", section: "Reports", path: "/app/balance-sheet", icon: FileText },
   { key: "receipt-payment", label: "Receipt & Payment", section: "Reports", path: "/app/receipt-payment", icon: Wallet },

@@ -15,13 +15,14 @@ import { effectiveFyPeriod, formatDate, formatINR, VOUCHER_TYPE_LABEL } from "@/
 import {
   ArrowRight,
   ArrowUpRight,
+  Clock,
   FileSpreadsheet,
   Receipt,
   TrendingUp,
   Users,
   Wallet,
 } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { useQuery } from "convex/react";
 
 type DashboardResult = {
@@ -44,7 +45,29 @@ type DashboardResult = {
   }[];
 };
 
+type RecentActivity = {
+  _id: string;
+  societyId?: string;
+  path: string;
+  label: string;
+  at: number;
+};
+
+/** "2 h ago"-style relative time for the resume card. */
+function timeAgo(ts: number) {
+  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 31) return `${d} d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
 export default function Dashboard() {
+  const location = useLocation();
   const { societyId, society, role } = useSociety();
   const period = effectiveFyPeriod(society);
   // Portal (member-role) logins have no book access — the dashboard query is
@@ -58,6 +81,14 @@ export default function Dashboard() {
   ) as DashboardResult | undefined;
 
   const fyLabel = `${formatDate(period.from)} – ${formatDate(period.to)}`;
+
+  // "Continue where you left off": screens recorded for this account, newest
+  // first. Straight back into the last entries — on any device they sign in
+  // from, because the trail lives with the account, not this browser.
+  const recentActivity = useQuery(api.activity.recent, {}) as RecentActivity[] | undefined;
+  const resumeItems = (recentActivity ?? [])
+    .filter((a) => a.societyId === societyId && a.path !== location.pathname)
+    .slice(0, 3);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -100,6 +131,33 @@ export default function Dashboard() {
           hint={`Income ${formatINR(stats?.totalIncome ?? 0)} · Expense ${formatINR(stats?.totalExpenditure ?? 0)}`}
         />
       </div>
+
+      {/* Continue where you left off */}
+      {resumeItems.length > 0 && (
+        <section className="mt-8">
+          <div className="mb-4 flex items-center gap-2">
+            <Clock className="size-4 text-primary" />
+            <h3 className="text-sm font-medium tracking-tight">
+              Continue where you left off
+            </h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {resumeItems.map((a) => (
+              <Link
+                key={a._id}
+                to={a.path}
+                className="panel group flex items-center justify-between gap-3 p-4 transition-all hover:-translate-y-0.5 hover:border-primary/30"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{a.label}</span>
+                  <span className="text-xs text-muted-foreground">{timeAgo(a.at)}</span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-primary transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="mt-10 grid gap-8 lg:grid-cols-5">
         {/* Recent vouchers */}
