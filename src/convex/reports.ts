@@ -292,6 +292,13 @@ function memberLabel(data: SocietyData, memberId: Id<"members"> | null | undefin
  * does the row present the MEMBER ledgers (openings typed per member, bills,
  * receipts) — the same arithmetic as the Balance Sheet's Dues/Advance split
  * — with GL-only adjustments (journals) folded in.
+ *
+ * Year-end fold of the nominal accounts: income and expense ledgers close
+ * into "Income over Expenses" every 31 March, so the Opening column of a
+ * financial year shows every nominal ledger at NIL and carries the prior
+ * years' income-over-expense DIFFERENCE on the "Income over Expenses" row —
+ * a surplus added (credit), a deficit deducted (debit). Recognises posted
+ * closing journals automatically, so the carried figure never counts twice.
  */
 export async function computeTrialBalance(
   data: SocietyData,
@@ -300,11 +307,25 @@ export async function computeTrialBalance(
 ): Promise<TrialBalanceColumnRow[]> {
   const { accounts } = data;
   const receivableId = receivableIdOf(data);
+  // Year-end fold boundary: the financial-year start of the year the
+  // statement opens from. Income and expense ledgers close into "Income over
+  // Expenses" every 31 March, so nominal amounts earned in EARLIER financial
+  // years must stay out of the Opening column — they carry as the net
+  // difference under the "Income over Expenses" head instead (see the fold
+  // block below).
+  const fyStart = data.society
+    ? fyStartDateString(data.society.fyStartMonth, fromDate)
+    : fromDate; // no Society record → nothing is treated as a prior year
   const movement = new Map<
     Id<"accounts">,
     { pre: number; dr: number; cr: number }
   >();
   for (const a of accounts) movement.set(a._id, { pre: 0, dr: 0, cr: 0 });
+  // Pre-period movements still INSIDE the same financial year: the genuine
+  // brought-forward part of a mid-year statement, which stays in the row's
+  // own Opening column — only pre-financial-year amounts fold.
+  const withinPre = new Map<Id<"accounts">, number>();
+  for (const a of accounts) withinPre.set(a._id, 0);
   // GL-only movements on the member receivable control: entries the member
   // ledgers do not mirror (bills and member receipts ARE the mirror — while
   // their member still exists).
@@ -319,8 +340,15 @@ export async function computeTrialBalance(
     for (const l of e.lines) {
       const m = movement.get(l.accountId);
       if (m) {
-        if (prePeriod) m.pre += l.debit - l.credit;
-        else {
+        if (prePeriod) {
+          m.pre += l.debit - l.credit;
+          if (e.date >= fyStart) {
+            withinPre.set(
+              l.accountId,
+              (withinPre.get(l.accountId) ?? 0) + l.debit - l.credit,
+            );
+          }
+        } else {
           m.dr += l.debit;
           m.cr += l.credit;
         }
@@ -466,6 +494,80 @@ export async function computeTrialBalance(
       printNo: a.printNo,
     });
   }
+  // ---- Year-end fold: nominal accounts never carry a prior-year balance. --
+  // The books are ONE continuous ledger, but income and expense ledgers
+  // close every 31 March into "Income over Expenses". When the Trial Balance
+  // opens a financial year the office expects the classic post-closing
+  // picture: every income/expense ledger (Maintenance, Parking, Other
+  // Income, …) at NIL in the Opening column, and the year's income-over-
+  // expense DIFFERENCE carried on the "Income over Expenses" row — a
+  // surplus/profit ADDED (credit side), a deficit/loss DEDUCTED (debit
+  // side).
+  //
+  // The fold is computed, not posted, and it recognises a closing journal
+  // automatically the way the Balance Sheet head does: a journal that folded
+  // prior years already emptied those ledgers and raised the "Income over
+  // Expenses" ledger's opening by exactly what this fold would net to —
+  // both roads land on the same carried figure, never twice. Movements
+  // inside the SAME financial year stay where they are, so a mid-year
+  // statement keeps its genuine brought-forward part.
+  //
+  // `carryNet` is the Dr-positive sum of the folded pieces: negative = the
+  // surplus carried as a credit, positive = a deficit deducted as a debit.
+  const ioe = accounts.find(
+    (a) =>
+      a.type === "liability" &&
+      a.name.trim().toLowerCase() === "income over expenses",
+  );
+  let carryNet = 0;
+  if (ioe) {
+    for (const a of accounts) {
+      if (a.type !== "income" && a.type !== "expense") continue;
+      const m = movement.get(a._id)!;
+      const raw =
+        (a.type === "expense" ? a.openingBalance : -a.openingBalance) + m.pre;
+      const fold = raw - (withinPre.get(a._id) ?? 0);
+      if (fold === 0) continue;
+      carryNet += fold;
+      const row = rows.find((r) => r.accountId === a._id);
+      if (!row) continue; // unreachable: a fold ≠ 0 row was pushed above
+      const opening = row.openingDr - row.openingCr - fold;
+      if (opening === 0 && row.periodDr === 0 && row.periodCr === 0) {
+        rows.splice(rows.indexOf(row), 1); // closed head: nothing to print
+        continue;
+      }
+      row.openingDr = opening > 0 ? opening : 0;
+      row.openingCr = opening < 0 ? -opening : 0;
+      const closing = opening + row.periodDr - row.periodCr;
+      row.closingDr = closing > 0 ? closing : 0;
+      row.closingCr = closing < 0 ? -closing : 0;
+    }
+    if (carryNet !== 0) {
+      let ioeRow = rows.find((r) => r.accountId === ioe._id);
+      if (!ioeRow) {
+        ioeRow = {
+          accountId: ioe._id,
+          code: ioe.code,
+          name: ioe.name,
+          type: ioe.type,
+          printNo: ioe.printNo,
+          openingDr: 0,
+          openingCr: 0,
+          periodDr: 0,
+          periodCr: 0,
+          closingDr: 0,
+          closingCr: 0,
+        };
+        rows.push(ioeRow);
+      }
+      const opening = ioeRow.openingDr - ioeRow.openingCr + carryNet;
+      ioeRow.openingDr = opening > 0 ? opening : 0;
+      ioeRow.openingCr = opening < 0 ? -opening : 0;
+      const closing = opening + ioeRow.periodDr - ioeRow.periodCr;
+      ioeRow.closingDr = closing > 0 ? closing : 0;
+      ioeRow.closingCr = closing < 0 ? -closing : 0;
+    }
+  }
   // Bill debits that have nowhere to land: with no receivable ledger in
   // the chart (or the control mis-set to a bank/cash account), the Dr side
   // of every bill cannot post — while its income credits still MUST reach
@@ -539,9 +641,6 @@ export async function computeTrialBalance(
   // closing journal the office would otherwise have to make by hand (Dr/Cr
   // every income and expense ledger against Income over Expenses).
   const surplus = computeIncomeExpenditure(data, fromDate, toDate).surplus;
-  const ioe = accounts.find(
-    (a) => a.type === "liability" && a.name.trim().toLowerCase() === "income over expenses",
-  );
   if (ioe && surplus !== 0) {
     const ioeRow = rows.find((r) => r.accountId === ioe._id);
     if (ioeRow) {

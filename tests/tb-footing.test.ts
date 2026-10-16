@@ -232,10 +232,19 @@ describe("Trial Balance footing with real-world data", () => {
 
     const tb = await computeTrialBalance(data, FROM, TO);
     expectColumnsFoot(tb);
-    // The result ledger's closing carries typed 40 + pre-period 50 + period
-    // result 70 = 160 Cr.
+    // Year-end fold: the pre-period journal (dated 2026-03-15, before the
+    // statement's financial year) raised the ledger by 50 but left the
+    // matching expense OPEN — the fold closes it the standard way (closing an
+    // expense debits Income over Expenses), so the carried opening is
+    // 40 + 50 − 50 = 40 Cr. The repair head keeps only its own-year activity
+    // (opening 0, the period's 30 in the Current Period column).
+    expect(tb.find((r) => r.name === "Repairs and Maintenance")).toMatchObject({
+      openingDr: 0,
+      periodDr: 30,
+    });
     const ioe = tb.find((r) => r.name === "Income over Expenses")!;
-    expect(ioe.openingCr).toBe(90);
-    expect(ioe.closingCr).toBe(160);
+    expect(ioe.openingCr).toBe(40);
+    // Closing = carried opening 40 + the period's own result 70 = 110 Cr.
+    expect(ioe.closingCr).toBe(110);
   });
 });

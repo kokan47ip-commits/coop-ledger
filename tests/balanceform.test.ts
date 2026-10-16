@@ -1637,3 +1637,180 @@ describe("Year-end rollover — carried result keeps the sheet tied", () => {
     expect(loss?.prev).toBe(100);
   });
 });
+
+/**
+ * Trial Balance — year-end fold of the nominal accounts into "Income over
+ * Expenses".
+ *
+ * After the year-end transfer (2026-27 → 2027-28) the office expects the
+ * classic post-closing Trial Balance: every income and expense ledger
+ * (Maintenance charges, Sinking-fund-billed income, Non-occupancy, Parking,
+ * Other Income, …) at NIL in the Opening column of the NEW year, and the
+ * previous year's Income & Expenditure DIFFERENCE carried under the "Income
+ * over Expenses" head — a profit/surplus ADDED (credit side), a deficit/
+ * loss DEDUCTED (debit side). The books stay one continuous ledger, so the
+ * fold is computed; a posted closing journal is recognised automatically
+ * and the carried figure never lands twice.
+ */
+describe("Trial Balance — year-end fold of nominal accounts into Income over Expenses", () => {
+  const vch = (
+    id: string,
+    date: string,
+    type: "other_receipt" | "payment" | "journal",
+    lines: [string, number, number][],
+  ) => ({
+    _id: id,
+    _creationTime: 0,
+    societyId: "s1",
+    date,
+    voucherNo: id,
+    type,
+    total: lines.reduce((s, l) => s + l[1], 0),
+    lines: lines.map(([accountId, debit, credit]) => ({ accountId, debit, credit })),
+  });
+
+  /**
+   * FY 2026-27 activity the ledger still holds when the books have rolled
+   * into 2027-28: Maintenance 100 + Non-occupancy 30 + 4W Parking 70 + Other
+   * Income 70 earned, Repairs 30 spent → surplus 270 (income 270, expenses 30,
+   * difference 240? no: 100+30+70+70 = 270 income − 30 expense = 240 surplus).
+   */
+  const books = (extra: Record<string, unknown>[] = []) =>
+    ({
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1240 }),
+        acct("sink", "liability", { name: "Sinking Fund", openingBalance: 1000 }),
+        acct("maint", "income", { name: "Maintenance Charges" }),
+        acct("occ", "income", { name: "Non-occupancy Charges" }),
+        acct("park", "income", { name: "4W Parking Charges" }),
+        acct("other", "income", { name: "Other Income" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+        acct("ioe", "liability", { name: "Income over Expenses" }),
+        acct("capital", "liability", { name: "Share Capital", openingBalance: 240 }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        vch("rv1", "2026-05-10", "other_receipt", [["bank", 100, 0], ["maint", 0, 100]]),
+        vch("rv2", "2026-05-11", "other_receipt", [["bank", 30, 0], ["occ", 0, 30]]),
+        vch("rv3", "2026-05-12", "other_receipt", [["bank", 70, 0], ["park", 0, 70]]),
+        vch("rv4", "2026-05-13", "other_receipt", [["bank", 70, 0], ["other", 0, 70]]),
+        vch("pv1", "2026-06-10", "payment", [["repair", 30, 0], ["bank", 0, 30]]),
+        ...extra,
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    }) as unknown as SocietyData;
+
+  const col = (tb: unknown[], k: string) =>
+    (tb as Record<string, number>[]).reduce((s, r) => s + (r[k] ?? 0), 0);
+
+  test("2027-28 opening shows nominal heads NIL and carries the 2026-27 surplus on Income over Expenses", async () => {
+    const tb = await computeTrialBalance(books(), "2027-04-01", "2028-03-31");
+    // No prior-year nominal head may appear at all.
+    for (const head of ["Maintenance Charges", "Non-occupancy Charges", "4W Parking Charges", "Other Income", "Repairs and Maintenance"])
+      expect(tb.find((r) => r.name === head)).toBeUndefined();
+    // The difference of Income & Expenditure 2026-27 = 270 − 30 = 240 surplus
+    // is carried ADDED to Income over Expenses (credit side) as its opening.
+    const ioe = tb.find((r) => r.name === "Income over Expenses")!;
+    expect(ioe).toMatchObject({ openingCr: 240, periodCr: 0, closingCr: 240 });
+    // Liability funds still open normally; bank 1480 = 1000 fund + 240 capital
+    // + 240 carried result.
+    expect(tb.find((r) => r.name === "Sinking Fund")).toMatchObject({ openingCr: 1000 });
+    expect(tb.find((r) => r.name === "Bank of India")).toMatchObject({ openingDr: 1480 });
+    // Every column foots.
+    for (const k of ["opening", "period", "closing"] as const)
+      expect(col(tb, `${k}Dr`)).toBe(col(tb, `${k}Cr`));
+  });
+
+  test("2026-27 deficit is DEDUCTED: Income over Expenses opens on the Dr side", async () => {
+    // Expense 200 against income 100 → loss 100 the year-end subtracts.
+    const data = ({
+      accounts: [
+        acct("bank", "asset", { kind: "bank_cash", name: "Bank of India", openingBalance: 1100 }),
+        acct("sink", "liability", { name: "Sinking Fund", openingBalance: 1000 }),
+        acct("maint", "income", { name: "Maintenance Charges" }),
+        acct("repair", "expense", { name: "Repairs and Maintenance" }),
+        acct("ioe", "liability", { name: "Income over Expenses" }),
+        acct("capital", "liability", { name: "Share Capital", openingBalance: 100 }),
+      ],
+      accountGroups: [],
+      members: [m1],
+      vouchers: [
+        vch("rv1", "2026-05-10", "other_receipt", [["bank", 100, 0], ["maint", 0, 100]]),
+        vch("pv1", "2026-06-10", "payment", [["repair", 200, 0], ["bank", 0, 200]]),
+      ],
+      bills: [],
+      society,
+      tariffs: [],
+    }) as unknown as SocietyData;
+    const tb = await computeTrialBalance(data, "2027-04-01", "2028-03-31");
+    expect(tb.find((r) => r.name === "Maintenance Charges")).toBeUndefined();
+    expect(tb.find((r) => r.name === "Repairs and Maintenance")).toBeUndefined();
+    expect(tb.find((r) => r.name === "Income over Expenses")).toMatchObject({
+      openingDr: 100, // the loss is deducted — the opposite side of a surplus
+      periodDr: 0,
+      closingDr: 100,
+    });
+    // bank 1000 = fund 1000 + capital 100 − loss 100; every column foots.
+    expect(tb.find((r) => r.name === "Bank of India")).toMatchObject({ openingDr: 1000 });
+    for (const k of ["opening", "period", "closing"] as const)
+      expect(col(tb, `${k}Dr`)).toBe(col(tb, `${k}Cr`));
+  });
+
+  test("a posted closing journal for 2026-27 is counted once — same carried figure", async () => {
+    // Office folded the year by journal dated 31-03-2027:
+    // Dr Maintenance 100 … / Cr Income over Expenses 240 (income folded in
+    // full, expense left open → the carried figure must stay 240).
+    const data = books([
+      vch("j1", "2027-03-31", "journal", [["maint", 100, 0], ["occ", 30, 0], ["park", 70, 0], ["other", 70, 0], ["ioe", 0, 270]]),
+    ]);
+    const tb = await computeTrialBalance(data, "2027-04-01", "2028-03-31");
+    for (const head of ["Maintenance Charges", "Non-occupancy Charges", "4W Parking Charges", "Other Income"])
+      expect(tb.find((r) => r.name === head)).toBeUndefined(); // emptied by the journal
+    const ioe = tb.find((r) => r.name === "Income over Expenses")!;
+    // Journal 270 Cr − expense still open 30 Dr → 240 credit, SAME figure as
+    // the computed fold. Never 540, never 510.
+    expect(ioe).toMatchObject({ openingCr: 240, closingCr: 240 });
+    for (const k of ["opening", "period", "closing"] as const)
+      expect(col(tb, `${k}Dr`)).toBe(col(tb, `${k}Cr`));
+  });
+
+  test("mid-year report keeps its intra-year brought-forward; only PRIOR years fold", async () => {
+    // Apr–Jun 2027 earned 50 (May) on top of the 2026-27 figures; a quarter
+    // TB opening 2027-07-01 shows the intra-year 50 as the income head's
+    // brought-forward, while only the pre-April-2027 part folds to IoE.
+    const data = books([
+      vch("rv5", "2027-05-20", "other_receipt", [["bank", 50, 0], ["park", 0, 50]]),
+    ]);
+    const tb = await computeTrialBalance(data, "2027-07-01", "2027-09-30");
+    expect(tb.find((r) => r.name === "Non-occupancy Charges")).toBeUndefined(); // prior year → folded
+    expect(tb.find((r) => r.name === "4W Parking Charges")).toMatchObject({
+      openingCr: 50, // intra-year brought-forward stays
+      periodCr: 0,
+      closingCr: 50,
+    });
+    expect(tb.find((r) => r.name === "Income over Expenses")).toMatchObject({
+      openingCr: 240, // 2026-27 surplus only — the May credit is NOT folded
+    });
+    for (const k of ["opening", "period", "closing"] as const)
+      expect(col(tb, `${k}Dr`)).toBe(col(tb, `${k}Cr`));
+  });
+
+  test("current-year activity lands in the 2027-28 PERIOD columns with the folded opening intact", async () => {
+    // 2027-28 earns 120 / spends 20 → period columns carry the new year's
+    // own heads; the folded opening (240 surplus) is untouched.
+    const data = books([
+      vch("rv6", "2027-05-10", "other_receipt", [["bank", 120, 0], ["maint", 0, 120]]),
+      vch("pv6", "2027-05-20", "payment", [["repair", 20, 0], ["bank", 0, 20]]),
+    ]);
+    const tb = await computeTrialBalance(data, "2027-04-01", "2028-03-31");
+    expect(tb.find((r) => r.name === "Maintenance Charges")).toMatchObject({ periodCr: 120, openingCr: 0 });
+    expect(tb.find((r) => r.name === "Repairs and Maintenance")).toMatchObject({ periodDr: 20, openingDr: 0 });
+    const ioe = tb.find((r) => r.name === "Income over Expenses")!;
+    expect(ioe).toMatchObject({ openingCr: 240, closingCr: 340 }); // 240 carried + current surplus 100
+    for (const k of ["opening", "period", "closing"] as const)
+      expect(col(tb, `${k}Dr`)).toBe(col(tb, `${k}Cr`));
+  });
+});
