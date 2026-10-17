@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { EmptyHint, PageHeader } from "@/components/PageParts";
 import { MENU_REGISTRY } from "@/lib/menus";
-import { KeyRound, Pencil, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Users } from "lucide-react";
+import { KeyRound, Link2, Pencil, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -34,6 +34,18 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
 import { Checkbox } from "@/components/ui/checkbox";
+
+type FlatLink = {
+  _id: Id<"flatLinks">;
+  email: string;
+  memberId: Id<"members">;
+  memberName: string | null;
+  memberCode: string | null;
+  flatLabel: string;
+  isActive: boolean;
+  grantedByName: string | null;
+  createdAt: number;
+};
 
 type Grant = {
   _id: Id<"membersAccess">;
@@ -59,7 +71,11 @@ function useUsersRightsData(societyId: Id<"societies"> | null, canManage: boolea
     api.members.list,
     societyId && canManage ? { societyId } : "skip",
   ) as MemberRow[] | undefined;
-  return { grants, members };
+  const flatLinks = useQuery(
+    api.flatLinks.listForSociety,
+    societyId && canManage ? { societyId } : "skip",
+  ) as FlatLink[] | undefined;
+  return { grants, members, flatLinks };
 }
 
 const ROLE_HELP: Record<"editor" | "viewer" | "member", string> = {
@@ -74,7 +90,7 @@ const ROLE_HELP: Record<"editor" | "viewer" | "member", string> = {
 export default function UsersRights() {
   const { societyId, role, isAdmin } = useSociety();
   const canManage = role === "owner" || isAdmin;
-  const { grants, members } = useUsersRightsData(societyId, canManage);
+  const { grants, members, flatLinks } = useUsersRightsData(societyId, canManage);
 
   const grantAccess = useMutation(api.access.grant);
   const grantFromMember = useMutation(api.access.grantFromMember);
@@ -94,6 +110,52 @@ export default function UsersRights() {
   const [busy, setBusy] = useState(false);
   const [menuTarget, setMenuTarget] = useState<Grant | null>(null);
   const [menuPicks, setMenuPicks] = useState<string[]>([]);
+
+  // Multi-flat linking: one login (grant row) may hold several flats.
+  const linkFlat = useMutation(api.flatLinks.linkFlat);
+  const unlinkFlat = useMutation(api.flatLinks.unlinkFlat);
+  const [flatTarget, setFlatTarget] = useState<Grant | null>(null);
+  const [flatPick, setFlatPick] = useState("");
+
+  /** Extra flats linked to this login's email (besides its bound primary). */
+  const linkedFlatsOf = (g: Grant) =>
+    (flatLinks ?? []).filter((l) => l.email === g.email);
+
+  const openFlats = (g: Grant) => {
+    setFlatTarget(g);
+    setFlatPick("");
+  };
+
+  /** Flats this login may still be linked to: active members that are NOT
+   *  the login's primary flat and not already linked. */
+  const availableFlatsFor = (g: Grant | null) =>
+    memberOptions.filter(
+      (m) =>
+        m._id !== g?.memberId &&
+        m.isActive &&
+        !(flatLinks ?? []).some((l) => l.email === g?.email && l.memberId === m._id),
+    );
+
+  const saveFlatLink = async () => {
+    if (!societyId || !flatTarget || !flatPick) return;
+    try {
+      await linkFlat({ societyId, email: flatTarget.email, memberId: flatPick as Id<"members"> });
+      toast.success("Flat linked to this login");
+      setFlatPick("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to link flat");
+    }
+  };
+
+  const removeFlatLink = async (l: FlatLink) => {
+    if (!societyId) return;
+    try {
+      await unlinkFlat({ societyId, id: l._id });
+      toast.success(`${l.flatLabel} unlinked from ${l.email}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to unlink flat");
+    }
+  };
 
   const memberOptions = useMemo(() => {
     return [...(members ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -284,6 +346,7 @@ export default function UsersRights() {
                 <TableHead>User</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Flats</TableHead>
                 <TableHead>Menus</TableHead>
                 <TableHead>Granted</TableHead>
                 <TableHead className="w-28 text-right">Actions</TableHead>
@@ -318,6 +381,35 @@ export default function UsersRights() {
                       </span>
                     ) : (
                       g.role
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {g.role === "member" ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openFlats(g)}
+                          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                          title="View and manage all flats linked to this login"
+                        >
+                          {`${g.memberFlat ?? "No flat"}${
+                            linkedFlatsOf(g).length > 0
+                              ? ` + ${linkedFlatsOf(g).length} more`
+                              : ""
+                          }`}
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-muted-foreground hover:text-primary"
+                          title="Link additional flats to this login (multi-flat accounts)"
+                          onClick={() => openFlats(g)}
+                        >
+                          <Link2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -682,6 +774,77 @@ export default function UsersRights() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Multi-flat linking dialog: one member login may hold several flats. */}
+      <Dialog open={!!flatTarget} onOpenChange={(o) => !o && setFlatTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Linked flats — {flatTarget?.email}</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {flatTarget?.email} is one login for all the flats below — one
+            username and password. The bound flat is its primary flat; link
+            more flats for accounts that hold several units. The member sees
+            each flat's dues, bills, receipts and ledger separately, with a
+            consolidated overview — balances are never merged. Removing a flat
+            only unlinks it from this login; its records stay untouched.
+          </p>
+          {flatTarget && flatTarget.memberFlat && (
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">Primary flat</span>
+              <p className="font-medium">{flatTarget.memberFlat}</p>
+            </div>
+          )}
+          <div className="max-h-56 space-y-1.5 overflow-y-auto">
+            {flatTarget && flatTarget.memberId && linkedFlatsOf(flatTarget).length === 0 && (
+              <p className="text-xs text-muted-foreground">No additional flats linked yet.</p>
+            )}
+            {flatTarget &&
+              linkedFlatsOf(flatTarget).map((l) => (
+                <div
+                  key={l._id}
+                  className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-1.5 text-sm"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{l.flatLabel}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {l.memberName ?? ""}
+                      {l.memberCode ? ` · ${l.memberCode}` : ""}
+                      {!l.isActive ? " · inactive" : ""}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-destructive"
+                    title="Remove this flat from the login"
+                    onClick={() => removeFlatLink(l)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+          </div>
+          <div className="flex items-end gap-2">
+            <Select value={flatPick} onValueChange={setFlatPick}>
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Choose a flat to link…" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableFlatsFor(flatTarget).map((m) => (
+                  <SelectItem key={m._id} value={m._id}>
+                    {([m.wing, m.flatNo].filter(Boolean).join("-") || m.code)} — {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button onClick={saveFlatLink} disabled={!flatPick}>
+              <Link2 className="size-3.5" /> Link flat
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       </>
       )}
 

@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
+import PortalFlatSelect, { usePortalFlatId } from "@/components/PortalFlatSelect";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -27,9 +28,12 @@ import { toast } from "sonner";
 export default function PortalProfile() {
   const { societyId } = useSociety();
   const { user } = useAuth();
+  // Multi-flat logins pick the flat in the selector (?flat=…) — the profile
+  // shown (and the contact details updated) belong to THAT flat's member row.
+  const flat = usePortalFlatId();
   const info = useQuery(
     api.memberPortal.myInfo,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   );
 
   const updateContact = useMutation(api.memberPortal.updateMyContact);
@@ -48,7 +52,7 @@ export default function PortalProfile() {
   const saveContact = async () => {
     setSavingContact(true);
     try {
-      await updateContact({ societyId: societyId!, phone });
+      await updateContact({ societyId: societyId!, memberId: flat, phone });
       toast.success("Contact number updated.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Update failed.");
@@ -97,6 +101,7 @@ export default function PortalProfile() {
         title="My Profile"
         description="Your registered details and login security."
       />
+      <PortalFlatSelect />
       <div className="grid gap-6 lg:grid-cols-2">
       {/* Profile / flat details */}
       <Card className="shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">

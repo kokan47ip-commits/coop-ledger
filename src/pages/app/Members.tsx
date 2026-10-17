@@ -31,7 +31,7 @@ import { EmptyHint, PageHeader, RightMoney } from "@/components/PageParts";
 import { exportPDF, exportWord, type ExportMeta, type TableSpec } from "@/lib/export";
 import { useCommitteeSignatures } from "@/lib/committee";
 import { effectiveFyPeriod, formatDate, formatINR, fyStartISO, todayISO } from "@/lib/format";
-import { BookText, Copy, Download, FileText, HandCoins, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { BookText, Copy, Download, FileText, HandCoins, History, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -89,12 +89,57 @@ const emptyForm = {
   isActive: true,
 };
 
+type AuditRow = {
+  _id: Id<"ownershipAudit">;
+  action: string;
+  memberId: Id<"members"> | null;
+  email: string | null;
+  details: string;
+  byName: string;
+  at: number;
+};
+
+type OwnerRow = {
+  _id: Id<"memberOwners">;
+  memberId: Id<"members">;
+  name: string;
+  relation?: string;
+  sharePercent?: number;
+  phone?: string;
+  email?: string;
+  addedByName: string;
+  createdAt: number;
+};
+
+const emptyOwnerForm = {
+  name: "",
+  relation: "",
+  sharePercent: "",
+  phone: "",
+  email: "",
+};
+
 export default function Members() {
   const { societyId, society, canEdit } = useSociety();
   const members = useQuery(
     api.members.list,
     societyId ? { societyId } : "skip",
   ) as MemberRow[] | undefined;
+  const owners = useQuery(
+    api.ownership.flatJointOwners,
+    societyId ? { societyId } : "skip",
+  ) as OwnerRow[] | undefined;
+  // Ownership / account-linking change history (append-only audit trail).
+  const audit = useQuery(
+    api.ownership.auditTrail,
+    societyId ? { societyId } : "skip",
+  ) as AuditRow[] | undefined;
+  const addOwner = useMutation(api.ownership.addJointOwner);
+  const removeOwner = useMutation(api.ownership.removeJointOwner);
+  const [ownerForm, setOwnerForm] = useState(emptyOwnerForm);
+
+  const ownersOf = (memberId: Id<"members">) =>
+    (owners ?? []).filter((o) => o.memberId === memberId);
   const bills = useQuery(
     api.bills.list,
     societyId ? { societyId } : "skip",
@@ -274,10 +319,44 @@ export default function Members() {
 
   const openNew = () => {
     setForm({ ...emptyForm, openingDate: fyStartISO() });
+    setOwnerForm(emptyOwnerForm);
     setOpen(true);
   };
 
+  /** Save a joint owner onto the flat being edited. */
+  const saveOwner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!societyId || !form.id) return;
+    const share = ownerForm.sharePercent ? Number(ownerForm.sharePercent) : undefined;
+    try {
+      await addOwner({
+        societyId,
+        memberId: form.id as Id<"members">,
+        name: ownerForm.name.trim(),
+        relation: ownerForm.relation || undefined,
+        sharePercent: Number.isFinite(share!) ? share : undefined,
+        phone: ownerForm.phone || undefined,
+        email: ownerForm.email || undefined,
+      });
+      setOwnerForm(emptyOwnerForm);
+      toast.success("Joint owner added");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add joint owner");
+    }
+  };
+
+  const deleteOwner = async (o: OwnerRow) => {
+    if (!societyId) return;
+    try {
+      await removeOwner({ societyId, id: o._id });
+      toast.success(`${o.name} removed from joint owners`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove");
+    }
+  };
+
   const openEdit = (m: MemberRow) => {
+    setOwnerForm(emptyOwnerForm);
     setForm({
       id: m._id,
       code: m.code,
@@ -423,7 +502,7 @@ export default function Members() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Code</TableHead>
-                <TableHead>Name</TableHead>
+                <TableHead>Owners</TableHead>
                 <TableHead>Flat</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Phone</TableHead>
@@ -436,7 +515,16 @@ export default function Members() {
               {filtered.map((m) => (
                 <TableRow key={m._id}>
                   <TableCell className="font-medium">{m.code}</TableCell>
-                  <TableCell>{m.name}</TableCell>
+                  <TableCell>
+                    <div className="leading-snug">
+                      <span className="font-medium">{m.name}</span>
+                      {ownersOf(m._id).length > 0 && (
+                        <span className="block text-xs text-muted-foreground">
+                          + joint: {ownersOf(m._id).map((o) => o.name).join(", ")}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     {[m.wing, m.flatNo].filter(Boolean).join("-") || "—"}
                   </TableCell>
@@ -522,6 +610,36 @@ export default function Members() {
               </TableRow>
             </tfoot>
           </Table>
+        </div>
+      )}
+
+      {/* Ownership & account-linking change history (audit trail). */}
+      {audit && audit.length > 0 && (
+        <div className="panel mt-6">
+          <p className="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <History className="size-4 text-primary" /> Ownership &amp; login change history
+          </p>
+          <ul className="divide-y">
+            {audit.slice(0, 10).map((a) => (
+              <li key={a._id} className="flex flex-wrap items-baseline gap-x-2 py-1.5 text-sm">
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {new Date(a.at).toLocaleString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+                <span className="min-w-0 flex-1">{a.details}</span>
+                <span className="text-xs text-muted-foreground">— {a.byName}</span>
+              </li>
+            ))}
+          </ul>
+          {audit.length > 10 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Showing the latest 10 of {audit.length} recorded changes.
+            </p>
+          )}
         </div>
       )}
 
@@ -641,6 +759,80 @@ export default function Members() {
                 </Select>
               </div>
             </div>
+
+            {/* Joint owners: co-owners recorded on this flat (editing only).
+                The flat keeps ONE member row — bills, ledger and dues stay
+                there; joint owners are people, never duplicate records. */}
+            {form.id && (
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <Label className="text-sm">Joint owners (co-owners)</Label>
+                  <span className="text-xs text-muted-foreground">
+                    up to 4 · {ownersOf(form.id as Id<"members">).length} recorded
+                  </span>
+                </div>
+                {ownersOf(form.id as Id<"members">).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No joint owners recorded — add co-owners of this flat below.
+                    They appear in the register, member ledgers and the member portal.
+                  </p>
+                ) : (
+                  <ul className="mb-3 divide-y">
+                    {ownersOf(form.id as Id<"members">).map((o) => (
+                      <li key={o._id} className="flex items-center gap-2 py-1.5 text-sm">
+                        <span className="font-medium">{o.name}</span>
+                        {o.relation && <span className="text-muted-foreground">({o.relation})</span>}
+                        {o.sharePercent != null && (
+                          <Badge variant="outline" className="text-[10px]">{o.sharePercent}%</Badge>
+                        )}
+                        {o.phone && <span className="text-xs text-muted-foreground">{o.phone}</span>}
+                        {canEdit && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="ml-auto size-7 text-muted-foreground hover:text-destructive"
+                            title="Remove joint owner"
+                            onClick={() => deleteOwner(o)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canEdit && (
+                  <form onSubmit={saveOwner} className="grid gap-2 sm:grid-cols-6">
+                    <Input
+                      className="sm:col-span-2"
+                      placeholder="Name *"
+                      required
+                      value={ownerForm.name}
+                      onChange={(e) => setOwnerForm({ ...ownerForm, name: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Relation"
+                      value={ownerForm.relation}
+                      onChange={(e) => setOwnerForm({ ...ownerForm, relation: e.target.value })}
+                    />
+                    <Input
+                      type="number" min="0" max="100" step="0.01"
+                      placeholder="Share %"
+                      value={ownerForm.sharePercent}
+                      onChange={(e) => setOwnerForm({ ...ownerForm, sharePercent: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Phone"
+                      value={ownerForm.phone}
+                      onChange={(e) => setOwnerForm({ ...ownerForm, phone: e.target.value })}
+                    />
+                    <Button type="submit" size="sm" className="sm:col-span-6 sm:w-32">
+                      <Plus className="size-3.5" /> Add joint owner
+                    </Button>
+                  </form>
+                )}
+              </div>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
               <Button type="submit">{form.id ? "Save changes" : "Add member"}</Button>

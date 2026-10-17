@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import PortalFlatSelect, { usePortalFlatId } from "@/components/PortalFlatSelect";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import InstallAppButton from "@/components/InstallAppButton";
 import MemberQrCard from "@/pages/portal/MemberQrCard";
@@ -18,6 +19,7 @@ import { formatDate, formatMoney } from "@/lib/format";
 import {
   ArrowUpRight,
   BookOpen,
+  Building2,
   CircleCheck,
   FileSpreadsheet,
   Info,
@@ -51,6 +53,20 @@ type UpiBannerPayment = {
   postedAt: number | null;
 };
 
+type FlatSummaryRow = {
+  memberId: Id<"members">;
+  code: string;
+  name: string;
+  flatLabel: string;
+  isPrimary: boolean;
+  totalBilled: number;
+  totalPaid: number;
+  outstanding: number;
+  openBills: number;
+  openDue: number;
+  jointOwnerNames: string[];
+};
+
 type OpenBillRow = { _id: Id<"bills">; dueDate: string; balance: number };
 
 function initialsOf(name: string): string {
@@ -66,17 +82,22 @@ function initialsOf(name: string): string {
 
 export default function PortalHome() {
   const { societyId } = useSociety();
+  const flat = usePortalFlatId();
   const info = useQuery(
     api.memberPortal.myInfo,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   );
+  const myFlats = useQuery(
+    api.memberPortal.myFlats,
+    societyId ? { societyId } : "skip",
+  ) as FlatSummaryRow[] | null | undefined;
   const upiPayments = useQuery(
     api.payments.myUpiPayments,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as UpiBannerPayment[] | null | undefined;
   const openBills = useQuery(
     api.memberPortal.myOpenBills,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as OpenBillRow[] | null | undefined;
 
   // The most recent online payment worth surfacing, newest first — posted
@@ -141,6 +162,12 @@ export default function PortalHome() {
     info.member.code;
   const outstanding = info.totals.outstanding;
   const hasDue = outstanding > 0.005;
+  // Consolidated position across ALL linked flats — a per-flat sum, never a
+  // merged ledger: the individual balances stay reported on each flat card.
+  const multiFlat = (myFlats?.length ?? 0) > 1;
+  const consolidatedOutstanding =
+    (myFlats ?? []).reduce((s, f) => s + f.outstanding, 0);
+  const consolidatedOpenBills = (myFlats ?? []).reduce((s, f) => s + f.openBills, 0);
 
   // Dues summary: how many bills are open and when the earliest one is due —
   // mirrors the open-bill list on the payment page.
@@ -202,9 +229,12 @@ export default function PortalHome() {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="My Flat"
-        description="Dues, bills, receipts and payments for your flat — all in one place."
+        title="My Flats"
+        description="Dues, bills, receipts and payments for your home(s) — all in one place."
       />
+
+      {/* Flat selector — multi-flat accounts only */}
+      <PortalFlatSelect />
 
       {/* UPI payment status banner */}
       {showBanner && bannerPayment && (
@@ -345,6 +375,12 @@ export default function PortalHome() {
                     </>
                   )}
                 </CardDescription>
+                {info.jointOwners.length > 0 && (
+                  <CardDescription className="mt-0.5 text-xs">
+                    Joint owner{info.jointOwners.length === 1 ? "" : "s"}{" "}
+                    {info.jointOwners.map((o) => o.name).join(", ")}
+                  </CardDescription>
+                )}
               </div>
             </div>
             <Badge
@@ -373,6 +409,81 @@ export default function PortalHome() {
           />
         </CardContent>
       </Card>
+
+      {/* Consolidated overview across ALL linked flats (multi-flat logins). */}
+      {multiFlat && myFlats && (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-foreground">
+              <Building2 className="size-4 text-primary" /> All my flats
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              {myFlats.length} flats on this account — records are kept flat-wise.
+            </span>
+          </div>
+          <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/[0.06] to-transparent px-4 py-3 text-sm">
+            Consolidated outstanding across all {myFlats.length} flats:{" "}
+            <strong className="tabular-nums">
+              {formatMoney(consolidatedOutstanding)}
+            </strong>{" "}
+            · {consolidatedOpenBills} open bill{consolidatedOpenBills === 1 ? "" : "s"}{" "}
+            · each flat's balance below stays separate.
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {myFlats.map((f) => (
+              <Card
+                key={f.memberId}
+                className={
+                  f.memberId === info.member._id
+                    ? "border-primary/40"
+                    : ""
+                }
+              >
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate">Flat {f.flatLabel}</span>
+                    <Badge
+                      variant={f.outstanding > 0.005 ? "destructive" : "outline"}
+                      className="shrink-0 text-[10px]"
+                    >
+                      {f.outstanding > 0.005
+                        ? `Due ${formatMoney(f.outstanding)}`
+                        : "No dues"}
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription className="truncate text-xs">
+                    {f.name}
+                    {f.jointOwnerNames.length > 0 &&
+                      ` + joint: ${f.jointOwnerNames.join(", ")}`}
+                    {f.openBills > 0 &&
+                      ` · ${f.openBills} open bill${f.openBills === 1 ? "" : "s"}`}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">Billed</p>
+                    <p className="font-medium tabular-nums">{formatMoney(f.totalBilled)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Paid</p>
+                    <p className="font-medium tabular-nums">{formatMoney(f.totalPaid)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Outstanding</p>
+                    <p
+                      className={`font-medium tabular-nums ${
+                        f.outstanding > 0.005 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+                      }`}
+                    >
+                      {formatMoney(f.outstanding)}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Quick links */}
       <div>

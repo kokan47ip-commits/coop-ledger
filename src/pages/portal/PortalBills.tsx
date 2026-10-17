@@ -16,6 +16,10 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import PortalFlatSelect, {
+  usePortalFlatId,
+  usePortalFlatIdentity,
+} from "@/components/PortalFlatSelect";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import {
   billPdf,
@@ -39,10 +43,15 @@ import { toast } from "sonner";
 type Bill = Doc<"bills">;
 
 export default function PortalBills() {
-  const { societyId, society, memberBinding } = useSociety();
+  const { societyId, society } = useSociety();
+  // Multi-flat logins choose the flat in the portal selector (?flat=…); the
+  // identity below follows that choice, so bills and headers name the flat
+  // being viewed.
+  const memberBinding = usePortalFlatIdentity();
+  const flat = usePortalFlatId();
   const bills = useQuery(
     api.memberPortal.myBills,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as Bill[] | null | undefined;
   // Self-diagnosis when the list is empty OR the login has no flat binding —
   // shows what the login is actually bound to and where the bills are.
@@ -59,6 +68,7 @@ export default function PortalBills() {
     societyId
       ? {
           societyId,
+          memberId: flat,
           fromDate: society?.fyStartDate ?? `${today.slice(0, 4)}-01-01`,
           toDate: today,
         }
@@ -245,6 +255,7 @@ export default function PortalBills() {
         title="My Bills"
         description="All maintenance bills raised for your flat. Download any bill as PDF or Word, or print it directly."
       />
+      <PortalFlatSelect />
       <Card className="py-0 shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
         <CardContent className="px-0">
         <Table>

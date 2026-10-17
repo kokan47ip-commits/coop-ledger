@@ -70,6 +70,14 @@ export default function MemberLedger() {
   const tariffs = useQuery(api.tariffs.list, societyId ? { societyId } : "skip") as
     | Doc<"tariffs">[]
     | undefined;
+  // Joint co-owners recorded on each flat — shown next to the owner's name
+  // in the member selector, wherever a ledger is opened.
+  const ownerRows = useQuery(
+    api.ownership.flatJointOwners,
+    societyId ? { societyId } : "skip",
+  ) as Doc<"memberOwners">[] | undefined;
+  const jointOwnersOf = (memberId: string) =>
+    (ownerRows ?? []).filter((o) => o.memberId === memberId);
 
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<Set<string>>(
@@ -394,7 +402,17 @@ export default function MemberLedger() {
                     aria-label={`Select ${m.name}`}
                   />
                   <span className="font-mono text-xs">{flatOf(m)}</span>
-                  <span className="truncate uppercase">{m.name}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate uppercase">{m.name}</span>
+                    {jointOwnersOf(m._id).length > 0 && (
+                      <span
+                        className="block truncate text-[10px] leading-tight text-muted-foreground"
+                        title="Joint owners recorded on this flat"
+                      >
+                        + joint: {jointOwnersOf(m._id).map((o) => o.name).join(", ")}
+                      </span>
+                    )}
+                  </span>
                 </div>
               ))}
               {sortedMembers.length === 0 && (

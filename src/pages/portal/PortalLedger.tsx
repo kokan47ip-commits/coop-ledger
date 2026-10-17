@@ -12,6 +12,10 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import { useSociety } from "@/components/SocietyContext";
+import PortalFlatSelect, {
+  usePortalFlatId,
+  usePortalFlatIdentity,
+} from "@/components/PortalFlatSelect";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import { ReportPreview } from "@/components/ReportPreview";
 import {
@@ -50,16 +54,20 @@ type LedgerRow = {
 const drCr = (n: number) => `${formatMoney(Math.abs(n))} ${n >= 0 ? "Dr" : "Cr"}`;
 
 export default function PortalLedger() {
-  const { societyId, society, memberBinding } = useSociety();
+  const { societyId, society } = useSociety();
+  // Multi-flat logins pick the flat in the selector (?flat=…) — the ledger
+  // below is always the selected flat's own account, never a merged one.
+  const memberBinding = usePortalFlatIdentity();
   const fy = effectiveFyPeriod(society);
   const [from, setFrom] = useState(fy.from);
   const [to, setTo] = useState(fy.to);
   const [month, setMonth] = useState("");
   const [detailed, setDetailed] = useState(false);
 
+  const flat = usePortalFlatId();
   const rows = useQuery(
     api.memberPortal.myLedger,
-    societyId ? { societyId, fromDate: from, toDate: to } : "skip",
+    societyId ? { societyId, memberId: flat, fromDate: from, toDate: to } : "skip",
   ) as LedgerRow[] | null | undefined;
 
   const applyMonth = (m: string) => {
@@ -186,6 +194,7 @@ export default function PortalLedger() {
         title="My Ledger"
         description="Your flat's complete account — every bill and receipt, with a running balance."
       />
+      <PortalFlatSelect />
       <Card className="shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
         <CardContent className="flex flex-wrap items-end gap-3">
         <div className="w-40">

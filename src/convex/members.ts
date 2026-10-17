@@ -1,6 +1,7 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireSociety, requireSocietyWrite } from "./lib";
+import { duplicateMemberError } from "./ownership";
 
 export const list = query({
   args: { societyId: v.id("societies") },
@@ -44,6 +45,36 @@ export const upsert = mutation({
   },
   handler: async (ctx, { societyId, id, ...data }) => {
     await requireSocietyWrite(ctx, societyId);
+    // Duplicate-record guard: a member CODE may be used once per society, and
+    // an ACTIVE flat cannot get a second active member row — additional
+    // owners of the same flat are joint owners on the ONE row, never a
+    // duplicate record (duplicate rows would double-bill the flat and split
+    // its ledger balance across two accounts).
+    const existing = await ctx.db
+      .query("members")
+      .withIndex("by_society", (q) => q.eq("societyId", societyId))
+      .collect();
+    const dupe = duplicateMemberError(
+      existing.map((m) => ({
+        id: m._id,
+        code: m.code,
+        name: m.name,
+        wing: m.wing,
+        building: m.building,
+        flatNo: m.flatNo,
+        isActive: m.isActive,
+      })),
+      {
+        id: id ?? undefined,
+        code: data.code,
+        name: data.name,
+        wing: data.wing,
+        building: data.building,
+        flatNo: data.flatNo,
+        isActive: data.isActive,
+      },
+    );
+    if (dupe) throw new ConvexError(dupe);
     if (id) {
       await ctx.db.patch(id, data);
       return id;
@@ -79,6 +110,20 @@ export const remove = mutation({
       )
       .collect();
     for (const mt of memberTariffs) await ctx.db.delete(mt._id);
+    // Ownership helpers hang off this member row — remove them with it so no
+    // joint owner or flat link is left pointing at a deleted member.
+    const owners = await ctx.db
+      .query("memberOwners")
+      .withIndex("by_member", (q) => q.eq("memberId", id))
+      .collect();
+    for (const o of owners) await ctx.db.delete(o._id);
+    const links = await ctx.db
+      .query("flatLinks")
+      .withIndex("by_society_member", (q) =>
+        q.eq("societyId", societyId).eq("memberId", id),
+      )
+      .collect();
+    for (const l of links) await ctx.db.delete(l._id);
     await ctx.db.delete(id);
   },
 });

@@ -13,6 +13,10 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import PortalFlatSelect, {
+  usePortalFlatId,
+  usePortalFlatIdentity,
+} from "@/components/PortalFlatSelect";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import { receiptPdf, receiptPrint, receiptWord } from "@/lib/billDoc";
 import {
@@ -47,14 +51,18 @@ const MODE_ICON: Record<
 };
 
 export default function PortalReceipts() {
-  const { societyId, society, memberBinding } = useSociety();
+  const { societyId, society } = useSociety();
+  // Multi-flat logins pick the flat in the selector (?flat=…); the receipt
+  // headers and downloads name the flat actually being viewed.
+  const memberBinding = usePortalFlatIdentity();
+  const flat = usePortalFlatId();
   const receipts = useQuery(
     api.memberPortal.myReceipts,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as Voucher[] | null | undefined;
   const bills = useQuery(
     api.memberPortal.myBills,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as Bill[] | null | undefined;
 
   type Bill = Doc<"bills">;
@@ -119,6 +127,7 @@ export default function PortalReceipts() {
         title="My Receipts"
         description="Receipts for payments received against your flat. Download any receipt as PDF or Word, or print it."
       />
+      <PortalFlatSelect />
       <Card className="py-0 shadow-md shadow-slate-950/[0.04] dark:shadow-black/20">
         <CardContent className="px-0">
         <Table>

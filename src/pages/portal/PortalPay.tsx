@@ -30,6 +30,10 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useSociety } from "@/components/SocietyContext";
+import PortalFlatSelect, {
+  usePortalFlatId,
+  usePortalFlatIdentity,
+} from "@/components/PortalFlatSelect";
 import { IconTile, PageHeader } from "@/components/PageParts";
 import { receiptPdf } from "@/lib/billDoc";
 import {
@@ -69,6 +73,9 @@ type OpenBill = {
   total: number;
   paidAmount: number;
   balance: number;
+  /** The flat this bill belongs to (multi-flat combined view). */
+  memberId: Id<"members">;
+  flatLabel: string;
 };
 
 type PayAccount = { _id: Id<"accounts">; code: string; name: string };
@@ -96,6 +103,8 @@ type SubmissionRow = {
   reviewNote: string | null;
   createdAt: number;
   editedAt: number | null;
+  memberId?: Id<"members">;
+  flatLabel?: string;
   bankCashAccountId: Id<"accounts">;
   reference: string | null;
   memberNote: string | null;
@@ -165,11 +174,17 @@ function loadRazorpayCheckout(): Promise<void> {
 }
 
 export default function PortalPay() {
-  const { societyId, society, memberBinding } = useSociety();
+  const { societyId, society } = useSociety();
+  // Multi-flat logins pay ANY of their linked flats from this one screen:
+  // pick a flat in the selector (?flat=…) for that flat's bills, or leave it
+  // on "all flats" and select bills across flats for one combined payment —
+  // which the office receives as separate flat-wise entries/receipts.
+  const memberBinding = usePortalFlatIdentity();
+  const flat = usePortalFlatId();
   const convex = useConvex();
   const openBills = useQuery(
     api.memberPortal.myOpenBills,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as OpenBill[] | null | undefined;
   const accounts = useQuery(
     api.memberPortal.myPayAccounts,
@@ -185,6 +200,7 @@ export default function PortalPay() {
   const [submitting, setSubmitting] = useState(false);
 
   const submitPayment = useMutation(api.memberPortal.submitPayment);
+  const submitMultiFlat = useMutation(api.memberPortal.submitMultiFlatPayment);
   const updateSubmission = useMutation(api.memberPortal.updateSubmission);
   const deleteSubmission = useMutation(api.memberPortal.deleteSubmission);
 
@@ -192,7 +208,7 @@ export default function PortalPay() {
   // status — a pending entry is not in the books until the office passes it.
   const submissions = useQuery(
     api.memberPortal.mySubmissions,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as SubmissionRow[] | null | undefined;
 
   // ---- Online UPI payments (GPay / PhonePe / Paytm via the gateway) ----
@@ -200,7 +216,7 @@ export default function PortalPay() {
   const gatewayReady = gateway?.ready === true;
   const upiPayments = useQuery(
     api.payments.myUpiPayments,
-    societyId ? { societyId } : "skip",
+    societyId ? { societyId, memberId: flat } : "skip",
   ) as UpiPaymentRow[] | null | undefined;
   const createUpiOrder = useMutation(api.payments.createUpiOrder);
   const initRazorpayOrder = useAction(api.payments.initRazorpayOrder);
@@ -240,6 +256,22 @@ export default function PortalPay() {
     .filter((a) => a.amount > 0);
   const total = parsedAllocs.reduce((s, a) => s + a.amount, 0);
 
+  // Multi-flat bookkeeping: which flat each selected bill belongs to, and
+  // whether the selection spans several of the login's flats. A combined
+  // payment across flats is split flat-wise server-side (one entry + one
+  // receipt per flat); UPI checkout always settles a single flat.
+  const billById = new Map((openBills ?? []).map((b) => [b._id, b] as const));
+  const selectedRows = parsedAllocs.flatMap((a) =>
+    billById.has(a.billId) ? [billById.get(a.billId)!] : [],
+  );
+  const selectedFlatIds = Array.from(
+    new Set(selectedRows.map((r) => r.memberId)),
+  );
+  const multiFlatSelection = selectedFlatIds.length > 1;
+  const multiFlatView = !flat && (openBills ?? []).length > 0;
+  const showFlatColumn =
+    multiFlatView && new Set((openBills ?? []).map((b) => b.memberId)).size > 1;
+
   const overAllocated = parsedAllocs.some((a) => {
     const b = openBills?.find((x) => x._id === a.billId);
     return b ? a.amount > b.balance + 0.005 : true;
@@ -254,11 +286,13 @@ export default function PortalPay() {
    *  choice, so unlike the manual flow it does not need one picked here. */
   const upiBlocked: string | null = booksClosed
     ? "The society's current books period does not include today's date — online payments are paused."
-    : parsedAllocs.length === 0 && advanceNum <= 0
-      ? "Tick a bill and enter the amount to pay — or enter an advance amount below."
-      : overAllocated
-        ? "One of the amounts is more than the bill balance — reduce it to continue."
-        : null;
+    : multiFlatSelection
+      ? "Online UPI settles one flat per payment — pick a single flat's bills, or submit the combined payment for office approval."
+      : parsedAllocs.length === 0 && advanceNum <= 0
+        ? "Tick a bill and enter the amount to pay — or enter an advance amount below."
+        : overAllocated
+          ? "One of the amounts is more than the bill balance — reduce it to continue."
+          : null;
 
   /** Why the submit button is disabled — shown next to it so it's never a mystery. */
   const blockedReason: string | null = booksClosed
@@ -270,7 +304,9 @@ export default function PortalPay() {
       : !accountId
         ? "Select the cash/bank account you are paying into."
         : parsedAllocs.length === 0 && advanceNum <= 0
-          ? "Tick a bill and enter the amount to pay — or enter an advance amount below."
+        ? "Tick a bill and enter the amount to pay — or enter an advance amount below."
+        : advanceNum > 0 && multiFlatSelection
+          ? "A combined multi-flat payment is applied against bills only — clear the advance amount."
           : overAllocated
             ? "One of the amounts is more than the bill balance — reduce it to continue."
             : null;
@@ -302,9 +338,34 @@ export default function PortalPay() {
         toast.success(
           `Entry updated — ${formatMoney(res.total)} resubmitted for the office's approval.`,
         );
+      } else if (multiFlatSelection) {
+        // Combined multi-flat payment: ONE submission covering several of the
+        // login's linked flats. The server splits it into one pending entry
+        // (and later one receipt) PER FLAT, so every rupee is allocated to
+        // the flat it belongs to and flat-wise records stay clean.
+        const res = await submitMultiFlat({
+          societyId,
+          date: payDate,
+          bankCashAccountId: accountId as Id<"accounts">,
+          mode,
+          reference: reference.trim() || undefined,
+          narration: narration.trim() || undefined,
+          groups: selectedFlatIds.map((memberId) => ({
+            memberId,
+            allocations: parsedAllocs.filter(
+              (a) => billById.get(a.billId)?.memberId === memberId,
+            ),
+          })),
+        });
+        toast.success(
+          `Combined payment of ${formatMoney(res.total)} across ${res.created} flats submitted — the office will pass a separate receipt for each flat.`,
+        );
       } else {
         const res = await submitPayment({
           societyId,
+          // Pay the selected flat explicitly (a linked flat other than the
+          // login's primary) — server verifies the login is authorised for it.
+          memberId: selectedFlatIds[0] ?? flat,
           date: payDate,
           bankCashAccountId: accountId as Id<"accounts">,
           mode,
@@ -415,8 +476,8 @@ export default function PortalPay() {
     if (!societyId || !voucherNo) return;
     try {
       const [vouchers, bills] = await Promise.all([
-        convex.query(api.memberPortal.myReceipts, { societyId }),
-        convex.query(api.memberPortal.myBills, { societyId }),
+        convex.query(api.memberPortal.myReceipts, { societyId, memberId: flat }),
+        convex.query(api.memberPortal.myBills, { societyId, memberId: flat }),
       ]);
       const v = (vouchers as VoucherDoc[] | null)?.find(
         (r) => r.voucherNo === voucherNo,
@@ -516,8 +577,9 @@ export default function PortalPay() {
     <div className="space-y-6">
       <PageHeader
         title="Make a Payment"
-        description="Pay your maintenance dues against open bills — or pay ahead as an advance."
+        description="Pay your maintenance dues against open bills — or pay ahead as an advance. Multi-flat accounts: pick a flat below, or combine dues of several flats in one submission."
       />
+      <PortalFlatSelect />
       {booksClosed && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-500/30 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-200">
           <IconTile tone="amber">
@@ -657,6 +719,7 @@ export default function PortalPay() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-10">Pay</TableHead>
+              {showFlatColumn && <TableHead>Flat</TableHead>}
               <TableHead>Bill No.</TableHead>
               <TableHead>Period</TableHead>
               <TableHead>Due date</TableHead>
@@ -687,6 +750,11 @@ export default function PortalPay() {
                       }
                     />
                   </TableCell>
+                  {showFlatColumn && (
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                      {b.flatLabel}
+                    </TableCell>
+                  )}
                   <TableCell className="font-medium">{b.billNo}</TableCell>
                   <TableCell>{b.period}</TableCell>
                   <TableCell>{b.dueDate}</TableCell>
@@ -733,7 +801,7 @@ export default function PortalPay() {
             })}
             {openBills.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center">
+                <TableCell colSpan={showFlatColumn ? 9 : 8} className="py-8 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <Badge variant="outline" className="text-emerald-600">
                       All clear
@@ -938,6 +1006,11 @@ export default function PortalPay() {
                   <span className="font-medium tabular-nums">
                     {formatMoney(s.amount)}
                   </span>
+                  {s.flatLabel && (
+                    <Badge variant="outline" className="gap-1 text-[10px]">
+                      Flat {s.flatLabel}
+                    </Badge>
+                  )}
                   <span className="text-xs capitalize text-muted-foreground">
                     {s.mode} · {s.date}
                   </span>
@@ -953,11 +1026,27 @@ export default function PortalPay() {
                   )}
                   {s.status === "pending" && (
                     <span className="ml-auto flex gap-1">
+                      {/* Edit only when every allocated bill is visible in
+                          the current table (the selected flat's view). */}
                       <Button
                         size="icon"
                         variant="ghost"
                         className="size-7 text-muted-foreground hover:text-primary"
-                        disabled={upiBusy}
+                        disabled={
+                          upiBusy ||
+                          (s.allocations.length > 0 &&
+                            !s.allocations.every((a) =>
+                              (openBills ?? []).some((b) => b._id === a.billId),
+                            ))
+                        }
+                        title={
+                          s.allocations.length > 0 &&
+                          !s.allocations.every((a) =>
+                            (openBills ?? []).some((b) => b._id === a.billId),
+                          )
+                            ? "Switch the flat selector to this entry's flat to edit it"
+                            : undefined
+                        }
                         onClick={() => startEdit(s)}
                         aria-label={`Edit entry of ${formatMoney(s.amount)}`}
                       >

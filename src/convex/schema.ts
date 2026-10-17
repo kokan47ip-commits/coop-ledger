@@ -577,6 +577,72 @@ const schema = defineSchema(
       label: v.string(),
       at: v.number(),
     }).index("by_user_at", ["userId", "at"]),
+
+    /**
+     * Joint (co-)owners of one flat. The flat's member row itself is the
+     * FIRST/primary owner (its `name` leads every report); rows here are the
+     * additional joint owners the admin recorded for the same flat — they
+     * display alongside the primary owner in the member register, member
+     * ledgers, receipts and the portal, and are NEVER billed or paid
+     * themselves: all accounting stays on the flat's single member row.
+     */
+    memberOwners: defineTable({
+      societyId: v.id("societies"),
+      /** The flat's (primary) member row these joint owners belong to. */
+      memberId: v.id("members"),
+      name: v.string(),
+      relation: v.optional(v.string()),
+      sharePercent: v.optional(v.number()),
+      phone: v.optional(v.string()),
+      email: v.optional(v.string()),
+      addedById: v.id("users"),
+      addedByName: v.string(),
+      createdAt: v.number(),
+    })
+      .index("by_member", ["memberId"])
+      .index("by_society", ["societyId"]),
+
+    /**
+     * Multiple flats linked to ONE member portal login (one username and
+     * password). The login's primary flat stays on the membersAccess "member"
+     * grant; additional flats of the SAME account are rows here, keyed by the
+     * grant's lower-cased email and healed to the user id once signed in.
+     * Removing a link takes the flat back out of that login's portal without
+     * touching any other login, bill or receipt.
+     */
+    flatLinks: defineTable({
+      societyId: v.id("societies"),
+      /** Lower-cased login email — the same key membersAccess grants use. */
+      email: v.string(),
+      /** An additional flat the login may open (besides its bound primary). */
+      memberId: v.id("members"),
+      /** Healed to the user id once the account signs in. */
+      userId: v.optional(v.id("users")),
+      grantedById: v.id("users"),
+      grantedByName: v.optional(v.string()),
+      createdAt: v.number(),
+    })
+      .index("by_society", ["societyId"])
+      .index("by_email", ["email"])
+      .index("by_society_member", ["societyId", "memberId"]),
+
+    /**
+     * Append-only audit trail for ownership and account-linking changes:
+     * joint owners added/removed, flats linked/unlinked to logins, and who
+     * did what — reviewed in the Members tab's change history.
+     */
+    ownershipAudit: defineTable({
+      societyId: v.id("societies"),
+      action: v.string(), // e.g. "joint_owner.added", "flat_link.removed"
+      /** Flat (member row) the action acted on, when applicable. */
+      memberId: v.optional(v.id("members")),
+      /** Login email for account-linking actions, when applicable. */
+      email: v.optional(v.string()),
+      details: v.string(),
+      byUserId: v.id("users"),
+      byName: v.string(),
+      at: v.number(),
+    }).index("by_society", ["societyId"]),
   },
   {
     schemaValidation: false,

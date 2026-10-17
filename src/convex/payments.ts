@@ -10,10 +10,10 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { clampAllocations, postMemberReceipt, requireSociety, requireUserId, societyMemberBinding } from "./lib";
 import { gatedEntry } from "./yearEnd";
-import { portalBinding, validateMemberAllocations } from "./memberPortal";
+import { resolvePortalFlat, authorizedFlats, portalBinding, validateMemberAllocations } from "./memberPortal";
 
 /**
  * Online (UPI) payments for the member portal.
@@ -94,11 +94,16 @@ export const gatewayStatus = query({
 export const createUpiOrder = mutation({
   args: {
     societyId: v.id("societies"),
+    /** Optional flat — pay one of the login's linked flats. A combined
+     *  (multi-flat) online payment is not offered: the gateway posts a single
+     *  receipt to one flat, so combined dues go through the office-approval
+     *  path, which prints a separate receipt per flat. */
+    memberId: v.optional(v.id("members")),
     allocations: v.array(v.object({ billId: v.id("bills"), amount: v.number() })),
     /** Advance: pay without selecting bills — credited to the ledger. */
     amount: v.optional(v.number()),
   },
-  handler: async (ctx, { societyId, allocations, amount }) => {
+  handler: async (ctx, { societyId, memberId, allocations, amount }) => {
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
     if (!keyId || !keySecret) {
@@ -106,7 +111,7 @@ export const createUpiOrder = mutation({
         "Online UPI payments are not enabled yet — the society office has not finished the payment setup.",
       );
     }
-    const bind = await portalBinding(ctx, societyId);
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) {
       throw new ConvexError(
         "Your login is not linked to a flat in this society — payment declined.",
@@ -588,28 +593,50 @@ export const listOfficeUpiPayments = query({
   },
 });
 
-/** The member's recent online payments, newest first (portal status list). */
+/** The member's recent online payments, newest first (portal status list) —
+ *  across all of the login's linked flats when no flat is specified. */
 export const myUpiPayments = query({
-  args: { societyId: v.id("societies") },
-  handler: async (ctx, { societyId }) => {
-    const bind = await portalBinding(ctx, societyId);
-    if (!bind) return null;
-    const rows = await ctx.db
-      .query("upiPayments")
-      .withIndex("by_society_member", (q) =>
-        q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
-      )
-      .order("desc")
-      .take(8);
-    return rows.map((r) => ({
-      _id: r._id,
-      amount: r.amount,
-      status: r.status,
-      voucherNo: r.voucherNo ?? null,
-      createdAt: r.createdAt,
-      postedAt: r.postedAt ?? null,
-      failureReason: r.failureReason ?? null,
-    }));
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — restrict to one of the login's linked flats. */
+    memberId: v.optional(v.id("members")),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    if (memberId) {
+      const bind = await resolvePortalFlat(ctx, societyId, memberId);
+      if (!bind) return null;
+    }
+    const userId = await requireUserId(ctx);
+    const society = await ctx.db.get(societyId);
+    if (!society) return null;
+    const flats = memberId
+      ? [{ memberId: memberId as Id<"members"> }]
+      : ((await authorizedFlats(ctx, society, userId)) ?? []).map(
+          (f) => ({ memberId: f.memberId as Id<"members"> }),
+        );
+    const collected: Doc<"upiPayments">[] = [];
+    for (const t of flats) {
+      const rows = await ctx.db
+        .query("upiPayments")
+        .withIndex("by_society_member", (q) =>
+          q.eq("societyId", societyId).eq("memberId", t.memberId),
+        )
+        .order("desc")
+        .take(8);
+      collected.push(...rows);
+    }
+    return collected
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 12)
+      .map((r) => ({
+        _id: r._id,
+        amount: r.amount,
+        status: r.status,
+        voucherNo: r.voucherNo ?? null,
+        createdAt: r.createdAt,
+        postedAt: r.postedAt ?? null,
+        failureReason: r.failureReason ?? null,
+      }));
   },
 });
 
@@ -642,13 +669,16 @@ export const internalReceiptEmailContext = internalQuery({
     }
     const society = await ctx.db.get(societyId);
     if (!society) throw new ConvexError("Society not found.");
-    // The caller must be the portal login bound to the flat this receipt is
-    // for — members can only email their own receipts.
-    const memberId = await societyMemberBinding(ctx, society, userId);
-    if (!memberId || voucher.memberId !== memberId) {
+    // The caller must be a portal login authorised for the flat this receipt
+    // is for — its primary grant binding or an additional linked flat
+    // (multi-flat accounts). Members can only email their own receipts.
+    const flats = (await authorizedFlats(ctx, society, userId)) ?? [];
+    if (!flats.some((f) => f.memberId === voucher.memberId)) {
       throw new ConvexError("This receipt belongs to another flat.");
     }
-    const member = await ctx.db.get(voucher.memberId);
+    const member = voucher.memberId
+      ? ((await ctx.db.get(voucher.memberId)) as Doc<"members"> | null)
+      : null;
     if (!member?.email) {
       throw new ConvexError(
         "Your profile has no email address — ask the office to add one so receipts can be emailed.",

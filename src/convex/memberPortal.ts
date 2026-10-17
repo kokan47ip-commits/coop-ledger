@@ -12,6 +12,7 @@ import {
 } from "./lib";
 import { gatedEntry } from "./yearEnd";
 import { verifyPassword, hashPassword } from "./passwordHash";
+import { multiFlatGroupsError } from "./ownership";
 
 /**
  * Member self-service portal. Every function here is scoped to the flat the
@@ -34,6 +35,74 @@ export async function portalBinding(
   const memberId = await societyMemberBinding(ctx, society, userId);
   if (!memberId) return null;
   return { societyId, memberId };
+}
+
+/**
+ * The flats this login is authorised for in ONE society: the primary flat
+ * the "member" grant binds (unchanged behaviour for every existing account)
+ * plus every additional flat linked to the same login in flatLinks (the
+ * multi-flat feature). Returns null when the caller is not a portal member
+ * of the society at all — one username, but only its OWN flats, never
+ * another login's.
+ */
+export async function authorizedFlats(
+  ctx: Parameters<typeof requireUserId>[0],
+  society: Doc<"societies">,
+  userId: Id<"users">,
+): Promise<{ memberId: Id<"members">; isPrimary: boolean }[] | null> {
+  const primaryId = await societyMemberBinding(ctx, society, userId);
+  if (!primaryId) return null;
+  const user = await ctx.db.get(userId);
+  const email = user?.email?.toLowerCase().trim() ?? null;
+  const links = await ctx.db
+    .query("flatLinks")
+    .withIndex("by_society", (q) => q.eq("societyId", society._id))
+    .collect();
+  const out = [{ memberId: primaryId, isPrimary: true }];
+  for (const l of links) {
+    if (
+      !out.some((f) => f.memberId === l.memberId) &&
+      ((email && l.email === email) || l.userId === userId)
+    ) {
+      out.push({ memberId: l.memberId, isPrimary: false });
+    }
+  }
+  return out;
+}
+
+/**
+ * The flat a call acts on: the primary binding by default, or one of the
+ * login's linked flats when requested. A requested flat the login is NOT
+ * authorised for is refused loudly — a member can never read or pay another
+ * login's flat, even by crafting the request.
+ */
+export async function resolvePortalFlat(
+  ctx: Parameters<typeof requireUserId>[0],
+  societyId: Id<"societies">,
+  requested?: Id<"members">,
+): Promise<PortalCtx | null> {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return null;
+  const bind = await portalBinding(ctx, societyId);
+  if (!bind) return null;
+  if (!requested || requested === bind.memberId) return bind;
+  const society = await ctx.db.get(societyId);
+  if (!society) return bind;
+  const user = await ctx.db.get(userId);
+  const email = user?.email?.toLowerCase().trim() ?? null;
+  const links = await ctx.db
+    .query("flatLinks")
+    .withIndex("by_society", (q) => q.eq("societyId", societyId))
+    .collect();
+  const linked = links.some(
+    (l) => l.memberId === requested && ((email && l.email === email) || l.userId === userId),
+  );
+  if (!linked) {
+    throw new ConvexError(
+      "This flat is not linked to your login — ask the society office to link it.",
+    );
+  }
+  return { societyId, memberId: requested };
 }
 
 /**
@@ -76,9 +145,13 @@ export async function validateMemberAllocations(
 
 /** The member's profile, flat, society summary and account balance. */
 export const myInfo = query({
-  args: { societyId: v.id("societies") },
-  handler: async (ctx, { societyId }) => {
-    const bind = await portalBinding(ctx, societyId);
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — one of the login's linked flats, not just the primary. */
+    memberId: v.optional(v.id("members")),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) return null;
     const [member, society] = await Promise.all([
       ctx.db.get(bind.memberId),
@@ -127,6 +200,21 @@ export const myInfo = query({
       .filter((r) => r.type === "member_receipt")
       .reduce((s, r) => s + r.total, 0);
     const outstanding = member.openingBalance + totalBilled - totalPaid;
+    // Joint (co-)owners recorded on this flat — shown with the owner's name
+    // in the portal header/reports. The primary owner stays member.name.
+    const owners = await ctx.db
+      .query("memberOwners")
+      .withIndex("by_member", (q) => q.eq("memberId", bind.memberId))
+      .collect();
+    const jointOwners = owners
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((o) => ({
+        name: o.name,
+        relation: o.relation ?? null,
+        sharePercent: o.sharePercent ?? null,
+        phone: o.phone ?? null,
+        email: o.email ?? null,
+      }));
 
     return {
       society: {
@@ -160,16 +248,121 @@ export const myInfo = query({
         joinDate: member.joinDate,
         isActive: member.isActive,
       },
+      jointOwners,
       totals: { totalBilled, totalPaid, outstanding },
     };
   },
 });
 
-/** My bills — newest first, with a download-ready shape. */
-export const myBills = query({
+/**
+ * All the flats this login may open, with each flat's own dues position:
+ * the flat selector and the consolidated dashboard read this. Balances are
+ * listed PER FLAT — the consolidated total is their sum, never a merged
+ * ledger, so every flat's outstanding stays identifiable.
+ */
+export const myFlats = query({
   args: { societyId: v.id("societies") },
   handler: async (ctx, { societyId }) => {
+    const userId = await getAuthUserId(ctx);
     const bind = await portalBinding(ctx, societyId);
+    if (!userId || !bind) return null;
+    const society = await ctx.db.get(societyId);
+    if (!society) return null;
+    const flats = (await authorizedFlats(ctx, society, userId)) ?? [
+      { memberId: bind.memberId, isPrimary: true },
+    ];
+    const receivableId =
+      society.receivableAccountId ??
+      (await ctx.db
+        .query("accounts")
+        .withIndex("by_society", (q) => q.eq("societyId", societyId))
+        .collect()
+        .then((accs) => accs.find((a) => a.kind === "receivable")?._id));
+    const rows: {
+      memberId: Id<"members">;
+      code: string;
+      name: string;
+      flatNo?: string;
+      wing?: string;
+      flatLabel: string;
+      ownershipType?: "owner" | "tenant";
+      isActive: boolean;
+      isPrimary: boolean;
+      totalBilled: number;
+      totalPaid: number;
+      outstanding: number;
+      openBills: number;
+      openDue: number;
+      jointOwnerNames: string[];
+    }[] = [];
+    for (const f of flats) {
+      const member = await ctx.db.get(f.memberId);
+      if (!member) continue;
+      const [bills, receipts, owners] = await Promise.all([
+        ctx.db
+          .query("bills")
+          .withIndex("by_society_member", (q) =>
+            q.eq("societyId", societyId).eq("memberId", f.memberId),
+          )
+          .collect(),
+        ctx.db
+          .query("vouchers")
+          .withIndex("by_society_member", (q) =>
+            q.eq("societyId", societyId).eq("memberId", f.memberId),
+          )
+          .collect(),
+        ctx.db
+          .query("memberOwners")
+          .withIndex("by_member", (q) => q.eq("memberId", f.memberId))
+          .collect(),
+      ]);
+      const totalBilled = bills.reduce(
+        (s, b) =>
+          s +
+          b.lines
+            .filter((l) => !isCarriedOpeningLine(l, receivableId))
+            .reduce((t, l) => t + l.amount, 0),
+        0,
+      );
+      const totalPaid = receipts
+        .filter((r) => r.type === "member_receipt")
+        .reduce((s, r) => s + r.total, 0);
+      const outstanding = member.openingBalance + totalBilled - totalPaid;
+      const openBills = bills.filter((b) => b.total - b.paidAmount > 0.005);
+      rows.push({
+        memberId: member._id,
+        code: member.code,
+        name: member.name,
+        flatNo: member.flatNo,
+        wing: member.wing,
+        flatLabel: flatLabelOf(member),
+        ownershipType: member.ownershipType,
+        isActive: member.isActive,
+        isPrimary: f.isPrimary,
+        totalBilled,
+        totalPaid,
+        outstanding,
+        openBills: openBills.length,
+        openDue: Math.round(openBills.reduce((s, b) => s + (b.total - b.paidAmount), 0) * 100) / 100,
+        // Joint owner names so flat cards can show them next to the owner.
+        jointOwnerNames: owners.sort((a, b) => a.createdAt - b.createdAt).map((o) => o.name),
+      });
+    }
+    return rows.sort((a, b) =>
+      a.isPrimary === b.isPrimary ? a.code.localeCompare(b.code) : a.isPrimary ? -1 : 1,
+    );
+  },
+});
+
+/** My bills — newest first, with a download-ready shape. */
+export const myBills = query({
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — one of the login's linked flats, not just the primary. */
+    memberId: v.optional(v.id("members")),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) return null;
     const [bills, tariffs] = await Promise.all([
       ctx.db
@@ -205,9 +398,13 @@ export const myBills = query({
 
 /** My receipts — member_receipt vouchers for my flat only, newest first. */
 export const myReceipts = query({
-  args: { societyId: v.id("societies") },
-  handler: async (ctx, { societyId }) => {
-    const bind = await portalBinding(ctx, societyId);
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — one of the login's linked flats, not just the primary. */
+    memberId: v.optional(v.id("members")),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) return null;
     const rows = await ctx.db
       .query("vouchers")
@@ -317,9 +514,11 @@ export const myLedger = query({
     societyId: v.id("societies"),
     fromDate: v.string(),
     toDate: v.string(),
+    /** Optional flat — one of the login's linked flats, not just the primary. */
+    memberId: v.optional(v.id("members")),
   },
-  handler: async (ctx, { societyId, fromDate, toDate }) => {
-    const bind = await portalBinding(ctx, societyId);
+  handler: async (ctx, { societyId, fromDate, toDate, memberId }) => {
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) return null;
     const [member, bills, vouchers, society, accounts] = await Promise.all([
       ctx.db.get(bind.memberId),
@@ -472,31 +671,107 @@ export const myLedger = query({
   },
 });
 
+/** Short display label for a flat: wing-unit, else the member code. */
+function flatLabelOf(m: { wing?: string; flatNo?: string; code: string }) {
+  return [m.wing, m.flatNo].filter(Boolean).join("-") || m.code;
+}
+
+/**
+ * Title-case check that a flat (member row) belongs to the login — the
+ * primary grant binding OR a flatLinks row for the login's email/user id.
+ * Shared by the payment-entry edit/delete paths, which receive a flat from
+ * stored data rather than from the request.
+ */
+async function isFlatAuthorized(
+  ctx: MutationCtx,
+  societyId: Id<"societies">,
+  memberId: Id<"members">,
+  userId: Id<"users">,
+) {
+  const society = await ctx.db.get(societyId);
+  if (!society) return false;
+  const primary = await societyMemberBinding(ctx, society, userId);
+  if (primary === memberId) return true;
+  const user = await ctx.db.get(userId);
+  const email = user?.email?.toLowerCase().trim() ?? null;
+  if (!email) return false;
+  const links = await ctx.db
+    .query("flatLinks")
+    .withIndex("by_society", (q) => q.eq("societyId", societyId))
+    .collect();
+  return links.some(
+    (l) => l.memberId === memberId && ((email && l.email === email) || l.userId === userId),
+  );
+}
+
 /** Unpaid/partially-paid bills I can allocate a payment against. */
 export const myOpenBills = query({
-  args: { societyId: v.id("societies") },
-  handler: async (ctx, { societyId }) => {
-    const bind = await portalBinding(ctx, societyId);
-    if (!bind) return null;
-    const bills = await ctx.db
-      .query("bills")
-      .withIndex("by_society_member", (q) =>
-        q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
-      )
-      .collect();
-    return bills
-      .filter((b) => b.status !== "paid")
-      .map((b) => ({
-        _id: b._id,
-        billNo: b.billNo,
-        period: b.period,
-        issueDate: b.issueDate,
-        dueDate: b.dueDate,
-        total: b.total,
-        paidAmount: b.paidAmount,
-        balance: b.total - b.paidAmount,
-      }))
-      .sort((a, b) => a.period.localeCompare(b.period));
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — one of the login's linked flats; omitted = ALL the
+     *  login's flats (the combined multi-flat payment view). Every row
+     *  carries its flat so the UI can tag bills per flat. */
+    memberId: v.optional(v.id("members")),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    if (memberId) {
+      const bind = await resolvePortalFlat(ctx, societyId, memberId);
+      if (!bind) return null;
+    }
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const society = await ctx.db.get(societyId);
+    if (!society) return null;
+    let targets: { memberId: Id<"members"> }[];
+    if (memberId) {
+      targets = [{ memberId }];
+    } else {
+      const flats = await authorizedFlats(ctx, society, userId);
+      if (!flats) return null;
+      targets = flats;
+    }
+    const rows: {
+      _id: Id<"bills">;
+      billNo: string;
+      period: string;
+      issueDate: string;
+      dueDate: string;
+      total: number;
+      paidAmount: number;
+      balance: number;
+      memberId: Id<"members">;
+      flatLabel: string;
+    }[] = [];
+    for (const t of targets) {
+      const member = await ctx.db.get(t.memberId);
+      if (!member) continue;
+      const bills = await ctx.db
+        .query("bills")
+        .withIndex("by_society_member", (q) =>
+          q.eq("societyId", societyId).eq("memberId", t.memberId),
+        )
+        .collect();
+      for (const b of bills) {
+        if (b.status === "paid") continue;
+        rows.push({
+          _id: b._id,
+          billNo: b.billNo,
+          period: b.period,
+          issueDate: b.issueDate,
+          dueDate: b.dueDate,
+          total: b.total,
+          paidAmount: b.paidAmount,
+          balance: b.total - b.paidAmount,
+          memberId: t.memberId,
+          flatLabel: flatLabelOf(member),
+        });
+      }
+    }
+    return rows.sort((a, b) =>
+      a.period === b.period
+        ? a.billNo.localeCompare(b.billNo)
+        : a.period.localeCompare(b.period),
+    );
   },
 });
 
@@ -574,6 +849,8 @@ async function validateSubmissionInput(
 export const submitPayment = mutation({
   args: {
     societyId: v.id("societies"),
+    /** Optional flat — pay a linked flat other than the primary. */
+    memberId: v.optional(v.id("members")),
     date: v.string(),
     bankCashAccountId: v.id("accounts"),
     mode: v.optional(v.string()),
@@ -583,8 +860,8 @@ export const submitPayment = mutation({
     /** Advance: pay without selecting bills — credited on approval. */
     amount: v.optional(v.number()),
   },
-  handler: async (ctx, { societyId, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
-    const bind = await portalBinding(ctx, societyId);
+  handler: async (ctx, { societyId, memberId, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) {
       throw new ConvexError(
         "Your login is not linked to a flat in this society — payment declined.",
@@ -622,6 +899,89 @@ export const submitPayment = mutation({
 });
 
 /**
+ * Combined multi-flat payment: ONE submitted payment that covers dues of
+ * SEVERAL of the login's linked flats. The books stay flat-wise — the entry
+ * is split into one paymentSubmissions row (receipt) PER FLAT, each with its
+ * own allocations, so the office passes and prints a separate receipt per
+ * flat and every rupee is allocated to the flat it belongs to.
+ */
+export const submitMultiFlatPayment = mutation({
+  args: {
+    societyId: v.id("societies"),
+    date: v.string(),
+    bankCashAccountId: v.id("accounts"),
+    mode: v.optional(v.string()),
+    reference: v.optional(v.string()),
+    narration: v.optional(v.string()),
+    groups: v.array(
+      v.object({
+        memberId: v.id("members"),
+        allocations: v.array(
+          v.object({ billId: v.id("bills"), amount: v.number() }),
+        ),
+        amount: v.optional(v.number()),
+      }),
+    ),
+  },
+  handler: async (
+    ctx,
+    { societyId, date, bankCashAccountId, mode, reference, narration, groups },
+  ) => {
+    const primary = await portalBinding(ctx, societyId);
+    if (!primary) {
+      throw new ConvexError(
+        "Your login is not linked to a flat in this society — payment declined.",
+      );
+    }
+    const society = await ctx.db.get(societyId);
+    if (!society) throw new ConvexError("Society not found.");
+    const userId = await requireUserId(ctx);
+    const flats = await authorizedFlats(ctx, society, userId);
+    if (!flats) {
+      throw new ConvexError("Your login is not linked to a flat in this society.");
+    }
+    // Pure guard first: flats authorised, no duplicates, sensible count.
+    const groupErr = multiFlatGroupsError(
+      flats.map((f) => f.memberId),
+      groups,
+    );
+    if (groupErr) throw new ConvexError(groupErr);
+
+    let created = 0;
+    let grandTotal = 0;
+    for (const g of groups) {
+      const bind: PortalCtx = { societyId, memberId: g.memberId };
+      const { total } = await validateSubmissionInput(ctx, bind, society, {
+        date,
+        bankCashAccountId,
+        allocations: g.allocations,
+        amount: g.amount,
+      });
+      const advanceAmount =
+        Math.round((total - g.allocations.reduce((s, a) => s + a.amount, 0)) * 100) / 100;
+      await ctx.db.insert("paymentSubmissions", {
+        societyId,
+        memberId: g.memberId,
+        createdById: userId,
+        date,
+        mode: mode ?? "bank",
+        bankCashAccountId,
+        reference: reference?.trim() || undefined,
+        memberNote: narration?.trim() || undefined,
+        amount: total,
+        advanceAmount,
+        allocations: g.allocations,
+        status: "pending" as const,
+        createdAt: Date.now(),
+      });
+      created++;
+      grandTotal = Math.round((grandTotal + total) * 100) / 100;
+    }
+    return { created, total: grandTotal };
+  },
+});
+
+/**
  * Edit my own payment entry while it is still pending office approval.
  * Once passed (or rejected) the entry is locked — a passed entry lives in the
  * books as a voucher and can only be reversed by the office.
@@ -639,12 +999,19 @@ export const updateSubmission = mutation({
     amount: v.optional(v.number()),
   },
   handler: async (ctx, { societyId, id, date, bankCashAccountId, mode, reference, narration, allocations, amount }) => {
+    const userId = await getAuthUserId(ctx);
     const bind = await portalBinding(ctx, societyId);
-    if (!bind) {
+    if (!userId || !bind) {
       throw new ConvexError("Your login is not linked to a flat in this society.");
     }
     const sub = await ctx.db.get(id);
-    if (!sub || sub.societyId !== societyId || sub.memberId !== bind.memberId) {
+    if (
+      !sub ||
+      sub.societyId !== societyId ||
+      // The entry's flat must belong to THIS login: its primary grant binding
+      // or one of its flatLinks rows (multi-flat accounts).
+      !(await isFlatAuthorized(ctx, societyId, sub.memberId, userId))
+    ) {
       throw new ConvexError("Payment entry not found.");
     }
     if (sub.status !== "pending") {
@@ -689,12 +1056,18 @@ export const updateSubmission = mutation({
 export const deleteSubmission = mutation({
   args: { societyId: v.id("societies"), id: v.id("paymentSubmissions") },
   handler: async (ctx, { societyId, id }) => {
+    const userId = await getAuthUserId(ctx);
     const bind = await portalBinding(ctx, societyId);
-    if (!bind) {
+    if (!userId || !bind) {
       throw new ConvexError("Your login is not linked to a flat in this society.");
     }
     const sub = await ctx.db.get(id);
-    if (!sub || sub.societyId !== societyId || sub.memberId !== bind.memberId) {
+    if (
+      !sub ||
+      sub.societyId !== societyId ||
+      // The entry's flat must belong to THIS login (primary or linked flat).
+      !(await isFlatAuthorized(ctx, societyId, sub.memberId, userId))
+    ) {
       throw new ConvexError("Payment entry not found.");
     }
     if (sub.status !== "pending") {
@@ -709,45 +1082,85 @@ export const deleteSubmission = mutation({
   },
 });
 
-/** My recent manual (cash/cheque/bank) payment submissions, newest first. */
+/** My recent manual (cash/cheque/bank) payment submissions, newest first —
+ *  across ALL the flats this login is authorised for (multi-flat accounts
+ *  see their combined payment history; each row tags its flat). */
 export const mySubmissions = query({
-  args: { societyId: v.id("societies") },
-  handler: async (ctx, { societyId }) => {
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — restrict to one of the login's flats. */
+    memberId: v.optional(v.id("members")),
+  },
+  handler: async (ctx, { societyId, memberId }) => {
+    if (memberId) {
+      const bind = await resolvePortalFlat(ctx, societyId, memberId);
+      if (!bind) return null;
+    }
+    const userId = await getAuthUserId(ctx);
     const bind = await portalBinding(ctx, societyId);
-    if (!bind) return null;
-    const rows = await ctx.db
-      .query("paymentSubmissions")
-      .withIndex("by_society_member", (q) =>
-        q.eq("societyId", bind.societyId).eq("memberId", bind.memberId),
-      )
-      .order("desc")
-      .take(8);
-    return rows.map((r) => ({
-      _id: r._id,
-      amount: r.amount,
-      mode: r.mode,
-      date: r.date,
-      status: r.status,
-      voucherNo: r.voucherNo ?? null,
-      reviewNote: r.reviewNote ?? null,
-      createdAt: r.createdAt,
-      editedAt: r.editedAt ?? null,
-      // Full detail so the portal can load a pending entry back into the
-      // form for editing.
-      bankCashAccountId: r.bankCashAccountId,
-      reference: r.reference ?? null,
-      memberNote: r.memberNote ?? null,
-      advanceAmount: r.advanceAmount,
-      allocations: r.allocations,
-    }));
+    if (!userId || !bind) return null;
+    const society = await ctx.db.get(societyId);
+    if (!society) return null;
+    const targetIds = memberId
+      ? [{ memberId }]
+      : ((await authorizedFlats(ctx, society, userId)) ?? []).map(
+          (f) => ({ memberId: f.memberId }),
+        );
+    // Per-flat recent entries (bounded), merged newest-first.
+    const collected: {
+      row: Doc<"paymentSubmissions">;
+      flatLabel: string;
+    }[] = [];
+    for (const t of targetIds) {
+      const member = t.memberId ? await ctx.db.get(t.memberId) : null;
+      if (!member) continue;
+      const rows = await ctx.db
+        .query("paymentSubmissions")
+        .withIndex("by_society_member", (q) =>
+          q.eq("societyId", societyId).eq("memberId", t.memberId),
+        )
+        .order("desc")
+        .take(8);
+      for (const r of rows) {
+        collected.push({ row: r, flatLabel: flatLabelOf(member) });
+      }
+    }
+    return collected
+      .sort((a, b) => b.row.createdAt - a.row.createdAt)
+      .slice(0, 24)
+      .map((c) => ({
+        _id: c.row._id,
+        amount: c.row.amount,
+        mode: c.row.mode,
+        date: c.row.date,
+        status: c.row.status,
+        voucherNo: c.row.voucherNo ?? null,
+        reviewNote: c.row.reviewNote ?? null,
+        createdAt: c.row.createdAt,
+        editedAt: c.row.editedAt ?? null,
+        memberId: c.row.memberId,
+        flatLabel: c.flatLabel,
+        // Full detail so the portal can load a pending entry back into the
+        // form for editing.
+        bankCashAccountId: c.row.bankCashAccountId,
+        reference: c.row.reference ?? null,
+        memberNote: c.row.memberNote ?? null,
+        advanceAmount: c.row.advanceAmount,
+        allocations: c.row.allocations,
+      }));
   },
 });
 
 /** Update my contact details (phone). The register's master data stays with the office. */
 export const updateMyContact = mutation({
-  args: { societyId: v.id("societies"), phone: v.string() },
-  handler: async (ctx, { societyId, phone }) => {
-    const bind = await portalBinding(ctx, societyId);
+  args: {
+    societyId: v.id("societies"),
+    /** Optional flat — update the contact of one of the login's flats. */
+    memberId: v.optional(v.id("members")),
+    phone: v.string(),
+  },
+  handler: async (ctx, { societyId, memberId, phone }) => {
+    const bind = await resolvePortalFlat(ctx, societyId, memberId);
     if (!bind) throw new ConvexError("Your login is not linked to a flat in this society.");
     const trimmed = phone.trim();
     if (!/^[\d\s+\-()]{5,20}$/.test(trimmed)) {
