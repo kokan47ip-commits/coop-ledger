@@ -9,6 +9,7 @@ import {
   resolveReceivableAccount,
   societyFyPeriod,
 } from "./lib";
+import { duplicateMemberError } from "./ownership";
 
 type Result = {
   inserted: number;
@@ -87,6 +88,18 @@ export const uploadMembers = mutation({
       .withIndex("by_society", (q) => q.eq("societyId", societyId))
       .collect();
     const byCode = new Map(existing.map((m) => [m.code.toLowerCase(), m]));
+    // Live view of the register through this import: after each accepted row
+    // it reflects what the DB will hold, so later rows in the SAME sheet
+    // cannot re-introduce a defended code or flat.
+    const live = existing.map((m) => ({
+      id: m._id,
+      code: m.code,
+      name: m.name,
+      wing: m.wing,
+      building: m.building,
+      flatNo: m.flatNo,
+      isActive: m.isActive,
+    }));
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       // Skip fully blank rows (common after the last data row in exported sheets).
@@ -152,11 +165,56 @@ export const uploadMembers = mutation({
           defaultOpeningDate,
         isActive: true,
       };
+      // Same duplicate rules as the Members register (unique code, ONE row
+      // per active flat) — bulk sheets may not bypass them, or the register
+      // would end up with double-billed flats. Refused rows are reported.
+      const dupeErr = duplicateMemberError<{ id?: Id<"members"> } & {
+        code: string;
+        name: string;
+        wing?: string | null;
+        building?: string | null;
+        flatNo?: string | null;
+        isActive: boolean;
+      }>(live, {
+        id: match?._id,
+        code: data.code,
+        name: data.name,
+        wing: data.wing,
+        building: undefined,
+        flatNo: data.flatNo,
+        isActive: true,
+      });
+      if (dupeErr) {
+        result.errors.push(`Data row ${i + 1}: ${dupeErr}`);
+        result.skipped++;
+        continue;
+      }
       if (match) {
         await ctx.db.patch(match._id, data);
+        const slot = live.find((m) => m.id === match._id);
+        if (slot) {
+          slot.code = data.code;
+          slot.name = data.name;
+          slot.wing = data.wing;
+          slot.flatNo = data.flatNo;
+        }
         result.updated++;
       } else {
-        await ctx.db.insert("members", { societyId, ...data });
+        const insertedId = await ctx.db.insert("members", {
+          societyId,
+          ...data,
+        });
+        // Later rows in THIS sheet must see the just-inserted member, or a
+        // repeated code/flat could slip through as a second insert.
+        live.push({
+          id: insertedId,
+          code: data.code,
+          name: data.name,
+          wing: data.wing,
+          building: undefined,
+          flatNo: data.flatNo,
+          isActive: true,
+        });
         result.inserted++;
       }
     }

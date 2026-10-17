@@ -652,4 +652,74 @@ describe("combined multi-flat payment", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].memberId).toBe(w.m2);
   });
+
+  test("editing a pending LINKED-flat entry validates against THAT flat's bills", async () => {
+    // Regression: validation used to run against the login's PRIMARY flat,
+    // so editing a linked flat's entry wrongly refused its own bills.
+    const w = await seedWorld();
+    const bankId = w.bankId;
+    const billId = await w.db.insert("bills", {
+      societyId: w.societyId,
+      billNo: "B-9001",
+      memberId: w.m2,
+      period: "2026-06",
+      issueDate: "2026-06-01",
+      dueDate: "2026-06-15",
+      lines: [{ accountId: w.recvId, name: "Maintenance", amount: 300 }],
+      total: 300,
+      paidAmount: 0,
+      status: "unpaid",
+    });
+    const res = (await fn(portalMod, "submitPayment")(w.memberCtx, {
+      societyId: w.societyId,
+      memberId: w.m2,
+      date: "2026-06-20",
+      bankCashAccountId: bankId,
+      mode: "bank",
+      allocations: [{ billId, amount: 300 }],
+    } as unknown as object)) as { submissionId: string; total: number };
+    expect(res.total).toBe(300);
+
+    // Edit the pending entry: same flat's bill, still fine after the fix.
+    await fn(portalMod, "updateSubmission")(w.memberCtx, {
+      societyId: w.societyId,
+      id: res.submissionId,
+      date: "2026-06-21",
+      bankCashAccountId: bankId,
+      mode: "bank",
+      allocations: [{ billId, amount: 250 }],
+    });
+    const rows = w.dump("paymentSubmissions");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amount).toBe(250);
+    expect((rows[0].editedAt as number) ?? 0).toBeGreaterThan(0);
+  });
+
+  test("editing ANOTHER login's flat entry is refused", async () => {
+    const w = await seedWorld();
+    const subId = await w.db.insert("paymentSubmissions", {
+      societyId: w.societyId,
+      memberId: w.m3,
+      createdById: w.ownerUserId,
+      date: "2026-06-20",
+      mode: "bank",
+      bankCashAccountId: w.bankId,
+      amount: 100,
+      advanceAmount: 100,
+      allocations: [],
+      status: "pending",
+      createdAt: 5,
+    });
+    await expect(
+      fn(portalMod, "updateSubmission")(w.memberCtx, {
+        societyId: w.societyId,
+        id: subId,
+        date: "2026-06-21",
+        bankCashAccountId: w.bankId,
+        allocations: [],
+        amount: 90,
+      }),
+    ).rejects.toThrow(/Payment entry not found./);
+    expect(w.dump("paymentSubmissions")).toHaveLength(1);
+  });
 });

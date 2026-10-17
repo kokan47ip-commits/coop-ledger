@@ -186,27 +186,7 @@ export const unlinkFlat = mutation({
 });
 
 /**
- * Heal every link row of a login email to the signed-in user id (called when
- * a browser opens the portal, so right checks resolve on the id as well).
+ * Heal every link row of a login email to the signed-in user id — done in
+ * access.bindPendingGrants on sign-in, so right checks resolve on the user
+ * id as well as the email.
  */
-export const healMyLinks = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await requireUserId(ctx);
-    const user = await ctx.db.get(userId);
-    const email = user?.email?.toLowerCase().trim();
-    if (!email) return 0;
-    const links = await ctx.db
-      .query("flatLinks")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .collect();
-    let healed = 0;
-    for (const l of links) {
-      if (!l.userId) {
-        await ctx.db.patch(l._id, { userId });
-        healed++;
-      }
-    }
-    return healed;
-  },
-});

@@ -1024,12 +1024,20 @@ export const updateSubmission = mutation({
     const society = await ctx.db.get(societyId);
     if (!society) throw new ConvexError("Society not found.");
 
-    const { total } = await validateSubmissionInput(ctx, bind, society, {
-      date,
-      bankCashAccountId,
-      allocations,
-      amount,
-    });
+    const { total } = await validateSubmissionInput(
+      ctx,
+      // Validate against the ENTRY's flat, not the login's primary — a
+      // multi-flat account edits its linked flat's entry with that flat's
+      // own bills (authorization was already checked above).
+      { societyId, memberId: sub.memberId },
+      society,
+      {
+        date,
+        bankCashAccountId,
+        allocations,
+        amount,
+      },
+    );
 
     const advanceAmount = Math.round((total - allocations.reduce((s, a) => s + a.amount, 0)) * 100) / 100;
     await ctx.db.patch(id, {

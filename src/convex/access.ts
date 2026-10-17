@@ -638,6 +638,18 @@ export const bindPendingGrants = mutation({
         bound++;
       }
     }
+    // Multi-flat links are keyed by email too — bind them to the account so
+    // portal authorization resolves on the user id as well as the email.
+    const links = await ctx.db
+      .query("flatLinks")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .collect();
+    for (const l of links) {
+      if (!l.userId) {
+        await ctx.db.patch(l._id, { userId });
+        bound++;
+      }
+    }
     return bound + claimedSocieties;
   },
 });
